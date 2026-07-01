@@ -164,7 +164,7 @@ document.addEventListener("DOMContentLoaded", () => {
             document.getElementById('login-modal').style.display = 'none'; document.getElementById('login-user').value = ''; document.getElementById('login-pass').value = ''; document.getElementById('login-pass').type = 'password';
             if(togglePassBtn) togglePassBtn.innerText = '👁️';
             alert("Akses Dibuka! Selamat datang 🚀");
-        }).catch(() => { alert("Email atau Password salah bjir!"); });
+        }).catch((err) => { console.error(err); alert("Login gagal: " + err.code + "\n" + err.message); });
     });
 
     const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
