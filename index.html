@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal OS - Pusat Kendali</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="custom-toast" class="toast hidden"></div>
+
+    <div id="custom-confirm" class="modal" style="z-index: 9999;">
+        <div class="modal-content" style="width: 400px; text-align: center; border: 1px solid #ff1744;">
+            <h3 style="color: #ffd700; margin-bottom: 15px; font-size: 1.4rem;">⚠️ Konfirmasi Dulu Nih!</h3>
+            <p id="confirm-msg" style="color: #ccc; margin-bottom: 25px; font-size: 0.95rem;">Apakah yakin yak?</p>
+            <div style="display: flex; gap: 10px;">
+                <button id="confirm-no" class="btn btn-outline" style="flex: 1; padding: 10px;">Batal</button>
+                <button id="confirm-yes" class="save-btn" style="flex: 1; background: #ff1744; color: #fff; padding: 10px; margin-top: 0;">Gasss!</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="info-modal" class="modal" style="z-index: 9998;">
+        <div class="modal-content" style="width: 400px; text-align: center; border: 1px solid #2196f3;">
+            <h3 style="color: #2196f3; margin-bottom: 15px; font-size: 1.3rem;">ℹ️ Info Perhitungan</h3>
+            <p id="info-msg" style="color: #ddd; margin-bottom: 25px; font-size: 0.95rem; line-height: 1.6;">Deskripsi...</p>
+            <button onclick="document.getElementById('info-modal').style.display='none'" class="save-btn" style="background: #2196f3; color: #fff; padding: 10px; margin-top: 0;">Paham Bos!</button>
+        </div>
+    </div>
+
+    <div id="export-modal" class="modal" style="z-index: 9000;">
+        <div class="modal-content" style="width: 450px;">
+            <span class="close-btn" onclick="document.getElementById('export-modal').style.display='none'">&times;</span>
+            <h2 id="export-modal-title" style="color:#ffd700; margin-bottom: 5px;">📤 Export Data</h2>
+            <p style="color:#aaa; font-size: 0.85rem; margin-bottom: 15px;">Pilih periode dan format file yang ingin kamu unduh.</p>
+            <div style="margin-bottom: 20px;">
+                <label style="color:#aaa; font-size:0.85rem;">Pilih Periode CSV:</label>
+                <select id="export-csv-period" class="form-input" style="margin-top:5px; border-color:#ffd700;">
+                    <option value="all">Semua Waktu (All Periode)</option>
+                    <option value="current" selected>Hanya Bulan/Tampilan Saat Ini</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button id="btn-export-csv" class="save-btn" style="flex: 1; background: #00e676; margin-top: 0; font-size: 0.9rem; color:#121212;">📄 Export .CSV</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="login-modal" class="modal" style="z-index: 10000;">
+        <div class="modal-content" style="width: 350px; text-align: center; border: 1px solid #ffd700;">
+            <h2 style="color:#ffd700; margin-bottom: 5px;">🔒 Authentication</h2>
+            <p style="color:#aaa; font-size: 0.85rem; margin-bottom: 20px;">Super Admin Only.</p>
+            <input type="text" id="login-user" class="form-input" placeholder="Username" style="margin-bottom: 10px; text-align: center;">
+            <div style="position: relative; margin-bottom: 20px;">
+                <input type="password" id="login-pass" class="form-input" placeholder="Password" style="text-align: center; padding-right: 40px;">
+                <span id="toggle-pass" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 1.2rem;">👁️</span>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button onclick="document.getElementById('login-modal').style.display='none'" class="btn btn-outline" style="flex: 1; padding: 10px;">Batal</button>
+                <button id="btn-submit-login" class="save-btn" style="flex: 1; margin-top: 0;">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header"><h2>Super App</h2><p>Personal OS v1.5</p></div>
+        <ul class="menu-list">
+            <li class="menu-item active" data-target="view-home">🏠 Pusat Kendali</li>
+            <li class="menu-item" data-target="view-trading">📊 Jurnal XAUUSD</li>
+            <li class="menu-item" data-target="view-expenses">🛒 Pengeluaran Bulanan</li>
+            <li class="menu-item" data-target="view-sports">🏃‍♂️ Jurnal Olahraga</li>
+            <li class="menu-item" data-target="view-wealth">💰 History Kekayaan</li>
+            <li class="menu-item" data-target="view-career">🚀 Peningkatan Karir</li>
+            <li class="menu-item" data-target="view-roadmap">🗺️ Roadmap Masa Depan</li>
+        </ul>
+        <div class="sidebar-footer"><button id="btn-login" class="btn-outline-gold">🔒 Login System</button></div>
+    </nav>
+
+    <main class="main-content">
+        <div class="top-bar hide-for-screenshot"><button id="sidebar-toggle" class="btn-toggle">☰ Menu</button></div>
+        
+        <section id="view-home" class="content-section active">
+            <header class="main-header" style="border-bottom:none; margin-bottom:0; padding-bottom:0;">
+                <div class="header-left">
+                    <h1>Pusat Kendali</h1>
+                    <p>Sistem monitoring dan peningkatan kualitas hidup harian.</p>
+                </div>
+            </header>
+            
+            <div class="month-navigation" style="margin-top: 15px; margin-bottom: 25px; max-width: 600px;">
+                <button id="home-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button>
+                <h2 id="home-month-year-display" style="color: #ffd700; margin:0 15px;">Bulan Tahun</h2>
+                <button id="home-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button>
+            </div>
+
+            <div class="dashboard-grid" id="home-widgets"></div>
+            <div class="dashboard-grid" style="margin-top: 20px;">
+                <div class="dash-card">
+                    <h3>🎯 Fokus Kuartal Ini</h3>
+                    <ul class="task-list">
+                        <li>Konsistensi profit & disiplin XAUUSD.</li>
+                        <li>Ketahanan fisik Naik Gunung.</li>
+                        <li>Manajemen waktu.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-trading" class="content-section" style="padding-top: 10px;">
+            <div class="xau-nav hide-for-screenshot"><button id="menu-calendar" class="xau-tab active">📅 Kalender Entry</button><button id="menu-dashboard" class="xau-tab">📊 Dashboard Analisa</button></div>
+            <div class="dashboard-container" style="margin-bottom: 5px;" id="equity-panel-capture">
+                <div class="equity-dashboard">
+                    <div class="equity-box" id="xau-modal-box" style="cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1e1e1e'"><span class="label">Modal Deposit (Klik ubah) ✏️</span><h4 id="base-equity">Rp 2.500.000</h4></div>
+                    <div class="equity-box"><span class="label">Equity Awal</span><h3 id="start-equity">Rp 0</h3></div>
+                    <div class="equity-box"><span class="label">Equity Terakhir</span><h3 id="current-equity">Rp 0</h3></div>
+                    <div class="equity-box"><span class="label">Pertumbuhan</span><h3 id="equity-growth" class="netral">0.00%</h3></div>
+                </div>
+            </div>
+            
+            <div id="view-calendar" class="dashboard-container">
+                <header class="main-header">
+                    <div class="header-left">
+                        <h1 style="color:#ffd700;">Jurnal XAUUSD</h1>
+                        <div class="action-group-main hide-for-screenshot">
+                            <button class="btn-action btn-export" onclick="openExportMenu('xau')">📤 Export</button>
+                            <label for="csv-upload-xau" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-xau" accept=".csv" style="display: none;"></label>
+                            <button id="clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                        </div>
+                    </div>
+                    <div class="summary-card"><span>P/L Bulan Ini:</span><h2 id="monthly-total" class="netral">Rp 0</h2></div>
+                </header>
+                <div class="month-navigation"><button id="prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="month-year-display">Bulan Tahun</h2><button id="next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #ffd700;">Total Mg</div></div>
+                <div class="calendar-grid" id="calendar"></div>
+            </div>
+
+            <div id="view-dashboard" class="dashboard-container" style="display: none;">
+                <div class="month-navigation" style="margin-bottom: 20px;"><button id="dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="dash-month-year-display" style="color: #ffd700;">Bulan Tahun</h2><button id="dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                <div id="xau-empty-state" class="empty-state-dash"></div>
+                <div id="xau-dash-content">
+                    <div id="dashboard-insight" style="margin-bottom: 15px;"></div>
+                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📊 Raport & Streak Per Minggu</h3><div id="weekly-streak-msg" style="margin-bottom: 15px;"></div><div id="weekly-breakdown-grid" class="weekly-report-grid"></div></div>
+                    
+                    <div class="highlight-grid">
+                        <div class="highlight-box win-bg"><span class="label">🌟 Biggest Win</span><h3 id="highest-win-pl" class="profit-text">Rp 0</h3><p id="highest-win-desc" class="desc-text">-</p></div>
+                        <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="highest-loss-pl" class="loss-text">Rp 0</h3><p id="highest-loss-desc" class="desc-text">-</p></div>
+                    </div>
+                    
+                    <div class="chart-grid">
+                        <div class="chart-card" style="display: flex; flex-direction: column;">
+                            <h3 class="chart-title">Grafik P/L Harian</h3>
+                            <div style="flex-grow: 1; position: relative; min-height: 250px;">
+                                <canvas id="plChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card" style="text-align: center;">
+                            <h3 class="chart-title">Win Rate</h3>
+                            <div style="position: relative; width: 100%; max-width: 250px; margin: 0 auto;">
+                                <canvas id="winRateChart"></canvas>
+                                <div id="win-rate-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; color: #fff; display: flex; flex-direction: column; gap: 5px;">
+                                    <span style="font-size: 1.5rem;">0% Win</span>
+                                    <span style="font-size: 1.1rem; color: #ff1744;">0% Loss</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="table-container"><div style="display: flex; justify-content: space-between; margin-bottom: 15px;"><h3 class="chart-title">Detail Entry</h3><select id="table-filter-select" class="form-input" style="width: auto;"><option value="all">Semua Waktu</option><option value="month" selected>Bulan Ini</option><option value="today">Hari Ini</option></select></div>
+                    <table class="data-table"><thead><tr><th>No</th><th class="sortable" data-col="date">Tanggal</th><th class="sortable" data-col="tf">TF</th><th class="sortable" data-col="arah">Arah</th><th>Durasi</th><th>Layer</th><th>Alasan Entry</th><th class="sortable" style="text-align: right;" data-col="pl">P/L (Rp)</th></tr></thead><tbody id="dashboard-table-body"></tbody></table></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-expenses" class="content-section" style="padding-top: 10px;">
+            <div id="exp-locked-ui" class="locked-overlay" style="display:none;">
+                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
+                <h2 style="color: #ffd700;">Privasi Bos!</h2>
+                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Pengeluaran Bulanan.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+            </div>
+            
+            <div id="exp-content-ui">
+                <div class="xau-nav hide-for-screenshot"><button id="exp-menu-calendar" class="xau-tab active" style="border-color:#ff1744; color:#ff1744;">📅 Kalender Belanja</button><button id="exp-menu-dashboard" class="xau-tab">📊 Dashboard Pengeluaran</button></div>
+                
+                <div id="exp-view-calendar" class="dashboard-container">
+                    <header class="main-header">
+                        <div class="header-left">
+                            <h1 style="color:#ff1744;">Pengeluaran Bulanan</h1>
+                            <div class="action-group-main hide-for-screenshot">
+                                <button class="btn-action btn-export" onclick="openExportMenu('exp')">📤 Export</button>
+                                <label for="csv-upload-exp" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-exp" accept=".csv" style="display: none;"></label>
+                                <button id="exp-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                            </div>
+                        </div>
+                        <div class="summary-card" style="border-color:#ff1744;"><span>Total Keluar Bulan Ini:</span><h2 id="exp-monthly-total" class="loss-text">Rp 0</h2></div>
+                    </header>
+                    <div id="exp-warning-box" style="margin-bottom:20px; display:none;"></div>
+                    <div class="month-navigation"><button id="exp-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="exp-month-year-display">Bulan Tahun</h2><button id="exp-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #ff1744;">Total Mg</div></div>
+                    <div class="calendar-grid" id="exp-calendar"></div>
+                </div>
+
+                <div id="exp-view-dashboard" class="dashboard-container" style="display: none;">
+                    <div class="month-navigation" style="margin-bottom: 20px;"><button id="exp-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="exp-dash-month-year-display" style="color: #ff1744;">Bulan Tahun</h2><button id="exp-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <div id="exp-empty-state" class="empty-state-dash"></div>
+                    <div id="exp-dash-content">
+                        <div id="exp-dash-insight" style="margin-bottom: 20px;"></div>
+                        <div class="chart-grid">
+                            <div class="chart-card" style="min-height: 300px;"><h3 class="chart-title" style="color:#ff1744;">Grafik Kategori Belanja</h3><canvas id="expCategoryChart"></canvas></div>
+                            <div class="chart-card" style="min-height: 300px; display: flex; flex-direction: column; align-items: center;"><h3 class="chart-title" style="color:#ff1744; width: 100%; text-align: left;">Distribusi Bank/Metode</h3><div style="flex-grow:1; width:100%; max-width: 300px;"><canvas id="expBankChart"></canvas></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-sports" class="content-section" style="padding-top: 10px;">
+            <div class="xau-nav hide-for-screenshot"><button id="sport-menu-calendar" class="xau-tab active" style="border-color:#2196f3; color:#2196f3;">📅 Kalender Latihan</button><button id="sport-menu-dashboard" class="xau-tab">📊 Dashboard Fisik</button></div>
+            
+            <div id="sport-view-calendar" class="dashboard-container">
+                <header class="main-header">
+                    <div class="header-left">
+                        <h1 style="color:#2196f3;">Jurnal Olahraga</h1>
+                        <div class="action-group-main hide-for-screenshot">
+                            <button class="btn-action btn-export" onclick="openExportMenu('sport')">📤 Export</button>
+                            <label for="csv-upload-sport" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-sport" accept=".csv" style="display: none;"></label>
+                            <button id="sport-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                        </div>
+                    </div>
+                    <div class="summary-card" style="border-color:#2196f3;"><span>Total Latihan Bulan Ini:</span><h2 id="sport-monthly-total" style="color:#2196f3;">0 Kali | 0 Menit</h2></div>
+                </header>
+                <div id="sport-summary-badges" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px; padding:15px; background:#1e1e1e; border-radius:8px; border:1px solid #333;"></div>
+                <div class="month-navigation"><button id="sport-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="sport-month-year-display">Bulan Tahun</h2><button id="sport-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                
+                <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #2196f3;">Total Mingguan</div></div>
+                <div class="calendar-grid" id="sport-calendar"></div>
+            </div>
+
+            <div id="sport-view-dashboard" class="dashboard-container" style="display: none;">
+                <div class="month-navigation" style="margin-bottom: 20px;"><button id="sport-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="sport-dash-month-year-display" style="color: #2196f3;">Bulan Tahun</h2><button id="sport-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                <div id="sport-empty-state" class="empty-state-dash"></div>
+                <div id="sport-dash-content">
+                    <div id="sport-dash-insight" style="margin-bottom: 20px;"></div>
+                    <div class="chart-card" style="margin-bottom: 30px;"><h3 class="chart-title" style="color:#2196f3;">Frekuensi Latihan Harian (Menit)</h3><canvas id="sportFreqChart"></canvas></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-wealth" class="content-section" style="padding-top: 10px;">
+            <div id="wealth-locked-ui" class="locked-overlay" style="display:none;">
+                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
+                <h2 style="color: #ffd700;">Privasi Bos!</h2>
+                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu History Kekayaan.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+            </div>
+
+            <div id="wealth-content-ui">
+                <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
+                    <div class="header-left">
+                        <h1 style="color:#ffb300;">History Kekayaan 💰</h1>
+                        <p style="color:#888; font-size: 0.9rem;">Analisa uang pegangan dan target recovery kerugian trading.</p>
+                    </div>
+                    <div class="action-group-main hide-for-screenshot" style="justify-content: flex-end;">
+                        <button class="btn-action btn-export" onclick="openExportMenu('wealth')">📤 Export</button>
+                        <label for="csv-upload-wealth" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-wealth" accept=".csv" style="display: none;"></label>
+                        <button class="btn btn-success" style="background:#ffb300; color:#121212; border:none; margin-left:10px; font-weight:bold;" onclick="openWealthModal()">+ Catat Keuangan</button>
+                    </div>
+                </header>
+
+                <div class="dashboard-container" id="wealth-dashboard-capture">
+                    <div class="equity-dashboard" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
+                        <div class="equity-box" style="border-left-color:#00e676;">
+                            <span class="label">Total Pendapatan <span class="info-icon" onclick="showInfo('income')">ℹ️</span></span>
+                            <h3 id="wealth-income" style="color:#00e676;">Rp 0</h3>
+                        </div>
+                        <div class="equity-box" style="border-left-color:#ff9800;">
+                            <span class="label">Total Pengeluaran <span class="info-icon" onclick="showInfo('expense')">ℹ️</span></span>
+                            <h3 id="wealth-expense" style="color:#ff9800;">Rp 0</h3>
+                        </div>
+                        <div class="equity-box" style="border-left-color:#2196f3;">
+                            <span class="label">Tabungan Seharusnya <span class="info-icon" onclick="showInfo('expected')">ℹ️</span></span>
+                            <h3 id="wealth-expected" style="color:#2196f3;">Rp 0</h3>
+                        </div>
+                        <div class="equity-box" style="border-left-color:#b0bec5; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span class="label" style="margin:0;">Uang Real Time</span>
+                                <button class="btn-edit-rt" onclick="document.getElementById('wealth-modal-rt').style.display='flex'">✏️ Update</button>
+                            </div>
+                            <h3 id="wealth-actual" style="color:#fff; margin-top:5px;">Rp 0</h3>
+                        </div>
+                    </div>
+
+                    <div id="wealth-recovery-card" style="background: rgba(255, 23, 68, 0.1); border: 2px dashed #ff1744; border-radius: 12px; padding: 25px; text-align: center; margin-bottom: 30px;">
+                        <h2 style="color:#ff1744; font-size: 1.15rem; margin-bottom: 5px;">🚨 DEFISIT KEUANGAN (Trading & Pengeluaran Tak Terduga)</h2>
+                        <h1 id="wealth-minus" style="color:#ff1744; font-size: 2.8rem; margin-bottom: 10px;">-Rp 0</h1>
+                        <p style="color:#aaa; font-size: 0.95rem;">Perlu di-recovery agar <i>balance</i> Real Time sama dengan Tabungan Seharusnya.</p>
+                    </div>
+
+                    <div class="chart-grid" style="grid-template-columns: 1fr 1fr; gap:20px;">
+                        <div class="chart-card custom-scrollbar" style="max-height: 400px; overflow-y: auto;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; position:sticky; top:-20px; background:#1e1e1e; z-index:2; padding:20px 0 10px 0; margin-top:-20px;">
+                                <h3 class="chart-title" style="color:#00e676; margin:0;">Daftar Pendapatan</h3>
+                                <select id="wealth-sort-inc" class="form-input" style="width: auto; height: 32px; font-size: 0.8rem; padding: 0 5px;" onchange="renderWealthDashboard()">
+                                    <option value="terbaru">Terbaru</option>
+                                    <option value="terlama">Terlama</option>
+                                    <option value="terbesar">Terbesar</option>
+                                    <option value="terkecil">Terkecil</option>
+                                </select>
+                            </div>
+                            <ul id="wealth-income-list" style="list-style:none; margin-top:10px;"></ul>
+                        </div>
+                        <div class="chart-card custom-scrollbar" style="max-height: 400px; overflow-y: auto;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; position:sticky; top:-20px; background:#1e1e1e; z-index:2; padding:20px 0 10px 0; margin-top:-20px;">
+                                <h3 class="chart-title" style="color:#ff9800; margin:0;">Daftar Pengeluaran</h3>
+                                <select id="wealth-sort-exp" class="form-input" style="width: auto; height: 32px; font-size: 0.8rem; padding: 0 5px;" onchange="renderWealthDashboard()">
+                                    <option value="terbaru">Terbaru</option>
+                                    <option value="terlama">Terlama</option>
+                                    <option value="terbesar">Terbesar</option>
+                                    <option value="terkecil">Terkecil</option>
+                                </select>
+                            </div>
+                            <ul id="wealth-expense-list" style="list-style:none; margin-top:10px;"></ul>
+                        </div>
+                    </div>
+
+                    <div class="chart-card" style="margin-top: 20px;">
+                        <h3 class="chart-title">💡 Catatan Kebocoran Pengeluaran Bulanan</h3>
+                        <p style="color:#aaa; font-size:0.9rem; margin-bottom:15px;">Penyebab biaya bulanan sering membengkak melebihi standar (Rp 750k):</p>
+                        <div class="leak-tags">
+                            <span class="leak-tag">⌚ Beli Jam Tangan</span>
+                            <span class="leak-tag">👟 Sepatu Baru</span>
+                            <span class="leak-tag">🥛 Suplemen/Susu Olahraga</span>
+                            <span class="leak-tag">🎒 Trip Naik Gunung</span>
+                            <span class="leak-tag">🎣 Mancing / Hobi</span>
+                            <span class="leak-tag">🏡 Sewa Vila/Staycation</span>
+                            <span class="leak-tag">🎓 Bayar Keperluan Kuliah</span>
+                            <span class="leak-tag">🎮 Sering Keluar Main / Nongkrong</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-career" class="content-section" style="padding-top: 10px;">
+            <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
+                <div class="header-left">
+                    <h1 style="color:#ba68c8;">Peningkatan Karir & Skill 🚀</h1>
+                    <p style="color:#888; font-size: 0.9rem;">Upgrade "Mesin" untuk mencetak hasil yang lebih besar.</p>
+                </div>
+            </header>
+
+            <div class="dashboard-container">
+                <div class="chart-grid" style="grid-template-columns: 1fr 1fr; gap:20px;">
+                    <div class="chart-card">
+                        <h3 class="chart-title" style="color:#ba68c8;">📚 Fokus Belajar Saat Ini</h3>
+                        <div style="margin-top: 15px;">
+                            <div style="margin-bottom: 15px;">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.9rem;">
+                                    <span>Psikologi & Probabilitas XAUUSD</span>
+                                    <span style="color:#ba68c8;">75%</span>
+                                </div>
+                                <div style="width:100%; background:#333; border-radius:10px; height:8px;">
+                                    <div style="width:75%; background:#ba68c8; height:100%; border-radius:10px;"></div>
+                                </div>
+                                <p style="color:#aaa; font-size:0.8rem; margin-top:5px;">Meningkatkan disiplin entry dan menahan FOMO saat news.</p>
+                            </div>
+                            
+                            <div style="margin-bottom: 15px;">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.9rem;">
+                                    <span>Optimalisasi Prompt AI & Otomatisasi</span>
+                                    <span style="color:#00e676;">40%</span>
+                                </div>
+                                <div style="width:100%; background:#333; border-radius:10px; height:8px;">
+                                    <div style="width:40%; background:#00e676; height:100%; border-radius:10px;"></div>
+                                </div>
+                                <p style="color:#aaa; font-size:0.8rem; margin-top:5px;">Memaksimalkan AI Plus Premium untuk efisiensi coding & rekap data.</p>
+                            </div>
+
+                            <div style="margin-bottom: 15px;">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.9rem;">
+                                    <span>Manajemen Nutrisi & Anatomi Otot</span>
+                                    <span style="color:#2196f3;">60%</span>
+                                </div>
+                                <div style="width:100%; background:#333; border-radius:10px; height:8px;">
+                                    <div style="width:60%; background:#2196f3; height:100%; border-radius:10px;"></div>
+                                </div>
+                                <p style="color:#aaa; font-size:0.8rem; margin-top:5px;">Eksplorasi subtitusi dada ayam/telur dan efektivitas latihan dumbbell.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <h3 class="chart-title" style="color:#ffb300;">🎯 Backlog & Target Sertifikasi/Kursus</h3>
+                        <ul class="task-list" style="margin-top:15px;">
+                            <li style="border-left-color:#ffb300;">Ikut Webinar/Kursus Advance Market Structure (SMC/ICT).</li>
+                            <li style="border-left-color:#ffb300;">Pelajari integrasi API Google Sheets tingkat lanjut biar semua data otomatis.</li>
+                            <li style="border-left-color:#ffb300;">Belajar teknik pernafasan dan endurance tingkat tinggi (VO2 Max).</li>
+                            <li style="border-left-color:#ffb300;">Bikin sumber *Active Income* baru selain rutinitas saat ini.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-roadmap" class="content-section" style="padding-top: 10px;">
+            <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
+                <div class="header-left">
+                    <h1 style="color:#00e676;">Roadmap Masa Depan 🗺️</h1>
+                    <p style="color:#888; font-size: 0.9rem;">Milestone target kehidupan, finansial, dan fisik secara bertahap.</p>
+                </div>
+            </header>
+
+            <div class="dashboard-container">
+                <div style="position: relative; padding-left: 30px; margin-top: 20px; border-left: 2px dashed #444;">
+                    
+                    <div style="position: relative; margin-bottom: 40px;">
+                        <div style="position: absolute; left: -41px; top: 0; width: 20px; height: 20px; background: #121212; border: 3px solid #ff1744; border-radius: 50%;"></div>
+                        <h3 style="color:#ff1744; margin-bottom:5px;">Q3 2026 (Juli - September)</h3>
+                        <div class="chart-card" style="margin-bottom:0; padding:15px; border-left: 4px solid #ff1744;">
+                            <p style="color:#fff; font-weight:bold; margin-bottom:10px;">Fokus: Recovery & Endurance Base</p>
+                            <ul style="color:#aaa; font-size:0.9rem; padding-left:20px; line-height:1.6;">
+                                <li><strong>Trading:</strong> Menghapus *defisit keuangan* sepenuhnya dan menjaga Win Rate XAUUSD konsisten di atas 50%.</li>
+                                <li><strong>Fisik:</strong> Latihan dumbbell, skipping, dan plank sudah menjadi *muscle memory* tanpa rasa malas.</li>
+                                <li><strong>Goal Utama:</strong> Berhasil eksekusi trip "Naik Gunung" perdana tahun ini dengan stamina prima tanpa ngos-ngosan berlebih seperti saat tes jalan di Ragunan.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div style="position: relative; margin-bottom: 40px;">
+                        <div style="position: absolute; left: -41px; top: 0; width: 20px; height: 20px; background: #121212; border: 3px solid #ffd700; border-radius: 50%;"></div>
+                        <h3 style="color:#ffd700; margin-bottom:5px;">Q4 2026 (Oktober - Desember)</h3>
+                        <div class="chart-card" style="margin-bottom:0; padding:15px; border-left: 4px solid #ffd700;">
+                            <p style="color:#fff; font-weight:bold; margin-bottom:10px;">Fokus: Akumulasi Keuntungan & Skala</p>
+                            <ul style="color:#aaa; font-size:0.9rem; padding-left:20px; line-height:1.6;">
+                                <li><strong>Trading:</strong> Saldo Tabungan Seharusnya sudah mulai surplus berkat P/L bulanan hijau yang konsisten. Sudah menemukan *setup* andalan (Zone/Tengah).</li>
+                                <li><strong>Lifestyle:</strong> Anggaran pengeluaran bulanan berhasil ditekan tanpa membengkak dari *leak tags* (bocor halus).</li>
+                                <li><strong>Goal Utama:</strong> Menutup tahun 2026 dengan performa fisik dan portofolio hijau.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div style="position: relative;">
+                        <div style="position: absolute; left: -41px; top: 0; width: 20px; height: 20px; background: #121212; border: 3px solid #00e676; border-radius: 50%;"></div>
+                        <h3 style="color:#00e676; margin-bottom:5px;">2027 & Beyond</h3>
+                        <div class="chart-card" style="margin-bottom:0; padding:15px; border-left: 4px solid #00e676;">
+                            <p style="color:#fff; font-weight:bold; margin-bottom:10px;">Fokus: Financial Freedom & Puncak Baru</p>
+                            <ul style="color:#aaa; font-size:0.9rem; padding-left:20px; line-height:1.6;">
+                                <li><strong>Sistem:</strong> Personal OS ini di-upgrade menjadi versi yang bisa *auto-sync* dengan bank dan MT4.</li>
+                                <li><strong>Fisik:</strong> Menaklukkan gunung-gunung dengan elevasi di atas 3000mdpl dengan asupan protein yang sangat terukur.</li>
+                                <li><strong>Goal Utama:</strong> Kebebasan waktu. Uang bekerja melalui compounding trading, sementara waktu digunakan untuk hobi dan menjaga kesehatan tubuh.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="wealth-modal" class="modal">
+        <div class="modal-content" style="width: 500px;">
+            <span class="close-btn" onclick="document.getElementById('wealth-modal').style.display='none'">&times;</span>
+            <h2 id="wealth-modal-title" style="color:#ffb300; margin-bottom: 15px;">+ Catat Keuangan</h2>
+            <form id="wealth-form">
+                <input type="hidden" id="wealth-edit-index" value="-1">
+                <div class="form-group">
+                    <label>Jenis Catatan</label>
+                    <select id="wealth-type" class="form-input">
+                        <option value="income">Pendapatan / Gaji / THR</option>
+                        <option value="expense">Pengeluaran Utama</option>
+                    </select>
+                </div>
+                <div class="form-grid-2" style="margin-top: 10px;">
+                    <div class="form-group"><label>Bulan / Tahun</label><input type="month" id="wealth-date" class="form-input" required></div>
+                    <div class="form-group"><label>Jumlah (Rp)</label><input type="number" id="wealth-amount" class="form-input" required></div>
+                </div>
+                <div class="form-group" style="margin-top: 10px;"><label>Keterangan Lengkap</label><input type="text" id="wealth-notes" class="form-input" placeholder="Cth: Gaji Bulan Juni 2026" required></div>
+                
+                <div style="display:flex; gap:10px; margin-top:1.5rem;">
+                    <button type="button" id="wealth-cancel-edit-btn" class="btn btn-outline" style="display:none; width:100%; padding:12px;">Batal Edit</button>
+                    <button type="submit" class="save-btn" style="background:#ffb300; color:#121212; margin-top:0;">Simpan Data</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="wealth-modal-rt" class="modal">
+        <div class="modal-content" style="width: 400px; text-align:center;">
+            <span class="close-btn" onclick="document.getElementById('wealth-modal-rt').style.display='none'">&times;</span>
+            <h2 style="color:#b0bec5; margin-bottom: 10px;">Update Uang Pegangan</h2>
+            <p style="color:#aaa; font-size:0.85rem; margin-bottom: 20px;">Masukkan total uang keseluruhan (Tabungan Online + Cash di tangan) saat ini.</p>
+            <input type="number" id="wealth-rt-amount" class="form-input" placeholder="Rp..." style="margin-bottom: 15px;">
+            <button id="btn-save-rt" class="save-btn" style="background:#b0bec5; color:#121212;">Simpan Uang Real Time</button>
+        </div>
+    </div>
+
+    <div id="entry-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-modal">&times;</span>
+            <h2 id="modal-date-title">Entry Tanggal</h2>
+            <div id="today-history" class="today-history"></div>
+            <hr style="border: 0.5px solid #333; margin: 15px 0;">
+            <h3 id="form-title" style="font-size: 1rem; margin-bottom: 10px; color:#ffd700;">+ Tambah Entry Baru</h3>
+            <form id="entry-form">
+                <input type="hidden" id="edit-index" value="-1">
+                
+                <div class="converter-box" style="margin-bottom: 15px;">
+                    <label style="font-size:0.85rem; color:#ffd700;">Durasi Waktu Entry</label>
+                    <div class="form-grid-2" style="margin-top:5px;">
+                        <div class="form-group" style="margin-top:0;"><label>Waktu Buka</label><input type="time" id="xau-time-open" class="form-input" required></div>
+                        <div class="form-group" style="margin-top:0;"><label>Waktu Tutup</label><input type="time" id="xau-time-close" class="form-input" required></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-top:10px; border-top:1px dashed #555; padding-top:8px;">
+                        <span style="font-size:0.8rem; color:#aaa;">Otomatisasi Durasi:</span>
+                        <strong id="xau-auto-duration" style="color:#00e676; font-size:0.9rem;">0 Jam 0 Menit</strong>
+                    </div>
+                </div>
+
+                <div class="converter-box" style="margin-bottom: 15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <label style="font-size:0.85rem; color:#ffd700;">Harga Entry & Stop Loss (Point)</label>
+                        <button type="button" id="btn-add-xau-layer" style="background:#333; border:1px solid #555; color:#fff; padding:4px 8px; font-size:0.75rem; border-radius:4px; cursor:pointer;">+ Add Layer</button>
+                    </div>
+                    <div id="xau-layers-container" style="margin-top:10px;">
+                        </div>
+                </div>
+
+                <div class="converter-box" style="margin-bottom: 15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+                        <label style="font-size:0.85rem; color:#ffd700;">Konverter Otomatis P/L (Live Kurs: <strong id="live-kurs-display" style="color:#00e676;">Loading...</strong>)</label>
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <select id="xau-currency-type" class="form-input" style="flex: 1;">
+                            <option value="USD">USD ($)</option>
+                            <option value="Cent">Cent (¢)</option>
+                            <option value="BTC">BTC</option>
+                            <option value="JPY">JPY (¥)</option>
+                        </select>
+                        <input type="number" step="any" id="xau-value-input" class="form-input" placeholder="Masukkan angka..." style="flex: 2;">
+                    </div>
+                </div>
+
+                <div class="form-grid-2">
+                    <div class="form-group"><label>Hasil Akhir P/L (Rp)</label><input type="number" id="input-pl" class="form-input" placeholder="Min (-) jika Loss" required></div>
+                    <div class="form-group"><label>Alasan / Jurnal Detail</label><input type="text" id="input-alasan" class="form-input" required></div>
+                </div>
+
+                <div class="form-grid-4">
+                    <div class="form-group"><label>Timeframe</label><select id="input-tf" class="form-input"><option>H1</option><option>M30</option><option>M15</option><option>M5</option><option>M1</option></select></div>
+                    <div class="form-group"><label>Arah</label><select id="input-arah" class="form-input"><option>BUY</option><option>SELL</option><option>MIX</option></select></div>
+                    <div class="form-group"><label>Entry Area</label><select id="input-area" class="form-input"><option>Zone</option><option>Tengah</option></select></div>
+                    <div class="form-group"><label>Saat News?</label><select id="input-news" class="form-input"><option>Tidak</option><option>Ya</option></select></div>
+                </div>
+                <div class="form-group"><label>Emosi</label><select id="input-emosi" class="form-input"><option>Tenang</option><option>FOMO</option><option>Ragu</option><option>Balas Dendam</option></select></div>
+                
+                <div style="display:flex; gap:10px; margin-top:1.5rem;">
+                    <button type="button" id="cancel-edit-btn" class="btn btn-outline" style="display:none; width:100%; padding:12px;">Batal Edit</button>
+                    <button type="submit" id="save-entry-btn" class="save-btn" style="margin-top:0;">Simpan Jurnal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="exp-modal" class="modal"><div class="modal-content"><span class="close-btn" id="close-exp-modal">&times;</span><h2 id="exp-modal-title" style="color:#ff1744;">Pengeluaran Tanggal</h2><div id="exp-history" class="today-history"></div><hr style="border: 0.5px solid #333; margin: 15px 0;"><h3 id="exp-form-title" style="font-size: 1rem; margin-bottom: 10px; color:#ff1744;">+ Tambah Pengeluaran</h3><form id="exp-form"><input type="hidden" id="exp-edit-index" value="-1"><div class="form-grid-2"><div class="form-group"><label>Jenis Transaksi</label><select id="exp-type" class="form-input"><option value="Online">Online / Transfer / QRIS</option><option value="Cash">Tunai (Cash)</option></select></div><div class="form-group" id="exp-bank-group"><label>Pilih Bank/E-Wallet</label><select id="exp-bank" class="form-input"><option>BCA</option><option>Gopay</option><option>OVO</option><option>PMT</option><option>Lainnya</option></select></div></div><div class="form-grid-2" style="margin-top: 10px;"><div class="form-group"><label>Jumlah (Rp)</label><input type="number" id="exp-amount" class="form-input" required></div><div class="form-group"><label>Tingkat Kepentingan</label><select id="exp-category" class="form-input"><option>Rutin (Wajib)</option><option>Penting banget</option><option>Penasaran/FOMO</option><option>Date / Main</option><option>Gak penting banget</option></select></div></div><div class="form-group" style="margin-top: 10px;"><label>Catatan / Beli Apa?</label><input type="text" id="exp-notes" class="form-input" placeholder="Cth: Dada ayam & telur..." required></div><div style="display:flex; gap:10px; margin-top:1.5rem;"><button type="button" id="exp-cancel-edit-btn" class="btn btn-outline" style="display:none; width:100%; padding:12px;">Batal Edit</button><button type="submit" id="exp-save-btn" class="save-btn" style="background:#ff1744; color:#fff;">Simpan Pengeluaran</button></div></form></div></div>
+    
+    <div id="sport-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-sport-modal">&times;</span>
+            <h2 id="sport-modal-title" style="color:#2196f3;">Latihan Tanggal</h2>
+            <div id="sport-history" class="today-history"></div>
+            <hr style="border: 0.5px solid #333; margin: 15px 0;">
+            <h3 id="sport-form-title" style="font-size: 1rem; margin-bottom: 10px; color:#2196f3;">+ Catat Latihan Baru</h3>
+            <form id="sport-form">
+                <input type="hidden" id="sport-edit-index" value="-1">
+                <div class="form-grid-4">
+                    <div class="form-group"><label>Jam Latihan</label><input type="time" id="sport-time" class="form-input" required></div>
+                    <div class="form-group"><label>Jenis Olahraga</label><select id="sport-type" class="form-input"><option>Skipping</option><option>Plank</option><option>Angkat Beban</option><option>Lari</option><option>Lainnya</option></select></div>
+                    <div class="form-group"><label>Target Utama</label><select id="sport-target" class="form-input"><option>Naik Gunung</option><option>Kesehatan Rutin</option><option>Membentuk Otot</option></select></div>
+                    <div class="form-group"><label>Tercapai Plan?</label><select id="sport-achieved" class="form-input"><option>Ya</option><option>Tidak Selesai</option></select></div>
+                </div>
+                
+                <div class="converter-box" style="margin-top: 15px;">
+                    <label style="font-size:0.85rem; color:#2196f3;">Detail Set Latihan</label>
+                    <div id="sport-sets-container">
+                        </div>
+                    <button type="button" id="btn-add-set" class="btn-dashed" style="margin-top:15px; width:100%;">+ Tambah Gerakan / Set Lainnya</button>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:15px; padding-top:10px; border-top:1px dashed #555;">
+                        <span style="color:#aaa; font-size:0.9rem;">Total Kalkulasi Durasi:</span><h3 id="sport-auto-duration" style="color:#2196f3;">0 Menit</h3>
+                    </div>
+                </div>
+
+                <div class="form-group" id="late-reason-container" style="display:none; margin-top:15px;">
+                    <label style="color:#ff9800;">⚠️ Alasan Telat Input (> 5 Hari)</label>
+                    <input type="text" id="sport-late-reason" class="form-input" placeholder="Jujur, kenapa baru diinput sekarang?">
+                </div>
+
+                <div class="form-group" style="margin-top: 10px;"><label>Catatan Tambahan Fisik</label><input type="text" id="sport-notes" class="form-input" placeholder="Cth: Stamina cepat habis..." required></div>
+                
+                <div style="display:flex; gap:10px; margin-top:1.5rem;">
+                    <button type="button" id="sport-cancel-edit-btn" class="btn btn-outline" style="display:none; width:100%; padding:12px;">Batal Edit</button>
+                    <button type="submit" id="sport-save-btn" class="save-btn" style="background:#2196f3; color:#fff;">Simpan Latihan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
