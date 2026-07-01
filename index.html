@@ -217,9 +217,15 @@
                     <div id="exp-empty-state" class="empty-state-dash"></div>
                     <div id="exp-dash-content">
                         <div id="exp-dash-insight" style="margin-bottom: 20px;"></div>
+                        <div class="highlight-grid">
+                            <div class="highlight-box" style="border-left: 4px solid #ff1744;"><span class="label">🔥 Pengeluaran Terbesar</span><h3 id="exp-highest-pl" class="loss-text">Rp 0</h3><p id="exp-highest-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box" style="border-left: 4px solid #ff9800;"><span class="label">🏆 Kategori Paling Boros</span><h3 id="exp-top-category" style="color:#ff9800;">-</h3><p id="exp-top-category-desc" class="desc-text">-</p></div>
+                        </div>
                         <div class="chart-grid">
-                            <div class="chart-card" style="min-height: 300px;"><h3 class="chart-title" style="color:#ff1744;">Grafik Kategori Belanja</h3><canvas id="expCategoryChart"></canvas></div>
+                            <div class="chart-card" style="min-height: 300px;"><h3 class="chart-title" style="color:#ff1744;">Grafik Kategori Belanja</h3><p style="color:#888; font-size:0.75rem; margin-bottom:10px;">*Klik salah satu bar untuk lihat detail transaksinya</p><canvas id="expCategoryChart"></canvas></div>
                             <div class="chart-card" style="min-height: 300px; display: flex; flex-direction: column; align-items: center;"><h3 class="chart-title" style="color:#ff1744; width: 100%; text-align: left;">Distribusi Bank/Metode</h3><div style="flex-grow:1; width:100%; max-width: 300px;"><canvas id="expBankChart"></canvas></div></div>
+                        </div>
+                        <div id="exp-category-detail" style="display:none;" class="table-container"></div>
                         </div>
                     </div>
                 </div>
@@ -253,6 +259,14 @@
                 <div id="sport-empty-state" class="empty-state-dash"></div>
                 <div id="sport-dash-content">
                     <div id="sport-dash-insight" style="margin-bottom: 20px;"></div>
+                    <div class="highlight-grid">
+                        <div class="highlight-box" style="border-left: 4px solid #2196f3;"><span class="label">🏅 Olahraga Favorit</span><h3 id="sport-top-type" style="color:#2196f3;">-</h3><p id="sport-top-type-desc" class="desc-text">-</p></div>
+                        <div class="highlight-box" style="border-left: 4px solid #00e676;"><span class="label">⏱️ Rata-rata Durasi/Sesi</span><h3 id="sport-avg-dur" style="color:#00e676;">0 Menit</h3><p class="desc-text">Per sesi latihan bulan ini</p></div>
+                    </div>
+                    <div class="chart-grid">
+                        <div class="chart-card" style="text-align:center;"><h3 class="chart-title" style="color:#2196f3;">Distribusi Jenis Olahraga</h3><div style="position:relative; width:100%; max-width:250px; margin:0 auto;"><canvas id="sportTypeChart"></canvas></div></div>
+                        <div class="chart-card" style="text-align:center;"><h3 class="chart-title" style="color:#2196f3;">Hari Aktif vs Bolong</h3><div style="position:relative; width:100%; max-width:250px; margin:0 auto;"><canvas id="sportActiveChart"></canvas><div id="sport-active-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-weight:bold; color:#fff; display:flex; flex-direction:column; gap:5px;"><span style="font-size:1.5rem;">0% Aktif</span></div></div></div>
+                    </div>
                     <div class="chart-card" style="margin-bottom: 30px;"><h3 class="chart-title" style="color:#2196f3;">Frekuensi Latihan Harian (Menit)</h3><canvas id="sportFreqChart"></canvas></div>
                 </div>
             </div>

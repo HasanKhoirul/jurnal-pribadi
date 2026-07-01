@@ -236,13 +236,14 @@ document.addEventListener("DOMContentLoaded", () => {
         let csvContent = "data:text/csv;charset=utf-8,";
         
         if (currentExportType === 'xau') {
-            csvContent += "Tanggal,Waktu Buka,Waktu Tutup,Durasi,TF,Arah,Area,News,Emosi,Total Layer,Alasan Entry,P/L (Rp)\n";
+            csvContent += "Tanggal,Waktu Buka,Waktu Tutup,Durasi,TF,Arah,Area,News,Emosi,Total Layer,Detail Layer (Entry/SL/Pips),Alasan Entry,P/L (Rp)\n";
             for(let d in journalData) {
                 if(period === 'all' || d.startsWith(targetPrefix)) {
                     journalData[d].forEach(t => {
                         let layers = t.layers ? t.layers.length : 1;
+                        let layerDetail = (t.layers || []).map(ly => `${ly.entry}/${ly.sl}/${ly.pips}`).join('|');
                         let alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
-                        let row = [d, t.timeOpen||'-', t.timeClose||'-', t.duration||'-', t.tf, t.arah, t.area, t.news, t.emosi, layers, `"${alasan}"`, t.pl];
+                        let row = [d, t.timeOpen||'-', t.timeClose||'-', t.duration||'-', t.tf, t.arah, t.area, t.news, t.emosi, layers, `"${layerDetail}"`, `"${alasan}"`, t.pl];
                         csvContent += row.join(",") + "\n";
                     });
                 }
@@ -259,13 +260,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
         } else if (currentExportType === 'sport') {
-            csvContent += "Tanggal,Jam,Jenis,Target,Status,Total Durasi (Mnt),Alasan Telat,Catatan Fisik\n";
+            csvContent += "Tanggal,Jam,Jenis,Target,Status,Total Durasi (Mnt),Detail Set (Gerakan:Kerja:Rest),Alasan Telat,Catatan Fisik\n";
             for(let d in sportData) {
                 if(period === 'all' || d.startsWith(targetPrefix)) {
                     sportData[d].forEach(t => {
                         let notes = t.notes ? t.notes.replace(/"/g, '""') : '';
                         let reason = t.lateReason ? t.lateReason.replace(/"/g, '""') : '';
-                        let row = [d, t.time, t.type, t.target, t.achieved, t.totalDur, `"${reason}"`, `"${notes}"`];
+                        let setDetail = (t.sets || []).map(s => `${s.name}:${s.dur}:${s.rest}`).join('|');
+                        let row = [d, t.time, t.type, t.target, t.achieved, t.totalDur, `"${setDetail}"`, `"${reason}"`, `"${notes}"`];
                         csvContent += row.join(",") + "\n";
                     });
                 }
@@ -341,15 +343,16 @@ document.addEventListener("DOMContentLoaded", () => {
     handleCSVImport('csv-upload-xau', (rows) => {
         let count = 0;
         rows.forEach(r => {
-            const [date, timeOpen, timeClose, duration, tf, arah, area, news, emosi, totalLayer, alasan, pl] = r;
+            const [date, timeOpen, timeClose, duration, tf, arah, area, news, emosi, totalLayer, layerDetail, alasan, pl] = r;
             if (!date || pl === undefined || pl === '') return;
             if (!journalData[date]) journalData[date] = [];
+            const layers = layerDetail ? layerDetail.split('|').filter(Boolean).map(s => { const [entry, sl, pips] = s.split('/'); return { entry, sl, pips }; }) : Array.from({ length: parseInt(totalLayer) || 1 }, () => ({ entry: '', sl: '', pips: '0' }));
             journalData[date].push({
                 pl, alasan, tf, arah, area, news, emosi,
                 timeOpen: timeOpen === '-' ? '' : timeOpen,
                 timeClose: timeClose === '-' ? '' : timeClose,
                 duration,
-                layers: Array.from({ length: parseInt(totalLayer) || 1 }, () => ({ entry: '', sl: '', pips: '0' }))
+                layers
             });
             count++;
         });
@@ -375,10 +378,11 @@ document.addEventListener("DOMContentLoaded", () => {
     handleCSVImport('csv-upload-sport', (rows) => {
         let count = 0;
         rows.forEach(r => {
-            const [date, time, type, target, achieved, totalDur, lateReason, notes] = r;
+            const [date, time, type, target, achieved, totalDur, setDetail, lateReason, notes] = r;
             if (!date || totalDur === undefined || totalDur === '') return;
             if (!sportData[date]) sportData[date] = [];
-            sportData[date].push({ time, type, target, achieved, totalDur, lateReason, notes, sets: [] });
+            const sets = setDetail ? setDetail.split('|').filter(Boolean).map(s => { const [name, dur, rest] = s.split(':'); return { name, dur, rest }; }) : [];
+            sportData[date].push({ time, type, target, achieved, totalDur, lateReason, notes, sets });
             count++;
         });
         saveData('sport_data_v1', sportData);
@@ -716,19 +720,35 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('exp-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderExpCalendar(); }; document.getElementById('exp-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderExpCalendar(); };
 
     function renderExpDashboard() {
-        if(!isLoggedIn) return; const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth(); document.getElementById('exp-dash-month-year-display').innerText = `${monthNames[m]} ${y}`; let catTotals = {}; let bankTotals = {}; let totalBelanja = 0; let monthHasData = false;
-        for (let i = 1; i <= 31; i++) { const fDate = `${y}-${String(m+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`; if(expData[fDate] && expData[fDate].length > 0) { monthHasData = true; expData[fDate].forEach(t => { let amt = parseFloat(t.amount); totalBelanja += amt; catTotals[t.category] = (catTotals[t.category] || 0) + amt; let bankKey = t.type === 'Cash' ? 'Tunai' : t.bank; bankTotals[bankKey] = (bankTotals[bankKey] || 0) + amt; }); } }
+        if(!isLoggedIn) return; const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth(); document.getElementById('exp-dash-month-year-display').innerText = `${monthNames[m]} ${y}`; let catTotals = {}; let bankTotals = {}; let totalBelanja = 0; let monthHasData = false; let allTx = []; let maxTx = null;
+        for (let i = 1; i <= 31; i++) { const fDate = `${y}-${String(m+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`; if(expData[fDate] && expData[fDate].length > 0) { monthHasData = true; expData[fDate].forEach(t => { let amt = parseFloat(t.amount); totalBelanja += amt; catTotals[t.category] = (catTotals[t.category] || 0) + amt; let bankKey = t.type === 'Cash' ? 'Tunai' : t.bank; bankTotals[bankKey] = (bankTotals[bankKey] || 0) + amt; let tx = { date: fDate, ...t, amt }; allTx.push(tx); if (!maxTx || amt > maxTx.amt) maxTx = tx; }); } }
         const emptyState = document.getElementById('exp-empty-state'); const dashContent = document.getElementById('exp-dash-content');
-        if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; } 
+        document.getElementById('exp-category-detail').style.display = 'none';
+        if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; }
         else {
             emptyState.style.display = 'none'; dashContent.style.display = 'block';
             let insightHTML = `Total keluar: <strong style="color:#ff1744;">${formatRupiah(totalBelanja)}</strong>. `;
             if(catTotals['Gak penting banget'] > 300000) insightHTML += `Banyak keluar untuk hal gak penting, kurangi fomo!`; else if(totalBelanja > 0) insightHTML += `Manajemen cukup baik.`; document.getElementById('exp-dash-insight').innerHTML = `<div class="insight-box insight-warning">${insightHTML}</div>`;
+
+            if (maxTx) { document.getElementById('exp-highest-pl').innerText = formatRupiah(maxTx.amt); document.getElementById('exp-highest-desc').innerText = `[${maxTx.date}] ${maxTx.notes} (${maxTx.category})`; }
+            let topCatEntry = Object.entries(catTotals).sort((a,b) => b[1]-a[1])[0];
+            if (topCatEntry) { document.getElementById('exp-top-category').innerText = topCatEntry[0]; document.getElementById('exp-top-category-desc').innerText = `${formatRupiah(topCatEntry[1])} (${((topCatEntry[1]/totalBelanja)*100).toFixed(0)}% dari total)`; }
+
             if(expCatChartInst) expCatChartInst.destroy(); if(expBankChartInst) expBankChartInst.destroy();
-            
-            expCatChartInst = new Chart(document.getElementById('expCategoryChart').getContext('2d'), { type: 'bar', data: { labels: Object.keys(catTotals), datasets: [{ label: 'Total Rp', data: Object.values(catTotals), backgroundColor: ['#4caf50', '#ff9800', '#f44336', '#e91e63', '#9c27b0'] }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } } } });
+
+            const catLabels = Object.keys(catTotals);
+            expCatChartInst = new Chart(document.getElementById('expCategoryChart').getContext('2d'), { type: 'bar', data: { labels: catLabels, datasets: [{ label: 'Total Rp', data: Object.values(catTotals), backgroundColor: ['#4caf50', '#ff9800', '#f44336', '#e91e63', '#9c27b0'] }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } }, onClick: (evt, elements) => { if (!elements.length) return; const cat = catLabels[elements[0].index]; showExpCategoryDetail(cat, allTx.filter(t => t.category === cat)); } } });
             expBankChartInst = new Chart(document.getElementById('expBankChart').getContext('2d'), { type: 'pie', data: { labels: Object.keys(bankTotals), datasets: [{ data: Object.values(bankTotals), backgroundColor: ['#0066ae', '#00aed6', '#4c2a86', '#ff9800', '#4caf50'] }] }, options: { plugins: { legend: { position: 'bottom', labels: {color:'#fff'} } } } });
         }
+    }
+
+    function showExpCategoryDetail(category, txList) {
+        const box = document.getElementById('exp-category-detail');
+        txList = [...txList].sort((a,b) => b.date.localeCompare(a.date));
+        let rows = txList.map(t => `<tr><td>${t.date}</td><td>${t.type === 'Cash' ? 'Tunai' : t.bank}</td><td>${t.notes}</td><td align="right" class="loss-text">${formatRupiah(t.amt)}</td></tr>`).join('');
+        box.innerHTML = `<h3 class="chart-title" style="color:#ff1744;">Detail Kategori: ${category} (${txList.length} transaksi)</h3><table class="data-table"><thead><tr><th>Tanggal</th><th>Bank/Tunai</th><th>Catatan</th><th style="text-align:right;">Jumlah</th></tr></thead><tbody>${rows}</tbody></table>`;
+        box.style.display = 'block';
+        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
     document.getElementById('exp-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderExpDashboard(); }; document.getElementById('exp-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderExpDashboard(); };
 
@@ -744,7 +764,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // 4. MODUL JURNAL OLAHRAGA
     // ==========================================
-    let currentSportDateStr = null; let sportFreqChartInst = null;
+    let currentSportDateStr = null; let sportFreqChartInst = null; let sportTypeChartInst = null; let sportActiveChartInst = null;
     document.getElementById('sport-menu-calendar').addEventListener('click', function() { this.classList.add('active'); document.getElementById('sport-menu-dashboard').classList.remove('active'); document.getElementById('sport-view-calendar').style.display = 'block'; document.getElementById('sport-view-dashboard').style.display = 'none'; renderSportCalendar(); });
     document.getElementById('sport-menu-dashboard').addEventListener('click', function() { this.classList.add('active'); document.getElementById('sport-menu-calendar').classList.remove('active'); document.getElementById('sport-view-calendar').style.display = 'none'; document.getElementById('sport-view-dashboard').style.display = 'block'; renderSportDashboard(); });
 
@@ -794,32 +814,52 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('sport-monthly-total').innerText = `${totalBulanSesi} Kali | ${totalBulanMenit} Menit`;
         let badgesHtml = ''; for (let sType in sportTotals) { badgesHtml += `<div style="padding:5px 10px; border-radius:4px; font-size:0.85rem;" class="sport-badge ${getSportClass(sType)}">${sType}: ${sportTotals[sType]}x Latihan</div>`; } document.getElementById('sport-summary-badges').innerHTML = badgesHtml || '<span style="color:#888;">Belum ada data latihan bulan ini.</span>';
     }
+    document.getElementById('sport-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderSportCalendar(); }; document.getElementById('sport-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderSportCalendar(); };
+    document.getElementById('sport-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderSportDashboard(); }; document.getElementById('sport-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderSportDashboard(); };
 
     function renderSportDashboard() {
         const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth(); document.getElementById('sport-dash-month-year-display').innerText = `${monthNames[m]} ${y}`;
-        let labels = []; let dataFreq = []; let activeDays = 0; let missedDays = 0; let domSport = {}; let monthHasData = false;
-        
+        let labels = []; let dataFreq = []; let activeDays = 0; let missedDays = 0; let domSport = {}; let monthHasData = false; let totalSessions = 0; let totalMinutes = 0;
+
         let today = new Date(); today.setHours(0,0,0,0);
-        
+
         for (let i = 1; i <= 31; i++) {
             const fDate = `${y}-${String(m+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`; labels.push(`Tgl ${i}`);
             let targetDate = new Date(y, m, i); let diffDays = Math.floor((today - targetDate) / (1000 * 60 * 60 * 24));
-            
-            if(sportData[fDate] && sportData[fDate].length > 0) { 
-                monthHasData = true; activeDays++; let dur = 0; sportData[fDate].forEach(t => { dur += parseFloat(t.totalDur); domSport[t.type] = (domSport[t.type] || 0) + 1; }); dataFreq.push(dur); 
-            } else { 
+
+            if(sportData[fDate] && sportData[fDate].length > 0) {
+                monthHasData = true; activeDays++; let dur = 0; sportData[fDate].forEach(t => { dur += parseFloat(t.totalDur); domSport[t.type] = (domSport[t.type] || 0) + 1; totalSessions++; totalMinutes += parseFloat(t.totalDur); }); dataFreq.push(dur);
+            } else {
                 dataFreq.push(0); if(diffDays >= 5 && targetDate <= today) missedDays++;
             }
         }
         const emptyState = document.getElementById('sport-empty-state'); const dashContent = document.getElementById('sport-dash-content');
-        if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; } 
+        if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; }
         else {
             emptyState.style.display = 'none'; dashContent.style.display = 'block';
             let insightHTML = `Total hari aktif latihan: <strong style="color:#2196f3;">${activeDays} Hari</strong>. Bolong (Tidak Olahraga): <strong style="color:#ff1744;">${missedDays} Hari</strong>. `;
             if (activeDays < 4) { insightHTML += `Woy pemalas! Masa sebulan olahraganya kurang dari 4 hari? Ayo gerak buat Naik Gunung!`; document.getElementById('sport-dash-insight').innerHTML = `<div class="insight-box insight-danger">${insightHTML}</div>`; }
             else if (activeDays > 15) { insightHTML += `Gila lu ndro! Mantap banget konsistensinya, pertahankan!`; document.getElementById('sport-dash-insight').innerHTML = `<div class="insight-box insight-success">${insightHTML}</div>`; }
             else { insightHTML += `Bagus, sudah mulai rutin. `; document.getElementById('sport-dash-insight').innerHTML = `<div class="insight-box insight-warning">${insightHTML}</div>`; }
-            if(sportFreqChartInst) sportFreqChartInst.destroy();
+
+            let topType = Object.entries(domSport).sort((a,b) => b[1]-a[1])[0];
+            document.getElementById('sport-top-type').innerText = topType ? topType[0] : '-';
+            document.getElementById('sport-top-type-desc').innerText = topType ? `${topType[1]}x dari ${totalSessions} sesi bulan ini` : '-';
+            document.getElementById('sport-avg-dur').innerText = `${totalSessions > 0 ? Math.round(totalMinutes / totalSessions) : 0} Menit`;
+
+            const daysInMonthActual = new Date(y, m + 1, 0).getDate();
+            const isCurrentMonth = (y === today.getFullYear() && m === today.getMonth());
+            const relevantDays = isCurrentMonth ? today.getDate() : daysInMonthActual;
+            const daysOff = Math.max(relevantDays - activeDays, 0);
+            const pctAktif = relevantDays > 0 ? Math.round((activeDays / relevantDays) * 100) : 0;
+
+            if(sportFreqChartInst) sportFreqChartInst.destroy(); if(sportTypeChartInst) sportTypeChartInst.destroy(); if(sportActiveChartInst) sportActiveChartInst.destroy();
+
+            sportTypeChartInst = new Chart(document.getElementById('sportTypeChart').getContext('2d'), { type: 'doughnut', data: { labels: Object.keys(domSport), datasets: [{ data: Object.values(domSport), backgroundColor: ['#ff9800', '#9c27b0', '#f44336', '#4caf50', '#2196f3'], borderWidth: 0 }] }, options: { plugins: { legend: { position: 'bottom', labels: { color: '#fff' } } } } });
+
+            sportActiveChartInst = new Chart(document.getElementById('sportActiveChart').getContext('2d'), { type: 'doughnut', data: { labels: ['Aktif', 'Tidak Aktif'], datasets: [{ data: [activeDays, daysOff], backgroundColor: ['#00e676', '#333'], borderWidth: 0 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false } } } });
+            document.getElementById('sport-active-text').innerHTML = `<span style="font-size:1.5rem;">${pctAktif}% Aktif</span><span style="font-size:0.85rem; color:#aaa;">${activeDays}/${relevantDays} hari</span>`;
+
             sportFreqChartInst = new Chart(document.getElementById('sportFreqChart').getContext('2d'), { type: 'bar', data: { labels: labels, datasets: [{ label: 'Durasi (Menit)', data: dataFreq, backgroundColor: '#2196f3', borderRadius: 4 }] }, options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#333' } }, x: { grid: { display: false } } } } });
         }
     }
