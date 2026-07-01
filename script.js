@@ -1,5 +1,18 @@
+const firebaseConfig = {
+    apiKey: "AIzaSyCNkvU456aGcSgzuYdILloAKbct65vQ1kM",
+    authDomain: "jurnal-pribadi.firebaseapp.com",
+    projectId: "jurnal-pribadi",
+    storageBucket: "jurnal-pribadi.firebasestorage.app",
+    messagingSenderId: "106328588110",
+    appId: "1:106328588110:web:6460d477d2783de583a81f",
+    measurementId: "G-RFN33ZRRB9"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
 document.addEventListener("DOMContentLoaded", () => {
-    
+
     let journalData = JSON.parse(localStorage.getItem('xauusd_data_v3')) || {};
     let modalAwal = parseFloat(localStorage.getItem('xauusd_modal')) || 2500000;
     let expData = JSON.parse(localStorage.getItem('expense_data_v1')) || {};
@@ -7,6 +20,47 @@ document.addEventListener("DOMContentLoaded", () => {
     const defaultWealthHistory = { items: [], realMoney: 0 };
     if(!localStorage.getItem('wealth_data_v1')) { localStorage.setItem('wealth_data_v1', JSON.stringify(defaultWealthHistory)); }
     let wealthData = JSON.parse(localStorage.getItem('wealth_data_v1'));
+
+    // ==========================================
+    // MODULE CLOUD SYNC (FIREBASE)
+    // ==========================================
+    let cloudUnsub = null;
+    let pushTimer = null;
+
+    function saveData(key, obj) {
+        localStorage.setItem(key, JSON.stringify(obj));
+        clearTimeout(pushTimer);
+        pushTimer = setTimeout(pushToCloud, 800);
+    }
+
+    function pushToCloud() {
+        if (!auth.currentUser) return;
+        db.collection('appData').doc(auth.currentUser.uid).set({ journalData, modalAwal, expData, sportData, wealthData })
+            .catch(err => console.error('Gagal sync ke cloud:', err));
+    }
+
+    function attachCloudListener(uid) {
+        if (cloudUnsub) cloudUnsub();
+        cloudUnsub = db.collection('appData').doc(uid).onSnapshot(doc => {
+            if (doc.exists) {
+                const d = doc.data();
+                journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; expData = d.expData || {}; sportData = d.sportData || {}; wealthData = d.wealthData || defaultWealthHistory;
+                localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('sport_data_v1', JSON.stringify(sportData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+                rerenderActiveSection();
+            }
+        }, err => console.error('Gagal ambil data cloud:', err));
+    }
+
+    function rerenderActiveSection() {
+        renderHome();
+        const activeNav = document.querySelector('.menu-item.active');
+        if (!activeNav) return;
+        const targetId = activeNav.getAttribute('data-target');
+        if (targetId === 'view-trading') { if (document.getElementById('menu-dashboard').classList.contains('active')) renderXAUDashboard(); else renderXAUCalendar(); }
+        else if (targetId === 'view-expenses') { if (document.getElementById('exp-menu-dashboard').classList.contains('active')) renderExpDashboard(); else renderExpCalendar(); }
+        else if (targetId === 'view-sports') { if (document.getElementById('sport-menu-dashboard').classList.contains('active')) renderSportDashboard(); else renderSportCalendar(); }
+        else if (targetId === 'view-wealth') renderWealthDashboard();
+    }
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
     function formatRupiah(angka) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka); }
@@ -43,7 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
         else sidebar.classList.toggle('collapsed');
     });
 
-    let isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+    let isLoggedIn = false;
 
     function resetActivityTimer() { if(isLoggedIn) localStorage.setItem('lastActivity', Date.now()); }
     ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(evt => window.addEventListener(evt, resetActivityTimer));
@@ -51,30 +105,48 @@ document.addEventListener("DOMContentLoaded", () => {
     function checkInactivity() {
         if(isLoggedIn) {
             const lastAct = parseInt(localStorage.getItem('lastActivity') || '0');
-            if(Date.now() - lastAct > 30 * 60 * 1000) { 
-                isLoggedIn = false; localStorage.setItem('isLoggedIn', 'false'); applyAuthState(); alert("Sesi habis (30 menit tanpa aktivitas). Silakan login kembali.");
+            if(Date.now() - lastAct > 30 * 60 * 1000) {
+                auth.signOut(); alert("Sesi habis (30 menit tanpa aktivitas). Silakan login kembali.");
             }
         }
     }
-    setInterval(checkInactivity, 60000); checkInactivity(); 
+    setInterval(checkInactivity, 60000); checkInactivity();
 
     function applyAuthState() {
         const btnLogin = document.getElementById('btn-login');
+        const btnUpload = document.getElementById('btn-upload-cloud');
         if (isLoggedIn) {
             document.body.classList.remove('locked-mode');
-            btnLogin.innerHTML = '🔓 Logout (Hasan)'; btnLogin.style.borderColor = '#ff1744'; btnLogin.style.color = '#ff1744';
+            btnLogin.innerHTML = '🔓 Logout'; btnLogin.style.borderColor = '#ff1744'; btnLogin.style.color = '#ff1744';
+            if (btnUpload) btnUpload.style.display = 'block';
             resetActivityTimer();
         } else {
             document.body.classList.add('locked-mode');
             btnLogin.innerHTML = '🔒 Login System'; btnLogin.style.borderColor = '#ffd700'; btnLogin.style.color = '#ffd700';
+            if (btnUpload) btnUpload.style.display = 'none';
         }
-        renderHome();
     }
     applyAuthState();
+    renderHome();
+
+    auth.onAuthStateChanged(user => {
+        isLoggedIn = !!user;
+        applyAuthState();
+        rerenderActiveSection();
+        if (user) attachCloudListener(user.uid);
+        else if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; }
+    });
 
     document.getElementById('btn-login').addEventListener('click', () => {
-        if (isLoggedIn) { showConfirm("Yakin mau logout bos?", () => { isLoggedIn = false; localStorage.setItem('isLoggedIn', 'false'); applyAuthState(); }); } 
+        if (isLoggedIn) { showConfirm("Yakin mau logout bos?", () => { auth.signOut(); }); }
         else { document.getElementById('login-modal').style.display = 'flex'; }
+    });
+
+    document.getElementById('btn-upload-cloud').addEventListener('click', () => {
+        showConfirm("Ini akan MENIMPA data cloud dengan data di device ini. Cuma pakai ini di device yang punya data paling lengkap. Yakin?", () => {
+            pushToCloud();
+            alert("Data lokal berhasil di-upload ke Cloud!");
+        });
     });
 
     const togglePassBtn = document.getElementById('toggle-pass');
@@ -88,21 +160,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById('btn-submit-login').addEventListener('click', () => {
         const u = document.getElementById('login-user').value; const p = document.getElementById('login-pass').value;
-        if (u === 'Hasan' && p === 'Kepo@123') {
-            isLoggedIn = true; localStorage.setItem('isLoggedIn', 'true'); applyAuthState();
-            document.getElementById('login-modal').style.display = 'none'; document.getElementById('login-user').value = ''; document.getElementById('login-pass').value = ''; document.getElementById('login-pass').type = 'password'; 
+        auth.signInWithEmailAndPassword(u, p).then(() => {
+            document.getElementById('login-modal').style.display = 'none'; document.getElementById('login-user').value = ''; document.getElementById('login-pass').value = ''; document.getElementById('login-pass').type = 'password';
             if(togglePassBtn) togglePassBtn.innerText = '👁️';
-            
-            const activeNav = document.querySelector('.menu-item.active');
-            if(activeNav) {
-                const targetId = activeNav.getAttribute('data-target');
-                if(targetId === 'view-trading') renderXAUCalendar();
-                else if (targetId === 'view-expenses') { if (document.getElementById('exp-menu-dashboard').classList.contains('active')) renderExpDashboard(); else renderExpCalendar(); }
-                else if (targetId === 'view-sports') { if (document.getElementById('sport-menu-dashboard').classList.contains('active')) renderSportDashboard(); else renderSportCalendar(); }
-                else if (targetId === 'view-wealth') renderWealthDashboard();
-            }
-            alert("Akses Dibuka! Selamat datang Hasan 🚀");
-        } else { alert("Username atau Password salah bjir!"); }
+            alert("Akses Dibuka! Selamat datang 🚀");
+        }).catch(() => { alert("Email atau Password salah bjir!"); });
     });
 
     const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
@@ -264,7 +326,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             count++;
         });
-        localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData));
+        saveData('xauusd_data_v3', journalData);
         renderXAUCalendar(); renderHome();
         return count;
     });
@@ -278,7 +340,7 @@ document.addEventListener("DOMContentLoaded", () => {
             expData[date].push({ type, bank, category, notes, amount });
             count++;
         });
-        localStorage.setItem('expense_data_v1', JSON.stringify(expData));
+        saveData('expense_data_v1', expData);
         renderExpCalendar(); renderHome();
         return count;
     });
@@ -292,7 +354,7 @@ document.addEventListener("DOMContentLoaded", () => {
             sportData[date].push({ time, type, target, achieved, totalDur, lateReason, notes, sets: [] });
             count++;
         });
-        localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
+        saveData('sport_data_v1', sportData);
         renderSportCalendar(); renderHome();
         return count;
     });
@@ -307,7 +369,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (existingIdx > -1) wealthData.items[existingIdx] = item; else wealthData.items.push(item);
             count++;
         });
-        localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+        saveData('wealth_data_v1', wealthData);
         renderWealthDashboard(); renderHome();
         return count;
     });
@@ -405,7 +467,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     
     document.getElementById('prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderXAUCalendar(); }; document.getElementById('next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderXAUCalendar(); };
-    document.getElementById('clear-data-btn').onclick = () => { showConfirm("Data XAUUSD bakal kehapus permanen loh. Yakin?", () => { journalData={}; localStorage.removeItem('xauusd_data_v3'); renderXAUCalendar(); }); };
+    document.getElementById('clear-data-btn').onclick = () => { showConfirm("Data XAUUSD bakal kehapus permanen loh. Yakin?", () => { journalData={}; saveData('xauusd_data_v3', journalData); renderXAUCalendar(); }); };
 
     function updateXAUEquity(vY, vM) {
         let sumBefore = 0; let sumDuring = 0;
@@ -465,8 +527,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     document.getElementById('close-modal').onclick = () => document.getElementById('entry-modal').style.display='none';
     
-    window.moveXAU = (d, i, dir) => { let arr = journalData[d]; let temp = arr[i]; arr[i] = arr[i+dir]; arr[i+dir] = temp; localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); openXAUModal(d, new Date(d).getDate()); renderXAUCalendar(); }
-    window.deleteXAUTrade = (d, i) => { journalData[d].splice(i,1); if(!journalData[d].length) delete journalData[d]; localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); openXAUModal(d, new Date(d).getDate()); renderXAUCalendar(); };
+    window.moveXAU = (d, i, dir) => { let arr = journalData[d]; let temp = arr[i]; arr[i] = arr[i+dir]; arr[i+dir] = temp; saveData('xauusd_data_v3', journalData); openXAUModal(d, new Date(d).getDate()); renderXAUCalendar(); }
+    window.deleteXAUTrade = (d, i) => { journalData[d].splice(i,1); if(!journalData[d].length) delete journalData[d]; saveData('xauusd_data_v3', journalData); openXAUModal(d, new Date(d).getDate()); renderXAUCalendar(); };
     window.editXAUTrade = (d, i) => { 
         let t = journalData[d][i]; document.getElementById('input-pl').value = t.pl; document.getElementById('input-alasan').value = t.alasan; document.getElementById('input-tf').value = t.tf; document.getElementById('input-arah').value = t.arah; document.getElementById('input-area').value = t.area; document.getElementById('input-news').value = t.news; document.getElementById('input-emosi').value = t.emosi;
         document.getElementById('xau-time-open').value = t.timeOpen || ''; document.getElementById('xau-time-close').value = t.timeClose || ''; calcXAUDuration();
@@ -502,7 +564,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         let newData = { pl: document.getElementById('input-pl').value, alasan: document.getElementById('input-alasan').value, tf: document.getElementById('input-tf').value, arah: document.getElementById('input-arah').value, area: document.getElementById('input-area').value, news: document.getElementById('input-news').value, emosi: document.getElementById('input-emosi').value, timeOpen: document.getElementById('xau-time-open').value, timeClose: document.getElementById('xau-time-close').value, duration: document.getElementById('xau-auto-duration').innerText, layers: layers };
         let idx = parseInt(document.getElementById('edit-index').value); if(idx > -1) journalData[currentXAUDateStr][idx] = newData; else journalData[currentXAUDateStr].push(newData);
-        localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); document.getElementById('cancel-edit-btn').click(); openXAUModal(currentXAUDateStr, new Date(currentXAUDateStr).getDate()); renderXAUCalendar();
+        saveData('xauusd_data_v3', journalData); document.getElementById('cancel-edit-btn').click(); openXAUModal(currentXAUDateStr, new Date(currentXAUDateStr).getDate()); renderXAUCalendar();
     };
 
     let xauTableMaster = [];
@@ -647,10 +709,10 @@ document.addEventListener("DOMContentLoaded", () => {
         currentExpDateStr = dateStr; document.getElementById('exp-modal-title').innerText = `Pengeluaran Tgl ${dayNum}`; document.getElementById('exp-history').innerHTML=''; (expData[dateStr]||[]).forEach((t,i) => { document.getElementById('exp-history').innerHTML += `<div class="history-item" style="border-left-color:#ff1744;"><div><strong style="color:#ff1744;">-${formatRupiah(t.amount)}</strong><br><span style="color:#aaa; font-size:0.75rem;">[${t.type==='Cash'?'Tunai':t.bank}] ${t.notes} (${t.category})</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editExp('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteExp('${dateStr}', ${i})">🗑️</button></div></div>`; }); document.getElementById('exp-modal').style.display = 'flex';
     }
     document.getElementById('close-exp-modal').onclick = () => document.getElementById('exp-modal').style.display='none';
-    window.deleteExp = (d, i) => { expData[d].splice(i,1); if(!expData[d].length) delete expData[d]; localStorage.setItem('expense_data_v1', JSON.stringify(expData)); openExpModal(d, new Date(d).getDate()); renderExpCalendar(); };
+    window.deleteExp = (d, i) => { expData[d].splice(i,1); if(!expData[d].length) delete expData[d]; saveData('expense_data_v1', expData); openExpModal(d, new Date(d).getDate()); renderExpCalendar(); };
     window.editExp = (d, i) => { let t = expData[d][i]; document.getElementById('exp-type').value = t.type; document.getElementById('exp-bank').value = t.bank; document.getElementById('exp-amount').value = t.amount; document.getElementById('exp-category').value = t.category; document.getElementById('exp-notes').value = t.notes; document.getElementById('exp-bank-group').style.display = t.type === 'Online' ? 'flex' : 'none'; document.getElementById('exp-edit-index').value = i; document.getElementById('exp-cancel-edit-btn').style.display = 'block'; document.getElementById('exp-form-title').innerText = '✏️ Edit Pengeluaran'; };
     document.getElementById('exp-cancel-edit-btn').onclick = () => { document.getElementById('exp-form').reset(); document.getElementById('exp-edit-index').value = "-1"; document.getElementById('exp-cancel-edit-btn').style.display = 'none'; document.getElementById('exp-form-title').innerText = '+ Tambah Pengeluaran'; };
-    document.getElementById('exp-form').onsubmit = (e) => { e.preventDefault(); if(!expData[currentExpDateStr]) expData[currentExpDateStr]=[]; let newData = {type: document.getElementById('exp-type').value, bank: document.getElementById('exp-bank').value, amount: document.getElementById('exp-amount').value, category: document.getElementById('exp-category').value, notes: document.getElementById('exp-notes').value}; let idx = parseInt(document.getElementById('exp-edit-index').value); if(idx > -1) expData[currentExpDateStr][idx] = newData; else expData[currentExpDateStr].push(newData); localStorage.setItem('expense_data_v1', JSON.stringify(expData)); document.getElementById('exp-cancel-edit-btn').click(); openExpModal(currentExpDateStr, new Date(currentExpDateStr).getDate()); renderExpCalendar(); };
+    document.getElementById('exp-form').onsubmit = (e) => { e.preventDefault(); if(!expData[currentExpDateStr]) expData[currentExpDateStr]=[]; let newData = {type: document.getElementById('exp-type').value, bank: document.getElementById('exp-bank').value, amount: document.getElementById('exp-amount').value, category: document.getElementById('exp-category').value, notes: document.getElementById('exp-notes').value}; let idx = parseInt(document.getElementById('exp-edit-index').value); if(idx > -1) expData[currentExpDateStr][idx] = newData; else expData[currentExpDateStr].push(newData); saveData('expense_data_v1', expData); document.getElementById('exp-cancel-edit-btn').click(); openExpModal(currentExpDateStr, new Date(currentExpDateStr).getDate()); renderExpCalendar(); };
 
     // ==========================================
     // 4. MODUL JURNAL OLAHRAGA
@@ -744,10 +806,10 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('sport-modal').style.display = 'flex';
     }
     document.getElementById('close-sport-modal').onclick = () => document.getElementById('sport-modal').style.display='none';
-    window.deleteSport = (d, i) => { sportData[d].splice(i,1); if(!sportData[d].length) delete sportData[d]; localStorage.setItem('sport_data_v1', JSON.stringify(sportData)); openSportModal(d, new Date(d).getDate()); renderSportCalendar(); };
+    window.deleteSport = (d, i) => { sportData[d].splice(i,1); if(!sportData[d].length) delete sportData[d]; saveData('sport_data_v1', sportData); openSportModal(d, new Date(d).getDate()); renderSportCalendar(); };
     window.editSport = (d, i) => { let t = sportData[d][i]; document.getElementById('sport-time').value = t.time; document.getElementById('sport-type').value = t.type; document.getElementById('sport-target').value = t.target; document.getElementById('sport-achieved').value = t.achieved; document.getElementById('sport-notes').value = t.notes; if(t.lateReason) { document.getElementById('late-reason-container').style.display = 'block'; document.getElementById('sport-late-reason').value = t.lateReason; } document.getElementById('sport-sets-container').innerHTML = ''; t.sets.forEach(set => { const row = document.createElement('div'); row.className = 'sport-set-row'; row.style.cssText = "display:flex; gap:10px; margin-top:10px;"; row.innerHTML = `<input type="text" class="form-input set-name" value="${set.name}" style="flex:2;" required><input type="number" class="form-input set-dur" value="${set.dur}" style="flex:1;" required><input type="number" class="form-input set-rest" value="${set.rest}" style="flex:1;" required><button type="button" class="btn-remove-set" onclick="this.parentElement.remove(); calculateSportDuration();">X</button>`; document.getElementById('sport-sets-container').appendChild(row); }); document.getElementById('sport-edit-index').value = i; document.getElementById('sport-cancel-edit-btn').style.display = 'block'; document.getElementById('sport-form-title').innerText = '✏️ Edit Latihan'; calculateSportDuration(); bindSetCalculation(); };
     document.getElementById('sport-cancel-edit-btn').onclick = () => { document.getElementById('sport-form').reset(); document.getElementById('sport-edit-index').value = "-1"; document.getElementById('sport-cancel-edit-btn').style.display = 'none'; document.getElementById('sport-form-title').innerText = '+ Catat Latihan Baru'; document.getElementById('sport-sets-container').innerHTML = `<div class="sport-set-row" style="display:flex; gap:10px; margin-top:10px;"><input type="text" class="form-input set-name" placeholder="Gerakan" style="flex:2;" required><input type="number" class="form-input set-dur" placeholder="Kerja (Mnt)" style="flex:1;" required><input type="number" class="form-input set-rest" placeholder="Rest (Mnt)" style="flex:1;" required></div>`; document.getElementById('sport-auto-duration').innerText = "0 Menit"; bindSetCalculation(); };
-    document.getElementById('sport-form').onsubmit = (e) => { e.preventDefault(); if(!sportData[currentSportDateStr]) sportData[currentSportDateStr]=[]; let sets = []; document.querySelectorAll('.sport-set-row').forEach(row => { sets.push({ name: row.querySelector('.set-name').value, dur: row.querySelector('.set-dur').value, rest: row.querySelector('.set-rest').value }); }); let lateR = document.getElementById('sport-late-reason').value; let newData = {time: document.getElementById('sport-time').value, type: document.getElementById('sport-type').value, target: document.getElementById('sport-target').value, achieved: document.getElementById('sport-achieved').value, notes: document.getElementById('sport-notes').value, sets: sets, totalDur: calculateSportDuration(), lateReason: lateR }; let idx = parseInt(document.getElementById('sport-edit-index').value); if(idx > -1) sportData[currentSportDateStr][idx] = newData; else sportData[currentSportDateStr].push(newData); localStorage.setItem('sport_data_v1', JSON.stringify(sportData)); document.getElementById('sport-cancel-edit-btn').click(); openSportModal(currentSportDateStr, new Date(currentSportDateStr).getDate()); renderSportCalendar(); };
+    document.getElementById('sport-form').onsubmit = (e) => { e.preventDefault(); if(!sportData[currentSportDateStr]) sportData[currentSportDateStr]=[]; let sets = []; document.querySelectorAll('.sport-set-row').forEach(row => { sets.push({ name: row.querySelector('.set-name').value, dur: row.querySelector('.set-dur').value, rest: row.querySelector('.set-rest').value }); }); let lateR = document.getElementById('sport-late-reason').value; let newData = {time: document.getElementById('sport-time').value, type: document.getElementById('sport-type').value, target: document.getElementById('sport-target').value, achieved: document.getElementById('sport-achieved').value, notes: document.getElementById('sport-notes').value, sets: sets, totalDur: calculateSportDuration(), lateReason: lateR }; let idx = parseInt(document.getElementById('sport-edit-index').value); if(idx > -1) sportData[currentSportDateStr][idx] = newData; else sportData[currentSportDateStr].push(newData); saveData('sport_data_v1', sportData); document.getElementById('sport-cancel-edit-btn').click(); openSportModal(currentSportDateStr, new Date(currentSportDateStr).getDate()); renderSportCalendar(); };
 
     // ==========================================
     // 5. MODUL HISTORY KEKAYAAN
@@ -773,9 +835,9 @@ document.addEventListener("DOMContentLoaded", () => {
     window.openWealthModal = () => { document.getElementById('wealth-form').reset(); document.getElementById('wealth-edit-index').value = "-1"; document.getElementById('wealth-modal-title').innerText = "+ Catat Keuangan"; document.getElementById('wealth-cancel-edit-btn').style.display = "none"; document.getElementById('wealth-modal').style.display = 'flex'; };
     window.editWealthItem = (idx) => { let item = wealthData.items[idx]; document.getElementById('wealth-type').value = item.type; document.getElementById('wealth-date').value = item.date; document.getElementById('wealth-amount').value = item.amount; document.getElementById('wealth-notes').value = item.note; document.getElementById('wealth-edit-index').value = idx; document.getElementById('wealth-modal-title').innerText = "✏️ Edit Catatan Keuangan"; document.getElementById('wealth-cancel-edit-btn').style.display = "block"; document.getElementById('wealth-modal').style.display = 'flex'; };
     document.getElementById('wealth-cancel-edit-btn').onclick = () => { document.getElementById('wealth-modal').style.display = 'none'; };
-    document.getElementById('wealth-form').onsubmit = (e) => { e.preventDefault(); showConfirm("Yakin mau simpan perubahan data kekayaan ini?", () => { let idx = parseInt(document.getElementById('wealth-edit-index').value); let newData = { type: document.getElementById('wealth-type').value, date: document.getElementById('wealth-date').value, amount: document.getElementById('wealth-amount').value, note: document.getElementById('wealth-notes').value }; if (idx > -1) { newData.id = wealthData.items[idx].id; wealthData.items[idx] = newData; } else { newData.id = Date.now(); wealthData.items.push(newData); } localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData)); document.getElementById('wealth-modal').style.display = 'none'; renderWealthDashboard(); }); };
-    window.deleteWealthItem = (idx) => { showConfirm("Yakin hapus data historis ini? Perhitungan tabungan akan berubah loh!", () => { wealthData.items.splice(idx, 1); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData)); renderWealthDashboard(); }); };
-    document.getElementById('btn-save-rt').onclick = () => { let rt = parseFloat(document.getElementById('wealth-rt-amount').value); if(!isNaN(rt)) { showConfirm("Yakin update Uang Real Time ini?", () => { wealthData.realMoney = rt; localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData)); document.getElementById('wealth-modal-rt').style.display = 'none'; renderWealthDashboard(); }); } };
+    document.getElementById('wealth-form').onsubmit = (e) => { e.preventDefault(); showConfirm("Yakin mau simpan perubahan data kekayaan ini?", () => { let idx = parseInt(document.getElementById('wealth-edit-index').value); let newData = { type: document.getElementById('wealth-type').value, date: document.getElementById('wealth-date').value, amount: document.getElementById('wealth-amount').value, note: document.getElementById('wealth-notes').value }; if (idx > -1) { newData.id = wealthData.items[idx].id; wealthData.items[idx] = newData; } else { newData.id = Date.now(); wealthData.items.push(newData); } saveData('wealth_data_v1', wealthData); document.getElementById('wealth-modal').style.display = 'none'; renderWealthDashboard(); }); };
+    window.deleteWealthItem = (idx) => { showConfirm("Yakin hapus data historis ini? Perhitungan tabungan akan berubah loh!", () => { wealthData.items.splice(idx, 1); saveData('wealth_data_v1', wealthData); renderWealthDashboard(); }); };
+    document.getElementById('btn-save-rt').onclick = () => { let rt = parseFloat(document.getElementById('wealth-rt-amount').value); if(!isNaN(rt)) { showConfirm("Yakin update Uang Real Time ini?", () => { wealthData.realMoney = rt; saveData('wealth_data_v1', wealthData); document.getElementById('wealth-modal-rt').style.display = 'none'; renderWealthDashboard(); }); } };
 
     renderXAUCalendar();
 });

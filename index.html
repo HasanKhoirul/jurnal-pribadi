@@ -10,6 +10,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -56,7 +59,7 @@
         <div class="modal-content" style="width: 350px; text-align: center; border: 1px solid #ffd700;">
             <h2 style="color:#ffd700; margin-bottom: 5px;">🔒 Authentication</h2>
             <p style="color:#aaa; font-size: 0.85rem; margin-bottom: 20px;">Super Admin Only.</p>
-            <input type="text" id="login-user" class="form-input" placeholder="Username" style="margin-bottom: 10px; text-align: center;">
+            <input type="email" id="login-user" class="form-input" placeholder="Email" style="margin-bottom: 10px; text-align: center;">
             <div style="position: relative; margin-bottom: 20px;">
                 <input type="password" id="login-pass" class="form-input" placeholder="Password" style="text-align: center; padding-right: 40px;">
                 <span id="toggle-pass" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 1.2rem;">👁️</span>
@@ -79,7 +82,10 @@
             <li class="menu-item" data-target="view-career">🚀 Peningkatan Karir</li>
             <li class="menu-item" data-target="view-roadmap">🗺️ Roadmap Masa Depan</li>
         </ul>
-        <div class="sidebar-footer"><button id="btn-login" class="btn-outline-gold">🔒 Login System</button></div>
+        <div class="sidebar-footer">
+            <button id="btn-upload-cloud" class="btn-outline-gold" style="display:none; margin-bottom:10px; border-color:#2196f3; color:#2196f3;">☁️ Upload Data Lokal ke Cloud</button>
+            <button id="btn-login" class="btn-outline-gold">🔒 Login System</button>
+        </div>
     </nav>
 
     <main class="main-content">
