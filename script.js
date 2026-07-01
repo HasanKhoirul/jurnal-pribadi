@@ -34,21 +34,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function pushToCloud() {
-        if (!auth.currentUser) return;
-        db.collection('appData').doc(auth.currentUser.uid).set({ journalData, modalAwal, expData, sportData, wealthData })
-            .catch(err => console.error('Gagal sync ke cloud:', err));
+        if (!auth.currentUser) return Promise.resolve();
+        return db.collection('appData').doc(auth.currentUser.uid).set({ journalData, modalAwal, expData, sportData, wealthData })
+            .catch(err => { console.error('Gagal sync ke cloud:', err); throw err; });
     }
 
     function attachCloudListener(uid) {
         if (cloudUnsub) cloudUnsub();
         cloudUnsub = db.collection('appData').doc(uid).onSnapshot(doc => {
+            console.log('Snapshot cloud diterima:', doc.exists, doc.data());
             if (doc.exists) {
                 const d = doc.data();
                 journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; expData = d.expData || {}; sportData = d.sportData || {}; wealthData = d.wealthData || defaultWealthHistory;
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('sport_data_v1', JSON.stringify(sportData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
                 rerenderActiveSection();
             }
-        }, err => console.error('Gagal ambil data cloud:', err));
+        }, err => { console.error('Gagal ambil data cloud:', err); alert('Gagal ambil data cloud: ' + err.code + '\n' + err.message); });
     }
 
     function rerenderActiveSection() {
@@ -144,8 +145,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById('btn-upload-cloud').addEventListener('click', () => {
         showConfirm("Ini akan MENIMPA data cloud dengan data di device ini. Cuma pakai ini di device yang punya data paling lengkap. Yakin?", () => {
-            pushToCloud();
-            alert("Data lokal berhasil di-upload ke Cloud!");
+            pushToCloud().then(() => {
+                alert("Data lokal berhasil di-upload ke Cloud!");
+            }).catch(err => {
+                alert("Gagal upload ke Cloud: " + err.code + "\n" + err.message);
+            });
         });
     });
 
