@@ -203,6 +203,116 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // ==========================================
+    // MODULE IMPORT CSV
+    // ==========================================
+    function parseCSVLine(line) {
+        const result = []; let cur = ''; let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (inQuotes) {
+                if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+                else cur += c;
+            } else {
+                if (c === '"') inQuotes = true;
+                else if (c === ',') { result.push(cur); cur = ''; }
+                else cur += c;
+            }
+        }
+        result.push(cur);
+        return result;
+    }
+
+    function parseCSVRows(text) {
+        const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '');
+        lines.shift(); // buang baris header
+        return lines.map(parseCSVLine);
+    }
+
+    function handleCSVImport(inputId, callback) {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        input.addEventListener('change', function (e) {
+            const file = e.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (ev) {
+                try {
+                    const rows = parseCSVRows(ev.target.result);
+                    const count = callback(rows);
+                    alert(`Berhasil import ${count} data dari CSV!`);
+                } catch (err) {
+                    console.error(err);
+                    alert('Gagal import CSV. Pastikan format file sesuai hasil export dari aplikasi ini.');
+                }
+                e.target.value = '';
+            };
+            reader.readAsText(file);
+        });
+    }
+
+    handleCSVImport('csv-upload-xau', (rows) => {
+        let count = 0;
+        rows.forEach(r => {
+            const [date, timeOpen, timeClose, duration, tf, arah, area, news, emosi, totalLayer, alasan, pl] = r;
+            if (!date || pl === undefined || pl === '') return;
+            if (!journalData[date]) journalData[date] = [];
+            journalData[date].push({
+                pl, alasan, tf, arah, area, news, emosi,
+                timeOpen: timeOpen === '-' ? '' : timeOpen,
+                timeClose: timeClose === '-' ? '' : timeClose,
+                duration,
+                layers: Array.from({ length: parseInt(totalLayer) || 1 }, () => ({ entry: '', sl: '', pips: '0' }))
+            });
+            count++;
+        });
+        localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData));
+        renderXAUCalendar(); renderHome();
+        return count;
+    });
+
+    handleCSVImport('csv-upload-exp', (rows) => {
+        let count = 0;
+        rows.forEach(r => {
+            const [date, type, bank, category, notes, amount] = r;
+            if (!date || amount === undefined || amount === '') return;
+            if (!expData[date]) expData[date] = [];
+            expData[date].push({ type, bank, category, notes, amount });
+            count++;
+        });
+        localStorage.setItem('expense_data_v1', JSON.stringify(expData));
+        renderExpCalendar(); renderHome();
+        return count;
+    });
+
+    handleCSVImport('csv-upload-sport', (rows) => {
+        let count = 0;
+        rows.forEach(r => {
+            const [date, time, type, target, achieved, totalDur, lateReason, notes] = r;
+            if (!date || totalDur === undefined || totalDur === '') return;
+            if (!sportData[date]) sportData[date] = [];
+            sportData[date].push({ time, type, target, achieved, totalDur, lateReason, notes, sets: [] });
+            count++;
+        });
+        localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
+        renderSportCalendar(); renderHome();
+        return count;
+    });
+
+    handleCSVImport('csv-upload-wealth', (rows) => {
+        let count = 0;
+        rows.forEach(r => {
+            const [id, date, type, notes, amount] = r;
+            if (!date || amount === undefined || amount === '') return;
+            const existingIdx = wealthData.items.findIndex(i => String(i.id) === String(id));
+            const item = { id: id && !isNaN(id) ? parseInt(id) : Date.now() + count, date, type, note: notes, amount };
+            if (existingIdx > -1) wealthData.items[existingIdx] = item; else wealthData.items.push(item);
+            count++;
+        });
+        localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+        renderWealthDashboard(); renderHome();
+        return count;
+    });
+
+    // ==========================================
     // 1. MODUL HOMEPAGE PUSAT KENDALI
     // ==========================================
     function renderHome() {
