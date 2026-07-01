@@ -23,33 +23,54 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
+    // Dokumen "public": journalData/modalAwal/sportData -> bisa dibaca siapapun tanpa login (view-only kalau belum login, karena form/tombol edit di UI sudah otomatis ke-hide di locked-mode).
+    // Dokumen per-UID: expData/wealthData -> cuma bisa dibaca & ditulis kalau login asli.
     // ==========================================
-    let cloudUnsub = null;
+    let privateUnsub = null;
     let pushTimer = null;
 
     function saveData(key, obj) {
         localStorage.setItem(key, JSON.stringify(obj));
         clearTimeout(pushTimer);
-        pushTimer = setTimeout(pushToCloud, 800);
+        pushTimer = setTimeout(() => {
+            if (key === 'expense_data_v1' || key === 'wealth_data_v1') pushPrivateToCloud();
+            else pushPublicToCloud();
+        }, 800);
     }
 
-    function pushToCloud() {
+    function pushPublicToCloud() {
         if (!auth.currentUser) return Promise.resolve();
-        return db.collection('appData').doc(auth.currentUser.uid).set({ journalData, modalAwal, expData, sportData, wealthData })
-            .catch(err => { console.error('Gagal sync ke cloud:', err); throw err; });
+        return db.collection('appData').doc('public').set({ journalData, modalAwal, sportData })
+            .catch(err => { console.error('Gagal sync data publik ke cloud:', err); throw err; });
     }
 
-    function attachCloudListener(uid) {
-        if (cloudUnsub) cloudUnsub();
-        cloudUnsub = db.collection('appData').doc(uid).onSnapshot(doc => {
-            console.log('Snapshot cloud diterima:', doc.exists, doc.data());
+    function pushPrivateToCloud() {
+        if (!auth.currentUser) return Promise.resolve();
+        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData })
+            .catch(err => { console.error('Gagal sync data privat ke cloud:', err); throw err; });
+    }
+
+    function attachPublicListener() {
+        db.collection('appData').doc('public').onSnapshot(doc => {
             if (doc.exists) {
                 const d = doc.data();
-                journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; expData = d.expData || {}; sportData = d.sportData || {}; wealthData = d.wealthData || defaultWealthHistory;
-                localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('sport_data_v1', JSON.stringify(sportData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+                journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; sportData = d.sportData || {};
+                localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
                 rerenderActiveSection();
             }
-        }, err => { console.error('Gagal ambil data cloud:', err); alert('Gagal ambil data cloud: ' + err.code + '\n' + err.message); });
+        }, err => console.error('Gagal ambil data publik dari cloud:', err));
+    }
+
+    function attachPrivateListener(uid) {
+        if (privateUnsub) privateUnsub();
+        privateUnsub = db.collection('appData').doc(uid).onSnapshot(doc => {
+            if (doc.exists) {
+                const d = doc.data();
+                expData = d.expData || {}; wealthData = d.wealthData || defaultWealthHistory;
+                localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+                rerenderActiveSection();
+            }
+        }, err => { console.error('Gagal ambil data privat dari cloud:', err); alert('Gagal ambil data privat: ' + err.code); });
     }
 
     function rerenderActiveSection() {
@@ -129,13 +150,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     applyAuthState();
     renderHome();
+    attachPublicListener();
 
     auth.onAuthStateChanged(user => {
         isLoggedIn = !!user;
         applyAuthState();
         rerenderActiveSection();
-        if (user) attachCloudListener(user.uid);
-        else if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; }
+        if (user) attachPrivateListener(user.uid);
+        else if (privateUnsub) { privateUnsub(); privateUnsub = null; }
     });
 
     document.getElementById('btn-login').addEventListener('click', () => {
@@ -145,7 +167,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById('btn-upload-cloud').addEventListener('click', () => {
         showConfirm("Ini akan MENIMPA data cloud dengan data di device ini. Cuma pakai ini di device yang punya data paling lengkap. Yakin?", () => {
-            pushToCloud().then(() => {
+            Promise.all([pushPublicToCloud(), pushPrivateToCloud()]).then(() => {
                 alert("Data lokal berhasil di-upload ke Cloud!");
             }).catch(err => {
                 alert("Gagal upload ke Cloud: " + err.code + "\n" + err.message);
@@ -163,7 +185,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.getElementById('btn-submit-login').addEventListener('click', () => {
-        const u = document.getElementById('login-user').value; const p = document.getElementById('login-pass').value;
+        const uRaw = document.getElementById('login-user').value.trim().toLowerCase(); const p = document.getElementById('login-pass').value;
+        const u = uRaw.includes('@') ? uRaw : uRaw + '@jurnal.local';
         auth.signInWithEmailAndPassword(u, p).then(() => {
             document.getElementById('login-modal').style.display = 'none'; document.getElementById('login-user').value = ''; document.getElementById('login-pass').value = ''; document.getElementById('login-pass').type = 'password';
             if(togglePassBtn) togglePassBtn.innerText = '👁️';
