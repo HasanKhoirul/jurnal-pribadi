@@ -22,6 +22,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let wealthData = JSON.parse(localStorage.getItem('wealth_data_v1'));
     let aiTradeData = JSON.parse(localStorage.getItem('ai_trade_data_v1')) || {};
     let aiModalAwal = parseFloat(localStorage.getItem('ai_modal_awal')) || 2500000;
+    const defaultAiSettings = { twelvedata: localStorage.getItem('ai_key_twelvedata') || '', llmProvider: localStorage.getItem('ai_llm_provider') || 'none', llmKey: localStorage.getItem('ai_key_llm') || '' };
+    let aiSettings = JSON.parse(localStorage.getItem('ai_settings_v1')) || defaultAiSettings;
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
@@ -35,7 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
         localStorage.setItem(key, JSON.stringify(obj));
         clearTimeout(pushTimer);
         pushTimer = setTimeout(() => {
-            if (key === 'expense_data_v1' || key === 'wealth_data_v1' || key === 'ai_trade_data_v1' || key === 'ai_modal_awal') pushPrivateToCloud();
+            if (key === 'expense_data_v1' || key === 'wealth_data_v1' || key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_settings_v1') pushPrivateToCloud();
             else pushPublicToCloud();
         }, 800);
     }
@@ -48,7 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function pushPrivateToCloud() {
         if (!auth.currentUser) return Promise.resolve();
-        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal })
+        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal, aiSettings })
             .catch(err => { console.error('Gagal sync data privat ke cloud:', err); throw err; });
     }
 
@@ -70,8 +72,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 const d = doc.data();
                 expData = d.expData || {}; wealthData = d.wealthData || defaultWealthHistory;
                 aiTradeData = d.aiTradeData || {}; aiModalAwal = d.aiModalAwal || 2500000;
+                aiSettings = d.aiSettings || defaultAiSettings;
                 localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
+                localStorage.setItem('ai_settings_v1', JSON.stringify(aiSettings));
                 rerenderActiveSection();
             }
         }, err => { console.error('Gagal ambil data privat dari cloud:', err); alert('Gagal ambil data privat: ' + err.code); });
@@ -721,11 +725,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function uscToRupiah(usc) { return (usc / 100) * liveKursIDR; }
 
     function getAiSettings() {
-        return {
-            twelvedata: localStorage.getItem('ai_key_twelvedata') || '',
-            llmProvider: localStorage.getItem('ai_llm_provider') || 'none',
-            llmKey: localStorage.getItem('ai_key_llm') || ''
-        };
+        return aiSettings;
     }
 
     document.getElementById('btn-ai-settings').onclick = () => {
@@ -736,11 +736,14 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-settings-modal').style.display = 'flex';
     };
     document.getElementById('btn-save-ai-settings').onclick = () => {
-        localStorage.setItem('ai_key_twelvedata', document.getElementById('ai-key-twelvedata').value.trim());
-        localStorage.setItem('ai_llm_provider', document.getElementById('ai-llm-provider').value);
-        localStorage.setItem('ai_key_llm', document.getElementById('ai-key-llm').value.trim());
+        aiSettings = {
+            twelvedata: document.getElementById('ai-key-twelvedata').value.trim(),
+            llmProvider: document.getElementById('ai-llm-provider').value,
+            llmKey: document.getElementById('ai-key-llm').value.trim()
+        };
+        saveData('ai_settings_v1', aiSettings);
         document.getElementById('ai-settings-modal').style.display = 'none';
-        alert('Settings tersimpan di device ini.');
+        alert(auth.currentUser ? 'Settings tersimpan & disinkronkan ke akun kamu — otomatis kepakai juga di device lain.' : 'Settings tersimpan di device ini (login dulu biar bisa sync ke device lain).');
     };
 
     function loadEconomicCalendarWidget() {
