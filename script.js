@@ -1149,7 +1149,11 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             document.getElementById('ai-floating-pl').innerHTML = '';
             await autoOpenAiPosition(candles);
-            updateLiveStatsBoxes(findOpenAiTrade(), candles);
+            const newOpenInfo = findOpenAiTrade();
+            updateLiveStatsBoxes(newOpenInfo, candles);
+            if (!newOpenInfo) {
+                document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">🔍 Belum ada sinyal valid tick ini (nunggu konfirmasi trend/RSI/MACD). Mohon tunggu, bot bakal coba lagi tick berikutnya.</div>`;
+            }
         }
     }
 
