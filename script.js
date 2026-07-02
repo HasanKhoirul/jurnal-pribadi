@@ -917,16 +917,16 @@ document.addEventListener("DOMContentLoaded", () => {
         if (ma20 === null || ma50 === null || rsi === null) return null;
 
         const trend = ma20 > ma50 ? 'uptrend' : 'downtrend';
-        let arah;
+        let arah; let signalType;
         let reasonParts = [
             `Harga saat ini ${lastClose.toFixed(2)}.`,
             `MA20 (${ma20.toFixed(2)}) ${ma20 > ma50 ? 'di atas' : 'di bawah'} MA50 (${ma50.toFixed(2)}) → ${trend}.`,
             `RSI(14) = ${rsi.toFixed(1)} (${rsi >= 70 ? 'overbought' : rsi <= 30 ? 'oversold' : 'netral'}).`
         ];
-        if (rsi >= 70) { arah = 'SELL'; reasonParts.push(`RSI overbought → potensi koreksi turun.`); }
-        else if (rsi <= 30) { arah = 'BUY'; reasonParts.push(`RSI oversold → potensi rebound naik.`); }
-        else if (trend === 'uptrend') { arah = 'BUY'; reasonParts.push(`Trend naik & RSI netral → peluang BUY mengikuti trend.`); }
-        else { arah = 'SELL'; reasonParts.push(`Trend turun & RSI netral → peluang SELL mengikuti trend.`); }
+        if (rsi >= 70) { arah = 'SELL'; signalType = 'rsi_reversal'; reasonParts.push(`RSI overbought → potensi koreksi turun.`); }
+        else if (rsi <= 30) { arah = 'BUY'; signalType = 'rsi_reversal'; reasonParts.push(`RSI oversold → potensi rebound naik.`); }
+        else if (trend === 'uptrend') { arah = 'BUY'; signalType = 'trend_following'; reasonParts.push(`Trend naik & RSI netral → peluang BUY mengikuti trend.`); }
+        else { arah = 'SELL'; signalType = 'trend_following'; reasonParts.push(`Trend turun & RSI netral → peluang SELL mengikuti trend.`); }
 
         // Confluence filter: MACD harus searah, kalau enggak, batalkan entry (kualitas sinyal lebih ketat)
         const macd = calcMACD(closes);
@@ -952,7 +952,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const polished = await polishReasonWithLLM(reasonText, settings);
             if (polished) reasonText = polished;
         }
-        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe };
+        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe, signalType };
     }
 
     function findOpenAiTrade() {
@@ -970,7 +970,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
         const layers = AI_TP_LAYERS_PIPS.map(tpPips => ({ tpPips, tp: sug.entry + sug.dirSign * pipToPrice(tpPips), lot: AI_LOT_SIZE, status: 'open', pl: 0, sl: sug.sl, slMoved: false }));
-        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: sug.sl, layers, alasan: sug.reasonText, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
+        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: sug.sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
         saveData('ai_trade_data_v1', aiTradeData);
         if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
@@ -1216,6 +1216,21 @@ document.addEventListener("DOMContentLoaded", () => {
         let oversoldMistakes = closedTrades.filter(t => t.arah === 'SELL' && t.alasan && t.alasan.toLowerCase().includes('oversold')).length;
         let winRate = closedTrades.length > 0 ? ((winCount / closedTrades.length) * 100).toFixed(0) : 0;
         document.getElementById('ai-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${monthPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit 10%/bulan.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
+
+        let signalStats = {};
+        closedTrades.forEach(t => {
+            const type = t.signalType || 'lainnya';
+            if (!signalStats[type]) signalStats[type] = { total: 0, win: 0 };
+            signalStats[type].total++;
+            if (t.plVal >= 0) signalStats[type].win++;
+        });
+        const signalLabels = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', lainnya: 'Lainnya' };
+        const signalGrid = document.getElementById('ai-signal-stats-grid');
+        const signalEntries = Object.entries(signalStats);
+        signalGrid.innerHTML = signalEntries.length ? signalEntries.map(([type, s]) => {
+            const wr = ((s.win / s.total) * 100).toFixed(0);
+            return `<div class="weekly-card"><h4>${signalLabels[type] || type}</h4><p><span>Total Entry:</span> <strong>${s.total}</strong></p><p style="border-top:1px dotted #444; padding-top:5px;"><span>Win Rate:</span> <strong class="${wr >= 50 ? 'profit-text' : 'loss-text'}">${wr}%</strong></p></div>`;
+        }).join('') : '<p style="color:#888; grid-column:1/-1;">Belum ada entry closed bulan ini.</p>';
 
         const wGrid = document.getElementById('ai-weekly-breakdown-grid'); wGrid.innerHTML = '';
         weeklyReports.forEach((wr, idx) => { if (wr.hasData) wGrid.innerHTML += `<div class="weekly-card ${wr.pl > 0 ? 'week-profit' : (wr.pl < 0 ? 'week-loss' : '')}"><h4>Minggu ${idx + 1}</h4><p><span>Win:</span> <span style="color:#00e676;">${wr.wins}x</span></p><p><span>Loss:</span> <span style="color:#ff1744;">${wr.losses}x</span></p><p style="border-top:1px dotted #444; padding-top:5px;"><span>Hasil:</span> <strong class="${wr.pl > 0 ? 'profit-text' : 'loss-text'}">${wr.pl > 0 ? '+' : ''}${formatRupiah(wr.pl)}</strong></p></div>`; });
