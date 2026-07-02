@@ -774,6 +774,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!trade.layers) return;
         aiPriceLines.push(aiCandleSeries.createPriceLine({ price: parseFloat(trade.entry), color: '#ffd700', lineWidth: 1, lineStyle: 2, title: 'Entry' }));
         trade.layers.forEach((ly, i) => {
+            if (ly.status === 'pending') {
+                aiPriceLines.push(aiCandleSeries.createPriceLine({ price: parseFloat(ly.entry), color: '#888', lineWidth: 1, lineStyle: 3, title: `Pending${i + 1}` }));
+                return;
+            }
             if (ly.status !== 'open') return;
             aiPriceLines.push(aiCandleSeries.createPriceLine({ price: parseFloat(ly.tp), color: '#00e676', lineWidth: 1, lineStyle: 2, title: `TP${i + 1}` }));
             const slPrice = ly.sl !== undefined ? ly.sl : trade.sl;
@@ -1011,21 +1015,31 @@ document.addEventListener("DOMContentLoaded", () => {
         return null;
     }
 
+    // Jarak antar layer pending order bertingkat: layer 0 = harga sinyal (market), layer 1 = -10 pips, layer 2 = -20 pips (arah "lebih murah/baik").
+    const AI_LAYER_STAGGER_PIPS = 10;
+
     async function autoOpenAiPosition(candles) {
         const sug = await computeAiSuggestion(candles, aiTradeData);
         if (!sug) return;
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
-        const layers = AI_TP_LAYERS_PIPS.map(tpPips => ({ tpPips, tp: sug.entry + sug.dirSign * pipToPrice(tpPips), lot: AI_LOT_SIZE, status: 'open', pl: 0, sl: sug.sl, slMoved: false }));
-        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: sug.sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
+        const layers = AI_TP_LAYERS_PIPS.map((tpPips, i) => {
+            const layerEntry = sug.entry - sug.dirSign * pipToPrice(i * AI_LAYER_STAGGER_PIPS);
+            return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(AI_SL_PIPS), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+        });
+        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: layers[0].sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
         saveData('ai_trade_data_v1', aiTradeData);
         if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
     }
 
-    // Begitu TP1 (layer pertama, 80 pips) kena, layer 2 langsung dikunci profit +10 pips dan layer 3 ke breakeven — biar aman kalau harga balik arah.
+    // Begitu TP1 (layer pertama, 80 pips) kena, layer 2 & 3 langsung dikunci profit +10 pips — biar aman kalau harga balik arah.
     const AI_LOCK_PIPS_AFTER_TP1 = 10;
+    // Khusus layer terakhir (target 150 pips): begitu floating profit-nya sendiri tembus 100 pips, SL dikunci lebih dalam ke +80 pips dan mulai hitung mundur — kalau TP 150 belum kena dalam waktu segitu, tutup paksa di market (dijamin minimal +80 pips).
+    const AI_DEEP_LOCK_TRIGGER_PIPS = 100;
+    const AI_DEEP_LOCK_PIPS = 80;
+    const AI_DEEP_LOCK_TIMEOUT_MINUTES = 15;
 
     // Paksa tutup semua layer yang masih open di harga market sekarang (dipakai buat news guard, pola sama kayak timeout).
     function forceCloseAllLayersAtMarket(trade, candles, statusLabel) {
@@ -1034,8 +1048,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const dirSign = trade.arah === 'BUY' ? 1 : -1;
         let changed = false;
         trade.layers.forEach(ly => {
+            if (ly.status === 'pending') { ly.status = 'cancelled'; ly.pl = 0; changed = true; return; }
             if (ly.status !== 'open') return;
-            const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+            const layerEntry = ly.entry !== undefined ? ly.entry : trade.entry;
+            const pipsMoved = ((lastClose - layerEntry) * dirSign) / AI_PIP_SIZE;
             ly.status = statusLabel; ly.pl = uscToRupiah(calcLayerPlUsc(pipsMoved)); changed = true;
         });
         if (!changed) return false;
@@ -1045,6 +1061,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return true;
     }
 
+    // Layer 1/2 (index 1 & 2) yang masih pending order (belum kefill) dibatalkan begitu layer 0 (market entry) selesai — udah gak relevan lagi.
+    function cancelPendingSiblings(trade) {
+        for (let i = 1; i < trade.layers.length; i++) {
+            const l = trade.layers[i];
+            if (l.status === 'pending') { l.status = 'cancelled'; l.pl = 0; }
+        }
+    }
+
     function checkAndCloseAiPosition(openInfo, candles) {
         const { trade } = openInfo;
         if (!trade.openedAt) trade.openedAt = new Date().toISOString();
@@ -1052,18 +1076,28 @@ document.addEventListener("DOMContentLoaded", () => {
         const openedTime = new Date(trade.openedAt).getTime();
         const relevantCandles = candles.filter(c => new Date(c.time).getTime() >= openedTime);
         const dirSign = trade.arah === 'BUY' ? 1 : -1;
+        const notResolved = ly => ly.status === 'open' || ly.status === 'pending';
         let changed = false;
 
         for (const c of relevantCandles) {
             trade.layers.forEach((ly, idx) => {
+                if (ly.status === 'pending') {
+                    const filled = trade.arah === 'BUY' ? c.low <= ly.entry : c.high >= ly.entry;
+                    if (!filled) return;
+                    ly.status = 'open';
+                    changed = true;
+                    console.log(`🟢 Layer ${idx + 1} pending kefill di ${ly.entry.toFixed(2)}.`);
+                }
                 if (ly.status !== 'open') return;
+                const layerEntry = ly.entry !== undefined ? ly.entry : trade.entry;
                 const slPrice = ly.sl !== undefined ? ly.sl : trade.sl;
                 const slHit = trade.arah === 'BUY' ? c.low <= slPrice : c.high >= slPrice;
                 if (slHit) {
-                    const pipsAtSl = ((ly.sl - trade.entry) * dirSign) / AI_PIP_SIZE;
+                    const pipsAtSl = ((ly.sl - layerEntry) * dirSign) / AI_PIP_SIZE;
                     ly.status = pipsAtSl >= 0 ? 'be' : 'sl';
                     ly.pl = uscToRupiah(calcLayerPlUsc(pipsAtSl));
                     changed = true;
+                    if (idx === 0) cancelPendingSiblings(trade);
                     return;
                 }
                 const tpHit = trade.arah === 'BUY' ? c.high >= ly.tp : c.low <= ly.tp;
@@ -1071,28 +1105,48 @@ document.addEventListener("DOMContentLoaded", () => {
                     ly.status = 'tp'; ly.pl = uscToRupiah(calcLayerPlUsc(ly.tpPips)); changed = true;
                     if (idx === 0) {
                         const l2 = trade.layers[1], l3 = trade.layers[2];
-                        if (l2 && l2.status === 'open' && !l2.slMoved) { l2.sl = trade.entry + dirSign * pipToPrice(AI_LOCK_PIPS_AFTER_TP1); l2.slMoved = true; }
-                        if (l3 && l3.status === 'open' && !l3.slMoved) { l3.sl = trade.entry; l3.slMoved = true; }
-                        console.log(`🔵 TP1 kena, layer 2 dikunci +${AI_LOCK_PIPS_AFTER_TP1} pips, layer 3 ke breakeven.`);
+                        if (l2 && l2.status === 'open' && !l2.slMoved) { l2.sl = l2.entry + dirSign * pipToPrice(AI_LOCK_PIPS_AFTER_TP1); l2.slMoved = true; }
+                        if (l3 && l3.status === 'open' && !l3.slMoved) { l3.sl = l3.entry + dirSign * pipToPrice(AI_LOCK_PIPS_AFTER_TP1); l3.slMoved = true; }
+                        cancelPendingSiblings(trade);
+                        console.log(`🔵 TP1 kena, layer 2 & 3 yang udah kefill dikunci +${AI_LOCK_PIPS_AFTER_TP1} pips, yang masih pending dibatalkan.`);
+                    }
+                    return;
+                }
+                // Khusus layer terakhir: sekali floating tembus 100 pips, kunci SL lebih dalam ke +80 pips & mulai timer 15 menit.
+                if (idx === trade.layers.length - 1) {
+                    const pipsNow = ((c.close - layerEntry) * dirSign) / AI_PIP_SIZE;
+                    if (pipsNow >= AI_DEEP_LOCK_TRIGGER_PIPS && !ly.deepLockAt) {
+                        ly.sl = layerEntry + dirSign * pipToPrice(AI_DEEP_LOCK_PIPS);
+                        ly.slMoved = true;
+                        ly.deepLockAt = c.time;
+                        changed = true;
+                        console.log(`🔒 Layer terakhir tembus ${AI_DEEP_LOCK_TRIGGER_PIPS} pips, SL dikunci +${AI_DEEP_LOCK_PIPS} pips, timer ${AI_DEEP_LOCK_TIMEOUT_MINUTES} menit mulai.`);
+                    }
+                    if (ly.deepLockAt && (new Date(c.time).getTime() - new Date(ly.deepLockAt).getTime()) >= AI_DEEP_LOCK_TIMEOUT_MINUTES * 60000) {
+                        const pipsAtClose = ((c.close - layerEntry) * dirSign) / AI_PIP_SIZE;
+                        ly.status = 'timeout_lock'; ly.pl = uscToRupiah(calcLayerPlUsc(pipsAtClose)); changed = true;
+                        console.log(`⏱️ Layer terakhir timeout ${AI_DEEP_LOCK_TIMEOUT_MINUTES} menit setelah lock, ditutup di market (${pipsAtClose.toFixed(1)} pips).`);
                     }
                 }
             });
-            if (trade.layers.every(ly => ly.status !== 'open')) break;
+            if (!trade.layers.some(notResolved)) break;
         }
 
-        const stillHasOpenLayer = trade.layers.some(ly => ly.status === 'open');
-        if (stillHasOpenLayer && (Date.now() - openedTime) / (1000 * 60 * 60 * 24) >= 3) {
+        const stillActive = trade.layers.some(notResolved);
+        if (stillActive && (Date.now() - openedTime) / (1000 * 60 * 60 * 24) >= 3) {
             const lastClose = candles[candles.length - 1].close;
             trade.layers.forEach(ly => {
+                if (ly.status === 'pending') { ly.status = 'cancelled'; ly.pl = 0; changed = true; return; }
                 if (ly.status !== 'open') return;
-                const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+                const layerEntry = ly.entry !== undefined ? ly.entry : trade.entry;
+                const pipsMoved = ((lastClose - layerEntry) * dirSign) / AI_PIP_SIZE;
                 ly.status = 'timeout'; ly.pl = uscToRupiah(calcLayerPlUsc(pipsMoved)); changed = true;
             });
         }
 
         if (!changed) return false;
-        trade.pl = trade.layers.reduce((sum, ly) => sum + (ly.status !== 'open' ? ly.pl : 0), 0);
-        const allResolved = trade.layers.every(ly => ly.status !== 'open');
+        trade.pl = trade.layers.reduce((sum, ly) => sum + (notResolved(ly) ? 0 : ly.pl), 0);
+        const allResolved = !trade.layers.some(notResolved);
         if (allResolved) { trade.status = 'closed'; trade.closedAt = new Date().toISOString(); }
 
         saveData('ai_trade_data_v1', aiTradeData);
@@ -1109,8 +1163,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const dirSign = trade.arah === 'BUY' ? 1 : -1;
         let totalFloating = 0;
         const layerRows = trade.layers.map((ly, i) => {
+            if (ly.status === 'pending') return `Layer ${i + 1} (TP ${ly.tpPips}p): <span class="netral">Menunggu entry di ${parseFloat(ly.entry).toFixed(2)}</span>`;
             if (ly.status !== 'open') { totalFloating += ly.pl; return `Layer ${i + 1} (TP ${ly.tpPips}p): <span class="${ly.pl >= 0 ? 'profit-text' : 'loss-text'}">${ly.status.toUpperCase()} ${ly.pl >= 0 ? '+' : ''}${formatRupiah(ly.pl)}</span>`; }
-            const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+            const layerEntry = ly.entry !== undefined ? ly.entry : trade.entry;
+            const pipsMoved = ((lastClose - layerEntry) * dirSign) / AI_PIP_SIZE;
             const floatPl = uscToRupiah(calcLayerPlUsc(pipsMoved));
             totalFloating += floatPl;
             return `Layer ${i + 1} (TP ${ly.tpPips}p): <span class="${floatPl >= 0 ? 'profit-text' : 'loss-text'}">Floating ${floatPl >= 0 ? '+' : ''}${formatRupiah(floatPl)}</span>`;
@@ -1178,8 +1234,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const dirSign = trade.arah === 'BUY' ? 1 : -1;
         let totalFloating = 0;
         trade.layers.forEach(ly => {
+            if (ly.status === 'pending') return;
             if (ly.status !== 'open') { totalFloating += ly.pl; return; }
-            const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+            const layerEntry = ly.entry !== undefined ? ly.entry : trade.entry;
+            const pipsMoved = ((lastClose - layerEntry) * dirSign) / AI_PIP_SIZE;
             totalFloating += uscToRupiah(calcLayerPlUsc(pipsMoved));
         });
         totalEl.innerText = `${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}`;
