@@ -867,8 +867,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return { upper: mean + mult * stdev, lower: mean - mult * stdev, mid: mean };
     }
 
-    // --- Guard waktu: hindari auto-entry saat market tutup / perkiraan jam rawan berita besar ---
-    // Catatan: kalender berita real gak bisa dibaca dari kode (widget TradingView tertutup), jadi ini cuma perkiraan jam umum rilis data AS (NFP/CPI/FOMC dkk), bukan cek kalender beneran.
+    // --- Guard waktu: hindari auto-entry saat market tutup / ada berita high-impact ---
     function isMarketOpen() {
         const now = new Date(); const day = now.getUTCDay(); const hour = now.getUTCHours();
         if (day === 6) return false;
@@ -876,10 +875,29 @@ document.addEventListener("DOMContentLoaded", () => {
         if (day === 5 && hour >= 21) return false;
         return true;
     }
-    function isHighImpactNewsWindow() {
+    // Fallback kalau fetch kalender berita gagal (endpoint komunitas non-resmi, bisa down/berubah format) — perkiraan jam umum rilis data AS.
+    function isHighImpactNewsWindowFallback() {
         const now = new Date(); const day = now.getUTCDay(); const hour = now.getUTCHours();
         if (day === 0 || day === 6) return false;
         return hour >= 12 && hour < 15;
+    }
+    const AI_NEWS_PRE_MINUTES = 10;
+    const AI_NEWS_POST_MINUTES = 40;
+    async function fetchActiveHighImpactNews() {
+        try {
+            const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
+            const events = await res.json();
+            const now = Date.now();
+            const hit = events.find(e => {
+                if (e.impact !== 'High' || e.country !== 'USD') return false;
+                const t = new Date(e.date).getTime();
+                return now >= t - AI_NEWS_PRE_MINUTES * 60000 && now <= t + AI_NEWS_POST_MINUTES * 60000;
+            });
+            return hit ? { title: hit.title, time: hit.date } : null;
+        } catch (err) {
+            console.error('Gagal ambil kalender berita, fallback ke perkiraan jam kasar:', err.message);
+            return isHighImpactNewsWindowFallback() ? { title: '(perkiraan, kalender gagal diambil)', time: null } : null;
+        }
     }
 
     async function fetchAiPriceData() {
@@ -914,7 +932,24 @@ document.addEventListener("DOMContentLoaded", () => {
         return null;
     }
 
-    async function computeAiSuggestion(candles) {
+    // Adaptif: kalau win rate tipe sinyal tertentu lagi jelek belakangan ini, bot skip generate sinyal itu dulu (proporsi entry condong ke yang lebih akurat).
+    const AI_MIN_SIGNAL_WINRATE = 35;
+    const AI_WINRATE_LOOKBACK_DAYS = 14;
+    const AI_WINRATE_MIN_SAMPLES = 5;
+    function getRecentSignalWinRate(tradeData, signalType) {
+        const cutoff = Date.now() - AI_WINRATE_LOOKBACK_DAYS * 86400000;
+        let total = 0, win = 0;
+        for (const d in tradeData) {
+            if (new Date(d).getTime() < cutoff) continue;
+            tradeData[d].forEach(t => {
+                if (t.status !== 'closed' || t.signalType !== signalType) return;
+                total++; if (parseFloat(t.pl || 0) >= 0) win++;
+            });
+        }
+        return total >= AI_WINRATE_MIN_SAMPLES ? (win / total) * 100 : null;
+    }
+
+    async function computeAiSuggestion(candles, tradeData) {
         const closes = candles.map(c => c.close);
         const lastClose = closes[closes.length - 1];
         const ma20 = calcSMA(closes, 20); const ma50 = calcSMA(closes, 50); const rsi = calcRSI(closes, 14);
@@ -931,6 +966,12 @@ document.addEventListener("DOMContentLoaded", () => {
         else if (rsi <= 30) { arah = 'BUY'; signalType = 'rsi_reversal'; reasonParts.push(`RSI oversold → potensi rebound naik.`); }
         else if (trend === 'uptrend') { arah = 'BUY'; signalType = 'trend_following'; reasonParts.push(`Trend naik & RSI netral → peluang BUY mengikuti trend.`); }
         else { arah = 'SELL'; signalType = 'trend_following'; reasonParts.push(`Trend turun & RSI netral → peluang SELL mengikuti trend.`); }
+
+        const recentWr = getRecentSignalWinRate(tradeData, signalType);
+        if (recentWr !== null && recentWr < AI_MIN_SIGNAL_WINRATE) {
+            console.log(`Skip sinyal ${signalType}: win rate ${recentWr.toFixed(0)}% dalam ${AI_WINRATE_LOOKBACK_DAYS} hari terakhir (di bawah ambang ${AI_MIN_SIGNAL_WINRATE}%).`);
+            return null;
+        }
 
         // Confluence filter: MACD harus searah, kalau enggak, batalkan entry (kualitas sinyal lebih ketat)
         const macd = calcMACD(closes);
@@ -968,7 +1009,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function autoOpenAiPosition(candles) {
-        const sug = await computeAiSuggestion(candles);
+        const sug = await computeAiSuggestion(candles, aiTradeData);
         if (!sug) return;
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -980,15 +1021,25 @@ document.addEventListener("DOMContentLoaded", () => {
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
     }
 
-    // Begitu floating profit tembus X pips, SL layer itu digeser ke breakeven (entry) — biar rugi minim kalau harga balik arah.
-    const AI_BREAKEVEN_TRIGGER_PIPS = 30;
-    function updateTrailingStops(trade, candles) {
-        if (!trade.layers) return;
+    // Begitu TP1 (layer pertama, 80 pips) kena, layer 2 langsung dikunci profit +10 pips dan layer 3 ke breakeven — biar aman kalau harga balik arah.
+    const AI_LOCK_PIPS_AFTER_TP1 = 10;
+
+    // Paksa tutup semua layer yang masih open di harga market sekarang (dipakai buat news guard, pola sama kayak timeout).
+    function forceCloseAllLayersAtMarket(trade, candles, statusLabel) {
+        if (!trade.layers) return false;
         const lastClose = candles[candles.length - 1].close;
         const dirSign = trade.arah === 'BUY' ? 1 : -1;
-        const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
-        if (pipsMoved < AI_BREAKEVEN_TRIGGER_PIPS) return;
-        trade.layers.forEach(ly => { if (ly.status === 'open' && !ly.slMoved) { ly.sl = trade.entry; ly.slMoved = true; } });
+        let changed = false;
+        trade.layers.forEach(ly => {
+            if (ly.status !== 'open') return;
+            const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+            ly.status = statusLabel; ly.pl = uscToRupiah(calcLayerPlUsc(pipsMoved)); changed = true;
+        });
+        if (!changed) return false;
+        trade.pl = trade.layers.reduce((sum, ly) => sum + (ly.status !== 'open' ? ly.pl : 0), 0);
+        const allResolved = trade.layers.every(ly => ly.status !== 'open');
+        if (allResolved) { trade.status = 'closed'; trade.closedAt = new Date().toISOString(); }
+        return true;
     }
 
     function checkAndCloseAiPosition(openInfo, candles) {
@@ -997,16 +1048,31 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!trade.layers) return false; // trade lama/manual tanpa struktur layer, biarkan diedit manual
         const openedTime = new Date(trade.openedAt).getTime();
         const relevantCandles = candles.filter(c => new Date(c.time).getTime() >= openedTime);
+        const dirSign = trade.arah === 'BUY' ? 1 : -1;
         let changed = false;
 
         for (const c of relevantCandles) {
-            trade.layers.forEach(ly => {
+            trade.layers.forEach((ly, idx) => {
                 if (ly.status !== 'open') return;
                 const slPrice = ly.sl !== undefined ? ly.sl : trade.sl;
                 const slHit = trade.arah === 'BUY' ? c.low <= slPrice : c.high >= slPrice;
-                if (slHit) { ly.status = ly.slMoved ? 'be' : 'sl'; ly.pl = ly.slMoved ? 0 : uscToRupiah(-calcLayerPlUsc(AI_SL_PIPS)); changed = true; return; }
+                if (slHit) {
+                    const pipsAtSl = ((ly.sl - trade.entry) * dirSign) / AI_PIP_SIZE;
+                    ly.status = pipsAtSl >= 0 ? 'be' : 'sl';
+                    ly.pl = uscToRupiah(calcLayerPlUsc(pipsAtSl));
+                    changed = true;
+                    return;
+                }
                 const tpHit = trade.arah === 'BUY' ? c.high >= ly.tp : c.low <= ly.tp;
-                if (tpHit) { ly.status = 'tp'; ly.pl = uscToRupiah(calcLayerPlUsc(ly.tpPips)); changed = true; }
+                if (tpHit) {
+                    ly.status = 'tp'; ly.pl = uscToRupiah(calcLayerPlUsc(ly.tpPips)); changed = true;
+                    if (idx === 0) {
+                        const l2 = trade.layers[1], l3 = trade.layers[2];
+                        if (l2 && l2.status === 'open' && !l2.slMoved) { l2.sl = trade.entry + dirSign * pipToPrice(AI_LOCK_PIPS_AFTER_TP1); l2.slMoved = true; }
+                        if (l3 && l3.status === 'open' && !l3.slMoved) { l3.sl = trade.entry; l3.slMoved = true; }
+                        console.log(`🔵 TP1 kena, layer 2 dikunci +${AI_LOCK_PIPS_AFTER_TP1} pips, layer 3 ke breakeven.`);
+                    }
+                }
             });
             if (trade.layers.every(ly => ly.status !== 'open')) break;
         }
@@ -1014,7 +1080,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const stillHasOpenLayer = trade.layers.some(ly => ly.status === 'open');
         if (stillHasOpenLayer && (Date.now() - openedTime) / (1000 * 60 * 60 * 24) >= 3) {
             const lastClose = candles[candles.length - 1].close;
-            const dirSign = trade.arah === 'BUY' ? 1 : -1;
             trade.layers.forEach(ly => {
                 if (ly.status !== 'open') return;
                 const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
@@ -1058,16 +1123,29 @@ document.addEventListener("DOMContentLoaded", () => {
         lastAiCandles = candles;
         if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
 
+        const newsInfo = await fetchActiveHighImpactNews();
         const openInfo = findOpenAiTrade();
         updateLiveStatsBoxes(openInfo, candles);
+
+        if (openInfo && newsInfo) {
+            const closed = forceCloseAllLayersAtMarket(openInfo.trade, candles, 'news_close');
+            if (closed) {
+                console.log(`📰 Posisi ditutup paksa: berita high-impact "${newsInfo.title}".`);
+                saveData('ai_trade_data_v1', aiTradeData);
+                document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-danger">📰 Posisi ditutup paksa: berita high-impact "${newsInfo.title}".</div>`;
+                if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
+                if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
+            }
+            return;
+        }
+
         if (openInfo) {
-            updateTrailingStops(openInfo.trade, candles);
             const stillOpen = !checkAndCloseAiPosition(openInfo, candles);
             if (stillOpen) updateFloatingPl(openInfo, candles);
         } else if (!isMarketOpen()) {
             document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">💤 Market lagi tutup (weekend), bot standby nunggu buka lagi.</div>`;
-        } else if (isHighImpactNewsWindow()) {
-            document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">📰 Perkiraan jam rawan berita high-impact, bot menunda entry baru sebentar.</div>`;
+        } else if (newsInfo) {
+            document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">📰 Berita high-impact "${newsInfo.title}" lagi berlangsung, bot menunda entry baru.</div>`;
         } else {
             document.getElementById('ai-floating-pl').innerHTML = '';
             await autoOpenAiPosition(candles);
