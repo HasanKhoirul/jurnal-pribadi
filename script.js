@@ -1047,7 +1047,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (el) el.innerHTML = `<div class="insight-box ${totalFloating >= 0 ? 'insight-success' : 'insight-danger'}" style="flex-direction:column; align-items:flex-start; gap:6px;"><strong>${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)} (Lot ${AI_LOT_SIZE} × 3 Layer) — Total: ${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}</strong><div style="font-size:0.8rem; font-weight:normal; display:flex; flex-direction:column; gap:3px;">${layerRows.join('')}</div></div>`;
     }
 
-    // --- Loop otomatis: fetch harga, update chart, cek posisi, generate entry baru kalau kosong ---
+    // --- Tick "penuh" (buka/tutup posisi) — cuma dipanggil manual dari tombol. Otomatis 24/7-nya dijalankan server via GitHub Actions (scripts/ai-tick.mjs), biar gak dobel/race sama browser. ---
     async function aiAutoTick() {
         const candles = await fetchAiPriceData();
         if (!candles) return;
@@ -1069,10 +1069,22 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    // --- Tick "display" — dipanggil otomatis selagi tab browser kebuka. Cuma update chart & floating P/L, TIDAK buka/tutup posisi (biar gak race sama bot server). ---
+    async function aiDisplayTick() {
+        const candles = await fetchAiPriceData();
+        if (!candles) return;
+        lastAiCandles = candles;
+        if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
+
+        const openInfo = findOpenAiTrade();
+        if (openInfo) updateFloatingPl(openInfo, candles);
+        else document.getElementById('ai-floating-pl').innerHTML = '';
+    }
+
     function startAiAutoTick() {
         if (aiTickInterval) return;
-        aiAutoTick();
-        aiTickInterval = setInterval(aiAutoTick, 15 * 60 * 1000);
+        aiDisplayTick();
+        aiTickInterval = setInterval(aiDisplayTick, 15 * 60 * 1000);
     }
     function stopAiAutoTick() {
         if (aiTickInterval) { clearInterval(aiTickInterval); aiTickInterval = null; }
