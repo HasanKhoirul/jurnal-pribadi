@@ -181,6 +181,11 @@ body { background-color: #121212; color: #e0e0e0; display: flex; height: 100vh; 
 }
 
 body.locked-mode .action-group-main, body.locked-mode .btn-success, body.locked-mode .edit-btn, body.locked-mode .del-btn, body.locked-mode .btn-edit-rt, body.locked-mode .btn-dashed, body.locked-mode form, body.locked-mode hr + h3 { display: none !important; }
-body.locked-mode #exp-content-ui, body.locked-mode #wealth-content-ui { display: none !important; }
-body.locked-mode #exp-locked-ui, body.locked-mode #wealth-locked-ui { display: flex !important; }
-body.locked-mode .menu-item[data-target="view-wealth"]::after, body.locked-mode .menu-item[data-target="view-expenses"]::after { content: " 🔒"; font-size: 0.8rem; margin-left: 5px; }
+body.locked-mode #exp-content-ui, body.locked-mode #wealth-content-ui, body.locked-mode #ai-content-ui { display: none !important; }
+body.locked-mode #exp-locked-ui, body.locked-mode #wealth-locked-ui, body.locked-mode #ai-locked-ui { display: flex !important; }
+body.locked-mode .menu-item[data-target="view-wealth"]::after, body.locked-mode .menu-item[data-target="view-expenses"]::after, body.locked-mode .menu-item[data-target="view-ai-trading"]::after { content: " 🔒"; font-size: 0.8rem; margin-left: 5px; }
+
+#tv-chart-container, #tv-calendar-container { width: 100%; }
+@media (max-width: 768px) {
+    #tv-chart-container, #tv-calendar-container { height: 320px !important; }
+}

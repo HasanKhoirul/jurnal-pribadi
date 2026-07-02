@@ -76,6 +76,7 @@
         <ul class="menu-list">
             <li class="menu-item active" data-target="view-home">🏠 Pusat Kendali</li>
             <li class="menu-item" data-target="view-trading">📊 Jurnal XAUUSD</li>
+            <li class="menu-item" data-target="view-ai-trading">🤖 Trading AI</li>
             <li class="menu-item" data-target="view-expenses">🛒 Pengeluaran Bulanan</li>
             <li class="menu-item" data-target="view-sports">🏃‍♂️ Jurnal Olahraga</li>
             <li class="menu-item" data-target="view-wealth">💰 History Kekayaan</li>
@@ -179,6 +180,80 @@
                     
                     <div class="table-container"><div style="display: flex; justify-content: space-between; margin-bottom: 15px;"><h3 class="chart-title">Detail Entry</h3><select id="table-filter-select" class="form-input" style="width: auto;"><option value="all">Semua Waktu</option><option value="month" selected>Bulan Ini</option><option value="today">Hari Ini</option></select></div>
                     <table class="data-table"><thead><tr><th>No</th><th class="sortable" data-col="date">Tanggal</th><th class="sortable" data-col="tf">TF</th><th class="sortable" data-col="arah">Arah</th><th>Durasi</th><th>Layer</th><th>Alasan Entry</th><th class="sortable" style="text-align: right;" data-col="pl">P/L (Rp)</th></tr></thead><tbody id="dashboard-table-body"></tbody></table></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-ai-trading" class="content-section" style="padding-top: 10px;">
+            <div id="ai-locked-ui" class="locked-overlay" style="display:none;">
+                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
+                <h2 style="color: #ffd700;">Privasi Bos!</h2>
+                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Trading AI.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+            </div>
+
+            <div id="ai-content-ui">
+                <div class="xau-nav hide-for-screenshot">
+                    <button id="ai-menu-market" class="xau-tab active" style="border-color:#9c27b0; color:#9c27b0;">📈 Live Market</button>
+                    <button id="ai-menu-calendar" class="xau-tab" style="border-color:#9c27b0; color:#9c27b0;">📅 Riwayat Simulasi</button>
+                    <button id="ai-menu-dashboard" class="xau-tab">📊 Dashboard Evaluasi</button>
+                </div>
+
+                <div id="ai-view-market" class="dashboard-container">
+                    <div class="chart-grid" style="grid-template-columns: 2fr 1fr;">
+                        <div class="chart-card" style="padding:0; overflow:hidden;">
+                            <div id="tv-chart-container" style="height:500px;"></div>
+                        </div>
+                        <div class="chart-card" style="padding:0; overflow:hidden;">
+                            <div id="tv-calendar-container" style="height:500px;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ai-view-calendar" class="dashboard-container" style="display:none;">
+                    <header class="main-header">
+                        <div class="header-left">
+                            <h1 style="color:#9c27b0;">Trading AI (Simulasi)</h1>
+                            <div class="action-group-main hide-for-screenshot">
+                                <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
+                                <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">🎯 Buatkan Analisa</button>
+                                <button id="ai-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                            </div>
+                        </div>
+                        <div class="summary-card" style="border-color:#9c27b0;"><span>P/L Bulan Ini:</span><h2 id="ai-monthly-total" class="netral">Rp 0</h2></div>
+                    </header>
+
+                    <div class="equity-dashboard" id="ai-equity-panel">
+                        <div class="equity-box" id="ai-modal-box" style="cursor: pointer; transition: 0.2s; border-left-color:#9c27b0;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1e1e1e'"><span class="label">Modal Simulasi (Klik ubah) ✏️</span><h4 id="ai-base-equity">Rp 2.500.000</h4></div>
+                        <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Equity Awal</span><h3 id="ai-start-equity">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Equity Terakhir</span><h3 id="ai-current-equity">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Pertumbuhan</span><h3 id="ai-equity-growth" class="netral">0.00%</h3></div>
+                    </div>
+
+                    <div id="ai-generate-result" style="display:none; margin-bottom:20px;"></div>
+
+                    <div class="month-navigation"><button id="ai-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="ai-month-year-display">Bulan Tahun</h2><button id="ai-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #9c27b0;">Total Mg</div></div>
+                    <div class="calendar-grid" id="ai-calendar"></div>
+                </div>
+
+                <div id="ai-view-dashboard" class="dashboard-container" style="display:none;">
+                    <div class="month-navigation" style="margin-bottom:20px;"><button id="ai-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="ai-dash-month-year-display" style="color:#9c27b0;">Bulan Tahun</h2><button id="ai-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <div id="ai-empty-state" class="empty-state-dash"></div>
+                    <div id="ai-dash-content">
+                        <div id="ai-risk-insight" style="margin-bottom:15px;"></div>
+                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📋 Evaluasi & Perbaikan Mingguan</h3><div id="ai-eval-text" style="margin-top:10px; color:#ccc; font-size:0.9rem; line-height:1.7;"></div></div>
+
+                        <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📊 Raport Per Minggu</h3><div id="ai-weekly-breakdown-grid" class="weekly-report-grid"></div></div>
+
+                        <div class="highlight-grid">
+                            <div class="highlight-box win-bg"><span class="label">🌟 Biggest Win</span><h3 id="ai-highest-win-pl" class="profit-text">Rp 0</h3><p id="ai-highest-win-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="ai-highest-loss-pl" class="loss-text">Rp 0</h3><p id="ai-highest-loss-desc" class="desc-text">-</p></div>
+                        </div>
+
+                        <div class="table-container"><h3 class="chart-title" style="margin-bottom:15px;">Detail Entry Simulasi</h3>
+                        <table class="data-table"><thead><tr><th>No</th><th>Tanggal</th><th>Arah</th><th>Entry</th><th>SL</th><th>TP</th><th>Alasan</th><th style="text-align:right;">P/L (Rp)</th></tr></thead><tbody id="ai-dashboard-table-body"></tbody></table></div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -627,6 +702,49 @@
                     <button type="submit" id="sport-save-btn" class="save-btn" style="background:#2196f3; color:#fff;">Simpan Latihan</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <div id="ai-entry-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-ai-modal">&times;</span>
+            <h2 id="ai-modal-date-title">Entry Simulasi Tanggal</h2>
+            <div id="ai-today-history" class="today-history"></div>
+            <hr style="border: 0.5px solid #333; margin: 15px 0;">
+            <h3 id="ai-form-title" style="font-size: 1rem; margin-bottom: 10px; color:#9c27b0;">+ Tambah Entry Simulasi</h3>
+            <form id="ai-entry-form">
+                <input type="hidden" id="ai-edit-index" value="-1">
+                <div class="form-grid-2">
+                    <div class="form-group"><label>Arah</label><select id="ai-input-arah" class="form-input"><option>BUY</option><option>SELL</option></select></div>
+                    <div class="form-group"><label>Timeframe</label><select id="ai-input-tf" class="form-input"><option>H1</option><option>H4</option><option>D1</option></select></div>
+                </div>
+                <div class="form-grid-4">
+                    <div class="form-group"><label>Harga Entry</label><input type="number" step="any" id="ai-input-entry" class="form-input" required></div>
+                    <div class="form-group"><label>Stop Loss</label><input type="number" step="any" id="ai-input-sl" class="form-input" required></div>
+                    <div class="form-group"><label>Take Profit</label><input type="number" step="any" id="ai-input-tp" class="form-input" required></div>
+                    <div class="form-group"><label>Risk (%)</label><input type="number" step="any" id="ai-input-risk" class="form-input" required></div>
+                </div>
+                <div class="form-group"><label>Alasan Teknikal</label><input type="text" id="ai-input-alasan" class="form-input" required></div>
+                <div class="form-group"><label>Status</label><select id="ai-input-status" class="form-input"><option value="open">Masih Berjalan (Open)</option><option value="closed">Sudah Ditutup (Closed)</option></select></div>
+                <div class="form-group" id="ai-pl-group" style="display:none;"><label>Hasil Akhir P/L (Rp)</label><input type="number" id="ai-input-pl" class="form-input" placeholder="Min (-) jika Loss"></div>
+
+                <div style="display:flex; gap:10px; margin-top:1.5rem;">
+                    <button type="button" id="ai-cancel-edit-btn" class="btn btn-outline" style="display:none; width:100%; padding:12px;">Batal Edit</button>
+                    <button type="submit" class="save-btn" style="background:#9c27b0; margin-top:0;">Simpan Entry</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="ai-settings-modal" class="modal">
+        <div class="modal-content" style="width: 450px;">
+            <span class="close-btn" onclick="document.getElementById('ai-settings-modal').style.display='none'">&times;</span>
+            <h2 style="color:#9c27b0; margin-bottom: 5px;">⚙️ Settings Trading AI</h2>
+            <p style="color:#aaa; font-size:0.85rem; margin-bottom:20px;">API key disimpan cuma di browser ini (localStorage), gak ikut ke cloud demi keamanan. Isi ulang tiap device kalau perlu.</p>
+            <div class="form-group"><label>TwelveData API Key (wajib, buat data harga live)</label><input type="text" id="ai-key-twelvedata" class="form-input" placeholder="Masukkan API key..."></div>
+            <div class="form-group" style="margin-top:10px;"><label>Provider LLM (opsional, buat teks alasan lebih natural)</label><select id="ai-llm-provider" class="form-input"><option value="none">Tidak pakai (template saja)</option><option value="gemini">Google Gemini</option><option value="claude">Claude (Anthropic)</option></select></div>
+            <div class="form-group" style="margin-top:10px;"><label>API Key LLM (kosongkan kalau "Tidak pakai")</label><input type="text" id="ai-key-llm" class="form-input" placeholder="Masukkan API key..."></div>
+            <button id="btn-save-ai-settings" class="save-btn" style="background:#9c27b0; margin-top:20px;">Simpan Settings</button>
         </div>
     </div>
 

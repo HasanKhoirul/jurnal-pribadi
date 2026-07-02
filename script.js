@@ -20,6 +20,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const defaultWealthHistory = { items: [], realMoney: 0 };
     if(!localStorage.getItem('wealth_data_v1')) { localStorage.setItem('wealth_data_v1', JSON.stringify(defaultWealthHistory)); }
     let wealthData = JSON.parse(localStorage.getItem('wealth_data_v1'));
+    let aiTradeData = JSON.parse(localStorage.getItem('ai_trade_data_v1')) || {};
+    let aiModalAwal = parseFloat(localStorage.getItem('ai_modal_awal')) || 2500000;
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
@@ -33,7 +35,7 @@ document.addEventListener("DOMContentLoaded", () => {
         localStorage.setItem(key, JSON.stringify(obj));
         clearTimeout(pushTimer);
         pushTimer = setTimeout(() => {
-            if (key === 'expense_data_v1' || key === 'wealth_data_v1') pushPrivateToCloud();
+            if (key === 'expense_data_v1' || key === 'wealth_data_v1' || key === 'ai_trade_data_v1' || key === 'ai_modal_awal') pushPrivateToCloud();
             else pushPublicToCloud();
         }, 800);
     }
@@ -46,7 +48,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function pushPrivateToCloud() {
         if (!auth.currentUser) return Promise.resolve();
-        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData })
+        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal })
             .catch(err => { console.error('Gagal sync data privat ke cloud:', err); throw err; });
     }
 
@@ -67,7 +69,9 @@ document.addEventListener("DOMContentLoaded", () => {
             if (doc.exists) {
                 const d = doc.data();
                 expData = d.expData || {}; wealthData = d.wealthData || defaultWealthHistory;
+                aiTradeData = d.aiTradeData || {}; aiModalAwal = d.aiModalAwal || 2500000;
                 localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+                localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 rerenderActiveSection();
             }
         }, err => { console.error('Gagal ambil data privat dari cloud:', err); alert('Gagal ambil data privat: ' + err.code); });
@@ -82,6 +86,7 @@ document.addEventListener("DOMContentLoaded", () => {
         else if (targetId === 'view-expenses') { if (document.getElementById('exp-menu-dashboard').classList.contains('active')) renderExpDashboard(); else renderExpCalendar(); }
         else if (targetId === 'view-sports') { if (document.getElementById('sport-menu-dashboard').classList.contains('active')) renderSportDashboard(); else renderSportCalendar(); }
         else if (targetId === 'view-wealth') renderWealthDashboard();
+        else if (targetId === 'view-ai-trading' && isLoggedIn) { if (document.getElementById('ai-menu-dashboard').classList.contains('active')) renderAiDashboard(); else if (document.getElementById('ai-menu-calendar').classList.contains('active')) renderAiCalendar(); }
     }
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -201,7 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }).catch((err) => { console.error(err); alert("Login gagal: " + err.code + "\n" + err.message); });
     });
 
-    const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
+    const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-ai-trading': 'Trading AI', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
 
     menuItems.forEach(item => {
         item.addEventListener('click', () => {
@@ -214,6 +219,7 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (targetId === 'view-expenses') renderExpCalendar();
             else if (targetId === 'view-sports') renderSportCalendar();
             else if (targetId === 'view-wealth') renderWealthDashboard();
+            else if (targetId === 'view-ai-trading' && isLoggedIn) loadTradingViewWidgets();
         });
     });
 
@@ -692,6 +698,328 @@ document.addEventListener("DOMContentLoaded", () => {
             tbody.innerHTML += `<tr><td>${i+1}</td><td>${e.date}</td><td>${e.tf||'-'}</td><td>${e.arah||'-'}</td><td>${e.duration||'-'}</td><td>${layersCount} L</td><td style="white-space: normal; line-height: 1.6; min-width: 250px;">${e.alasan||'-'}</td><td align="right" class="${e.plVal>=0?'profit-text':'loss-text'}"><strong>${formatRupiah(e.plVal)}</strong></td></tr>`;
         });
     }
+
+    // ==========================================
+    // MODUL TRADING AI (SIMULASI PAPER TRADING)
+    // ==========================================
+    let currentAiDateStr = null; let tvWidgetsLoaded = false; let lastAiSuggestion = null;
+
+    function getAiSettings() {
+        return {
+            twelvedata: localStorage.getItem('ai_key_twelvedata') || '',
+            llmProvider: localStorage.getItem('ai_llm_provider') || 'none',
+            llmKey: localStorage.getItem('ai_key_llm') || ''
+        };
+    }
+
+    document.getElementById('btn-ai-settings').onclick = () => {
+        const s = getAiSettings();
+        document.getElementById('ai-key-twelvedata').value = s.twelvedata;
+        document.getElementById('ai-llm-provider').value = s.llmProvider;
+        document.getElementById('ai-key-llm').value = s.llmKey;
+        document.getElementById('ai-settings-modal').style.display = 'flex';
+    };
+    document.getElementById('btn-save-ai-settings').onclick = () => {
+        localStorage.setItem('ai_key_twelvedata', document.getElementById('ai-key-twelvedata').value.trim());
+        localStorage.setItem('ai_llm_provider', document.getElementById('ai-llm-provider').value);
+        localStorage.setItem('ai_key_llm', document.getElementById('ai-key-llm').value.trim());
+        document.getElementById('ai-settings-modal').style.display = 'none';
+        alert('Settings tersimpan di device ini.');
+    };
+
+    function loadTradingViewWidgets() {
+        if (tvWidgetsLoaded) return; tvWidgetsLoaded = true;
+        const chartScript = document.createElement('script');
+        chartScript.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+        chartScript.async = true;
+        chartScript.innerHTML = JSON.stringify({ autosize: true, symbol: 'OANDA:XAUUSD', interval: '60', timezone: 'Asia/Jakarta', theme: 'dark', style: '1', locale: 'id', backgroundColor: '#1e1e1e', hide_top_toolbar: false, allow_symbol_change: true });
+        document.getElementById('tv-chart-container').appendChild(chartScript);
+
+        const calScript = document.createElement('script');
+        calScript.src = 'https://s3.tradingview.com/external-embedding/embed-widget-events.js';
+        calScript.async = true;
+        calScript.innerHTML = JSON.stringify({ colorTheme: 'dark', isTransparent: false, width: '100%', height: '100%', locale: 'id', importanceFilter: '-1,0,1', countryFilter: 'us,eu,gb,jp,cn,au' });
+        document.getElementById('tv-calendar-container').appendChild(calScript);
+    }
+
+    document.getElementById('ai-menu-market').addEventListener('click', function() {
+        this.classList.add('active'); document.getElementById('ai-menu-calendar').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
+        document.getElementById('ai-view-market').style.display = 'block'; document.getElementById('ai-view-calendar').style.display = 'none'; document.getElementById('ai-view-dashboard').style.display = 'none';
+        loadTradingViewWidgets();
+    });
+    document.getElementById('ai-menu-calendar').addEventListener('click', function() {
+        this.classList.add('active'); document.getElementById('ai-menu-market').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
+        document.getElementById('ai-view-market').style.display = 'none'; document.getElementById('ai-view-calendar').style.display = 'block'; document.getElementById('ai-view-dashboard').style.display = 'none';
+        renderAiCalendar();
+    });
+    document.getElementById('ai-menu-dashboard').addEventListener('click', function() {
+        this.classList.add('active'); document.getElementById('ai-menu-market').classList.remove('active'); document.getElementById('ai-menu-calendar').classList.remove('active');
+        document.getElementById('ai-view-market').style.display = 'none'; document.getElementById('ai-view-calendar').style.display = 'none'; document.getElementById('ai-view-dashboard').style.display = 'block';
+        renderAiDashboard();
+    });
+
+    document.getElementById('ai-modal-box').onclick = () => {
+        const val = prompt('Masukkan modal simulasi baru (Rp):', aiModalAwal);
+        if (val === null) return;
+        const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
+        if (isNaN(num) || num <= 0) { alert('Angka gak valid.'); return; }
+        aiModalAwal = num;
+        saveData('ai_modal_awal', aiModalAwal);
+        document.getElementById('ai-base-equity').innerText = formatRupiah(aiModalAwal);
+        updateAiEquity(globalNavDate.getFullYear(), globalNavDate.getMonth());
+    };
+
+    // --- Kalkulasi indikator teknikal (murni JS, gratis) ---
+    function calcSMA(closes, period) {
+        if (closes.length < period) return null;
+        return closes.slice(-period).reduce((a, b) => a + b, 0) / period;
+    }
+    function calcRSI(closes, period = 14) {
+        if (closes.length < period + 1) return null;
+        let gains = 0, losses = 0;
+        for (let i = closes.length - period; i < closes.length; i++) {
+            const diff = closes[i] - closes[i - 1];
+            if (diff >= 0) gains += diff; else losses -= diff;
+        }
+        const avgGain = gains / period, avgLoss = losses / period;
+        if (avgLoss === 0) return 100;
+        return 100 - (100 / (1 + (avgGain / avgLoss)));
+    }
+    function findSupportResistance(candles, lookback = 30) {
+        const slice = candles.slice(-lookback);
+        return { resistance: Math.max(...slice.map(c => c.high)), support: Math.min(...slice.map(c => c.low)) };
+    }
+
+    async function fetchAiPriceData() {
+        const key = getAiSettings().twelvedata;
+        if (!key) { alert('Isi dulu API Key TwelveData di ⚙️ Settings.'); return null; }
+        try {
+            const res = await fetch(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1h&outputsize=100&apikey=${key}`);
+            const data = await res.json();
+            if (data.status === 'error' || !data.values) { alert('Gagal ambil data harga: ' + (data.message || 'unknown error')); return null; }
+            return data.values.reverse().map(v => ({ time: v.datetime, open: parseFloat(v.open), high: parseFloat(v.high), low: parseFloat(v.low), close: parseFloat(v.close) }));
+        } catch (err) { console.error(err); alert('Gagal konek ke TwelveData: ' + err.message); return null; }
+    }
+
+    async function polishReasonWithLLM(rawReason, settings) {
+        const prompt_ = `Tuliskan ulang analisa trading berikut jadi lebih natural dan enak dibaca dalam Bahasa Indonesia, TANPA mengubah angka atau menambah fakta baru:\n\n${rawReason}`;
+        try {
+            if (settings.llmProvider === 'gemini') {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${settings.llmKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt_ }] }] }) });
+                const data = await res.json();
+                return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+            } else if (settings.llmProvider === 'claude') {
+                const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': settings.llmKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt_ }] }) });
+                const data = await res.json();
+                return data?.content?.[0]?.text || null;
+            }
+        } catch (err) { console.error('LLM polish gagal, fallback ke template:', err); return null; }
+        return null;
+    }
+
+    async function generateAiAnalysis() {
+        const btn = document.getElementById('btn-ai-generate');
+        btn.disabled = true; btn.innerText = '⏳ Menganalisa...';
+        const candles = await fetchAiPriceData();
+        btn.disabled = false; btn.innerText = '🎯 Buatkan Analisa';
+        if (!candles) return;
+
+        const closes = candles.map(c => c.close);
+        const lastClose = closes[closes.length - 1];
+        const ma20 = calcSMA(closes, 20); const ma50 = calcSMA(closes, 50); const rsi = calcRSI(closes, 14);
+        const { support, resistance } = findSupportResistance(candles, 30);
+        if (ma20 === null || ma50 === null || rsi === null) { alert('Data candle belum cukup buat hitung indikator (butuh minimal 50 candle).'); return; }
+
+        const trend = ma20 > ma50 ? 'uptrend' : 'downtrend';
+        let arah, entry = lastClose, sl, tp;
+        let reasonParts = [
+            `Harga saat ini ${lastClose.toFixed(2)}.`,
+            `MA20 (${ma20.toFixed(2)}) ${ma20 > ma50 ? 'di atas' : 'di bawah'} MA50 (${ma50.toFixed(2)}) → ${trend}.`,
+            `RSI(14) = ${rsi.toFixed(1)} (${rsi >= 70 ? 'overbought' : rsi <= 30 ? 'oversold' : 'netral'}).`,
+            `Support terdekat ${support.toFixed(2)}, resistance terdekat ${resistance.toFixed(2)}.`
+        ];
+
+        if (rsi >= 70) { arah = 'SELL'; sl = resistance; tp = ma20; reasonParts.push(`RSI overbought → potensi koreksi turun, SELL jangka pendek menuju MA20, SL di atas resistance.`); }
+        else if (rsi <= 30) { arah = 'BUY'; sl = support; tp = ma20; reasonParts.push(`RSI oversold → potensi rebound naik, BUY jangka pendek menuju MA20, SL di bawah support.`); }
+        else if (trend === 'uptrend') { arah = 'BUY'; sl = support; tp = resistance; reasonParts.push(`Trend naik & RSI netral → peluang BUY menuju resistance, SL di bawah support terakhir.`); }
+        else { arah = 'SELL'; sl = resistance; tp = support; reasonParts.push(`Trend turun & RSI netral → peluang SELL menuju support, SL di atas resistance terakhir.`); }
+
+        const riskPct = ((Math.abs(entry - sl) / entry) * 100).toFixed(2);
+        let reasonText = reasonParts.join(' ');
+
+        const settings = getAiSettings();
+        if (settings.llmProvider !== 'none' && settings.llmKey) {
+            const polished = await polishReasonWithLLM(reasonText, settings);
+            if (polished) reasonText = polished;
+        }
+        showAiGenerateResult({ arah, entry, sl, tp, riskPct, reasonText, tf: 'H1' });
+    }
+    document.getElementById('btn-ai-generate').onclick = generateAiAnalysis;
+
+    function showAiGenerateResult(sug) {
+        lastAiSuggestion = sug;
+        const box = document.getElementById('ai-generate-result');
+        box.innerHTML = `<div class="insight-box ${sug.arah === 'BUY' ? 'insight-success' : 'insight-danger'}" style="flex-direction:column; align-items:flex-start; gap:8px;"><strong>🎯 Saran Simulasi: ${sug.arah} @ ${sug.entry.toFixed(2)} | SL ${sug.sl.toFixed(2)} | TP ${sug.tp.toFixed(2)} | Risk ~${sug.riskPct}%</strong><p style="font-weight:normal; font-size:0.85rem; line-height:1.6;">${sug.reasonText}</p><button type="button" class="save-btn" style="width:auto; padding:8px 20px; margin-top:5px; background:#9c27b0;" id="btn-ai-save-suggestion">+ Simpan sebagai Entry Simulasi</button></div>`;
+        box.style.display = 'block';
+        document.getElementById('btn-ai-save-suggestion').onclick = () => openAiEntryModalWithSuggestion(sug);
+    }
+
+    function openAiEntryModalWithSuggestion(sug) {
+        const today = new Date();
+        const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        openAiModal(dateStr, today.getDate());
+        document.getElementById('ai-input-arah').value = sug.arah;
+        document.getElementById('ai-input-tf').value = sug.tf;
+        document.getElementById('ai-input-entry').value = sug.entry.toFixed(2);
+        document.getElementById('ai-input-sl').value = sug.sl.toFixed(2);
+        document.getElementById('ai-input-tp').value = sug.tp.toFixed(2);
+        document.getElementById('ai-input-risk').value = sug.riskPct;
+        document.getElementById('ai-input-alasan').value = sug.reasonText;
+    }
+
+    // --- Kalender & CRUD entry simulasi ---
+    function renderAiCalendar() {
+        const cal = document.getElementById('ai-calendar'); cal.innerHTML = '';
+        const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
+        document.getElementById('ai-month-year-display').innerText = `${monthNames[m]} ${y}`;
+        const firstDay = new Date(y, m, 1).getDay(); const daysInMonth = new Date(y, m + 1, 0).getDate();
+        let totalBulan = 0;
+
+        for (let w = 0; w < Math.ceil((firstDay + daysInMonth) / 7); w++) {
+            let weeklyPl = 0; let hasData = false;
+            for (let d = 0; d < 7; d++) {
+                const dayNum = (w * 7 + d) - firstDay + 1;
+                if (dayNum > 0 && dayNum <= daysInMonth) {
+                    const fDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+                    const trades = aiTradeData[fDate] || []; let dayPl = 0;
+                    if (trades.length > 0) { hasData = true; trades.forEach(t => dayPl += parseFloat(t.pl || 0)); weeklyPl += dayPl; totalBulan += dayPl; }
+                    const card = document.createElement('div'); card.className = `day-card ${dayPl > 0 ? 'profit' : dayPl < 0 ? 'loss' : ''}`;
+                    card.innerHTML = `${trades.length > 0 ? `<span class="trade-count">${trades.length}</span>` : ''}<div class="day-number">${dayNum}</div>${trades.length > 0 ? `<span class="day-pl ${dayPl > 0 ? 'profit-text' : dayPl < 0 ? 'loss-text' : ''}">${dayPl > 0 ? '+' : ''}${formatRupiah(dayPl)}</span>` : ''}`;
+                    card.onclick = () => openAiModal(fDate, dayNum);
+                    cal.appendChild(card);
+                } else cal.appendChild(Object.assign(document.createElement('div'), { className: 'empty-card' }));
+            }
+            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData ? (weeklyPl > 0 ? 'weekly-profit' : 'weekly-loss') : 'empty-card'}`;
+            if (hasData) wCard.innerHTML = `<div class="week-title">Mg ${w + 1}</div><div class="week-pl ${weeklyPl > 0 ? 'profit-text' : 'loss-text'}">${weeklyPl > 0 ? '+' : ''}${formatRupiah(weeklyPl)}</div>`;
+            cal.appendChild(wCard);
+        }
+        const totalEl = document.getElementById('ai-monthly-total'); totalEl.innerText = formatRupiah(totalBulan); totalEl.className = totalBulan > 0 ? 'profit-text' : (totalBulan < 0 ? 'loss-text' : 'netral');
+        document.getElementById('ai-base-equity').innerText = formatRupiah(aiModalAwal);
+        updateAiEquity(y, m);
+    }
+    document.getElementById('ai-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderAiCalendar(); };
+    document.getElementById('ai-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderAiCalendar(); };
+    document.getElementById('ai-clear-data-btn').onclick = () => { showConfirm("Data simulasi bakal kehapus permanen loh. Yakin?", () => { aiTradeData = {}; saveData('ai_trade_data_v1', aiTradeData); renderAiCalendar(); }); };
+
+    function updateAiEquity(vY, vM) {
+        let sumBefore = 0; let sumDuring = 0;
+        for (const d in aiTradeData) {
+            let tY = new Date(d).getFullYear(); let tM = new Date(d).getMonth(); let dt = 0;
+            aiTradeData[d].forEach(t => dt += parseFloat(t.pl || 0));
+            if (tY < vY || (tY === vY && tM < vM)) sumBefore += dt; else if (tY === vY && tM === vM) sumDuring += dt;
+        }
+        let stEq = aiModalAwal + sumBefore; let enEq = stEq + sumDuring;
+        document.getElementById('ai-start-equity').innerText = formatRupiah(stEq);
+        document.getElementById('ai-current-equity').innerText = formatRupiah(enEq);
+        document.getElementById('ai-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
+    }
+
+    function openAiModal(dateStr, dayNum) {
+        currentAiDateStr = dateStr;
+        document.getElementById('ai-modal-date-title').innerText = `Entry Simulasi Tgl ${dayNum}`;
+        document.getElementById('ai-today-history').innerHTML = '';
+        (aiTradeData[dateStr] || []).forEach((t, i) => {
+            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div><strong>${t.arah} @ ${t.entry}</strong><br><span style="color:#aaa; font-size:0.75rem;">SL:${t.sl} TP:${t.tp} | ${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'}</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editAiTrade('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteAiTrade('${dateStr}', ${i})">🗑️</button></div></div>`;
+        });
+        document.getElementById('ai-entry-form').reset();
+        document.getElementById('ai-edit-index').value = '-1';
+        document.getElementById('ai-cancel-edit-btn').style.display = 'none';
+        document.getElementById('ai-pl-group').style.display = 'none';
+        document.getElementById('ai-entry-modal').style.display = 'flex';
+    }
+    document.getElementById('close-ai-modal').onclick = () => document.getElementById('ai-entry-modal').style.display = 'none';
+    document.getElementById('ai-input-status').addEventListener('change', function () { document.getElementById('ai-pl-group').style.display = this.value === 'closed' ? 'block' : 'none'; });
+
+    window.editAiTrade = (d, i) => {
+        let t = aiTradeData[d][i];
+        document.getElementById('ai-input-arah').value = t.arah; document.getElementById('ai-input-tf').value = t.tf; document.getElementById('ai-input-entry').value = t.entry; document.getElementById('ai-input-sl').value = t.sl; document.getElementById('ai-input-tp').value = t.tp; document.getElementById('ai-input-risk').value = t.risk; document.getElementById('ai-input-alasan').value = t.alasan; document.getElementById('ai-input-status').value = t.status;
+        document.getElementById('ai-pl-group').style.display = t.status === 'closed' ? 'block' : 'none';
+        document.getElementById('ai-input-pl').value = t.pl || '';
+        document.getElementById('ai-edit-index').value = i; document.getElementById('ai-cancel-edit-btn').style.display = 'block';
+    };
+    window.deleteAiTrade = (d, i) => { aiTradeData[d].splice(i, 1); if (!aiTradeData[d].length) delete aiTradeData[d]; saveData('ai_trade_data_v1', aiTradeData); openAiModal(d, new Date(d).getDate()); renderAiCalendar(); };
+    document.getElementById('ai-cancel-edit-btn').onclick = () => { document.getElementById('ai-entry-form').reset(); document.getElementById('ai-edit-index').value = '-1'; document.getElementById('ai-cancel-edit-btn').style.display = 'none'; document.getElementById('ai-pl-group').style.display = 'none'; };
+
+    document.getElementById('ai-entry-form').onsubmit = (e) => {
+        e.preventDefault();
+        if (!aiTradeData[currentAiDateStr]) aiTradeData[currentAiDateStr] = [];
+        let statusVal = document.getElementById('ai-input-status').value;
+        let newData = { arah: document.getElementById('ai-input-arah').value, tf: document.getElementById('ai-input-tf').value, entry: document.getElementById('ai-input-entry').value, sl: document.getElementById('ai-input-sl').value, tp: document.getElementById('ai-input-tp').value, risk: document.getElementById('ai-input-risk').value, alasan: document.getElementById('ai-input-alasan').value, status: statusVal, pl: statusVal === 'closed' ? document.getElementById('ai-input-pl').value : 0 };
+        let idx = parseInt(document.getElementById('ai-edit-index').value);
+        if (idx > -1) aiTradeData[currentAiDateStr][idx] = newData; else aiTradeData[currentAiDateStr].push(newData);
+        saveData('ai_trade_data_v1', aiTradeData);
+        document.getElementById('ai-cancel-edit-btn').click();
+        openAiModal(currentAiDateStr, new Date(currentAiDateStr).getDate());
+        renderAiCalendar();
+        document.getElementById('ai-generate-result').style.display = 'none';
+    };
+
+    // --- Dashboard evaluasi ---
+    function renderAiDashboard() {
+        const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
+        document.getElementById('ai-dash-month-year-display').innerText = `${monthNames[m]} ${y}`;
+
+        let monthHasData = false; let monthPl = 0; let winCount = 0;
+        let maxWin = { pl: 0, date: '-', detail: '-' }; let maxLoss = { pl: 0, date: '-', detail: '-' };
+        const firstDay = new Date(y, m, 1).getDay(); const daysInMonth = new Date(y, m + 1, 0).getDate();
+        let weeklyReports = []; for (let i = 0; i < Math.ceil((firstDay + daysInMonth) / 7); i++) weeklyReports.push({ wins: 0, losses: 0, pl: 0, hasData: false });
+        let tableRows = [];
+
+        for (let i = 1; i <= daysInMonth; i++) {
+            const fDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+            const trades = aiTradeData[fDate] || []; let wIdx = Math.floor((firstDay + i - 1) / 7);
+            if (trades.length > 0) {
+                monthHasData = true; weeklyReports[wIdx].hasData = true;
+                trades.forEach(t => {
+                    let p = parseFloat(t.pl || 0); monthPl += p;
+                    if (t.status === 'closed') { if (p >= 0) { winCount++; weeklyReports[wIdx].wins++; } else { weeklyReports[wIdx].losses++; } }
+                    weeklyReports[wIdx].pl += p;
+                    if (p > maxWin.pl) maxWin = { pl: p, date: fDate, detail: t.alasan };
+                    if (p < maxLoss.pl) maxLoss = { pl: p, date: fDate, detail: t.alasan };
+                    tableRows.push({ date: fDate, ...t, plVal: p });
+                });
+            }
+        }
+
+        const emptyState = document.getElementById('ai-empty-state'); const dashContent = document.getElementById('ai-dash-content');
+        if (!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; return; }
+        emptyState.style.display = 'none'; dashContent.style.display = 'block';
+
+        const riskLimit = aiModalAwal * 0.10;
+        const usedPct = monthPl < 0 ? Math.min((Math.abs(monthPl) / riskLimit) * 100, 999) : 0;
+        const riskBox = document.getElementById('ai-risk-insight');
+        if (monthPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Aman! Bulan ini masih profit ${formatRupiah(monthPl)}, belum kepakai risk budget.</div>`;
+        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Risk terpakai ${usedPct.toFixed(0)}% dari limit 10%/bulan (${formatRupiah(Math.abs(monthPl))} dari ${formatRupiah(riskLimit)}).</div>`;
+        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">⚠️ Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit 10%/bulan. Kurangi ukuran posisi.</div>`;
+        else riskBox.innerHTML = `<div class="insight-box insight-danger">🚨 LIMIT TERLAMPAUI! Rugi bulan ini ${formatRupiah(Math.abs(monthPl))}, lewat batas 10% modal (${formatRupiah(riskLimit)}). STOP entry baru bulan ini.</div>`;
+
+        let closedTrades = tableRows.filter(t => t.status === 'closed');
+        let overboughtMistakes = closedTrades.filter(t => t.arah === 'BUY' && t.alasan && t.alasan.toLowerCase().includes('overbought')).length;
+        let oversoldMistakes = closedTrades.filter(t => t.arah === 'SELL' && t.alasan && t.alasan.toLowerCase().includes('oversold')).length;
+        let winRate = closedTrades.length > 0 ? ((winCount / closedTrades.length) * 100).toFixed(0) : 0;
+        document.getElementById('ai-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${monthPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit 10%/bulan.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
+
+        const wGrid = document.getElementById('ai-weekly-breakdown-grid'); wGrid.innerHTML = '';
+        weeklyReports.forEach((wr, idx) => { if (wr.hasData) wGrid.innerHTML += `<div class="weekly-card ${wr.pl > 0 ? 'week-profit' : (wr.pl < 0 ? 'week-loss' : '')}"><h4>Minggu ${idx + 1}</h4><p><span>Win:</span> <span style="color:#00e676;">${wr.wins}x</span></p><p><span>Loss:</span> <span style="color:#ff1744;">${wr.losses}x</span></p><p style="border-top:1px dotted #444; padding-top:5px;"><span>Hasil:</span> <strong class="${wr.pl > 0 ? 'profit-text' : 'loss-text'}">${wr.pl > 0 ? '+' : ''}${formatRupiah(wr.pl)}</strong></p></div>`; });
+
+        document.getElementById('ai-highest-win-pl').innerText = maxWin.pl > 0 ? `+${formatRupiah(maxWin.pl)}` : 'Rp 0'; document.getElementById('ai-highest-win-desc').innerText = maxWin.date !== '-' ? `[${maxWin.date}] ${maxWin.detail}` : '-';
+        document.getElementById('ai-highest-loss-pl').innerText = maxLoss.pl < 0 ? formatRupiah(maxLoss.pl) : 'Rp 0'; document.getElementById('ai-highest-loss-desc').innerText = maxLoss.date !== '-' ? `[${maxLoss.date}] ${maxLoss.detail}` : '-';
+
+        const tbody = document.getElementById('ai-dashboard-table-body'); tbody.innerHTML = tableRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
+        tableRows.forEach((e, i) => { tbody.innerHTML += `<tr><td>${i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${e.entry}</td><td>${e.sl}</td><td>${e.tp}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`; });
+    }
+    document.getElementById('ai-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderAiDashboard(); };
+    document.getElementById('ai-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderAiDashboard(); };
 
     // ==========================================
     // 3. MODUL PENGELUARAN BULANAN
