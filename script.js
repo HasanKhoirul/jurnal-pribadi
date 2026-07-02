@@ -172,7 +172,7 @@ document.addEventListener("DOMContentLoaded", () => {
         applyAuthState();
         rerenderActiveSection();
         if (user) attachPrivateListener(user.uid);
-        else if (privateUnsub) { privateUnsub(); privateUnsub = null; }
+        else { if (privateUnsub) { privateUnsub(); privateUnsub = null; } stopAiAutoTick(); }
     });
 
     document.getElementById('btn-login').addEventListener('click', () => {
@@ -222,7 +222,8 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (targetId === 'view-expenses') renderExpCalendar();
             else if (targetId === 'view-sports') renderSportCalendar();
             else if (targetId === 'view-wealth') renderWealthDashboard();
-            else if (targetId === 'view-ai-trading' && isLoggedIn) loadTradingViewWidgets();
+            else if (targetId === 'view-ai-trading' && isLoggedIn) { loadEconomicCalendarWidget(); startAiAutoTick(); }
+            if (targetId !== 'view-ai-trading') stopAiAutoTick();
         });
     });
 
@@ -705,7 +706,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // MODUL TRADING AI (SIMULASI PAPER TRADING)
     // ==========================================
-    let currentAiDateStr = null; let tvWidgetsLoaded = false; let lastAiSuggestion = null;
+    let currentAiDateStr = null; let calWidgetLoaded = false;
+    let aiChart = null, aiCandleSeries = null, aiPriceLines = { entry: null, sl: null, tp: null };
+    let aiTickInterval = null; let lastAiCandles = null;
 
     function getAiSettings() {
         return {
@@ -730,14 +733,8 @@ document.addEventListener("DOMContentLoaded", () => {
         alert('Settings tersimpan di device ini.');
     };
 
-    function loadTradingViewWidgets() {
-        if (tvWidgetsLoaded) return; tvWidgetsLoaded = true;
-        const chartScript = document.createElement('script');
-        chartScript.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-        chartScript.async = true;
-        chartScript.innerHTML = JSON.stringify({ autosize: true, symbol: 'OANDA:XAUUSD', interval: '60', timezone: 'Asia/Jakarta', theme: 'dark', style: '1', locale: 'id', backgroundColor: '#1e1e1e', hide_top_toolbar: false, allow_symbol_change: true });
-        document.getElementById('tv-chart-container').appendChild(chartScript);
-
+    function loadEconomicCalendarWidget() {
+        if (calWidgetLoaded) return; calWidgetLoaded = true;
         const calScript = document.createElement('script');
         calScript.src = 'https://s3.tradingview.com/external-embedding/embed-widget-events.js';
         calScript.async = true;
@@ -745,10 +742,53 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('tv-calendar-container').appendChild(calScript);
     }
 
+    function ensureLightweightChartsLoaded(callback) {
+        if (window.LightweightCharts) { callback(); return; }
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
+        script.onload = callback;
+        document.head.appendChild(script);
+    }
+
+    function clearAiPriceLines() {
+        if (!aiCandleSeries) return;
+        if (aiPriceLines.entry) aiCandleSeries.removePriceLine(aiPriceLines.entry);
+        if (aiPriceLines.sl) aiCandleSeries.removePriceLine(aiPriceLines.sl);
+        if (aiPriceLines.tp) aiCandleSeries.removePriceLine(aiPriceLines.tp);
+        aiPriceLines = { entry: null, sl: null, tp: null };
+    }
+
+    function updateTradeLines(trade) {
+        clearAiPriceLines();
+        aiPriceLines.entry = aiCandleSeries.createPriceLine({ price: parseFloat(trade.entry), color: '#ffd700', lineWidth: 1, lineStyle: 2, title: 'Entry' });
+        aiPriceLines.sl = aiCandleSeries.createPriceLine({ price: parseFloat(trade.sl), color: '#ff1744', lineWidth: 1, lineStyle: 2, title: 'SL' });
+        aiPriceLines.tp = aiCandleSeries.createPriceLine({ price: parseFloat(trade.tp), color: '#00e676', lineWidth: 1, lineStyle: 2, title: 'TP' });
+    }
+
+    function renderLightweightChart(candles) {
+        ensureLightweightChartsLoaded(() => {
+            const container = document.getElementById('lw-chart-container');
+            if (!aiChart) {
+                aiChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth, height: 500,
+                    layout: { background: { color: '#1e1e1e' }, textColor: '#ccc' },
+                    grid: { vertLines: { color: '#333' }, horzLines: { color: '#333' } },
+                    timeScale: { timeVisible: true }
+                });
+                aiCandleSeries = aiChart.addCandlestickSeries({ upColor: '#00e676', downColor: '#ff1744', borderVisible: false, wickUpColor: '#00e676', wickDownColor: '#ff1744' });
+                window.addEventListener('resize', () => { if (aiChart) aiChart.applyOptions({ width: container.clientWidth }); });
+            }
+            aiCandleSeries.setData(candles.map(c => ({ time: Math.floor(new Date(c.time).getTime() / 1000), open: c.open, high: c.high, low: c.low, close: c.close })));
+            const openInfo = findOpenAiTrade();
+            if (openInfo) updateTradeLines(openInfo.trade); else clearAiPriceLines();
+        });
+    }
+
     document.getElementById('ai-menu-market').addEventListener('click', function() {
         this.classList.add('active'); document.getElementById('ai-menu-calendar').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
         document.getElementById('ai-view-market').style.display = 'block'; document.getElementById('ai-view-calendar').style.display = 'none'; document.getElementById('ai-view-dashboard').style.display = 'none';
-        loadTradingViewWidgets();
+        loadEconomicCalendarWidget();
+        if (lastAiCandles) renderLightweightChart(lastAiCandles);
     });
     document.getElementById('ai-menu-calendar').addEventListener('click', function() {
         this.classList.add('active'); document.getElementById('ai-menu-market').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
@@ -820,18 +860,12 @@ document.addEventListener("DOMContentLoaded", () => {
         return null;
     }
 
-    async function generateAiAnalysis() {
-        const btn = document.getElementById('btn-ai-generate');
-        btn.disabled = true; btn.innerText = '⏳ Menganalisa...';
-        const candles = await fetchAiPriceData();
-        btn.disabled = false; btn.innerText = '🎯 Buatkan Analisa';
-        if (!candles) return;
-
+    async function computeAiSuggestion(candles) {
         const closes = candles.map(c => c.close);
         const lastClose = closes[closes.length - 1];
         const ma20 = calcSMA(closes, 20); const ma50 = calcSMA(closes, 50); const rsi = calcRSI(closes, 14);
         const { support, resistance } = findSupportResistance(candles, 30);
-        if (ma20 === null || ma50 === null || rsi === null) { alert('Data candle belum cukup buat hitung indikator (butuh minimal 50 candle).'); return; }
+        if (ma20 === null || ma50 === null || rsi === null) return null;
 
         const trend = ma20 > ma50 ? 'uptrend' : 'downtrend';
         let arah, entry = lastClose, sl, tp;
@@ -847,38 +881,130 @@ document.addEventListener("DOMContentLoaded", () => {
         else if (trend === 'uptrend') { arah = 'BUY'; sl = support; tp = resistance; reasonParts.push(`Trend naik & RSI netral → peluang BUY menuju resistance, SL di bawah support terakhir.`); }
         else { arah = 'SELL'; sl = resistance; tp = support; reasonParts.push(`Trend turun & RSI netral → peluang SELL menuju support, SL di atas resistance terakhir.`); }
 
-        const riskPct = ((Math.abs(entry - sl) / entry) * 100).toFixed(2);
+        if (Math.abs(entry - sl) < 0.01) return null; // hindari division by zero kalau SL == entry
         let reasonText = reasonParts.join(' ');
-
         const settings = getAiSettings();
         if (settings.llmProvider !== 'none' && settings.llmKey) {
             const polished = await polishReasonWithLLM(reasonText, settings);
             if (polished) reasonText = polished;
         }
-        showAiGenerateResult({ arah, entry, sl, tp, riskPct, reasonText, tf: 'H1' });
-    }
-    document.getElementById('btn-ai-generate').onclick = generateAiAnalysis;
-
-    function showAiGenerateResult(sug) {
-        lastAiSuggestion = sug;
-        const box = document.getElementById('ai-generate-result');
-        box.innerHTML = `<div class="insight-box ${sug.arah === 'BUY' ? 'insight-success' : 'insight-danger'}" style="flex-direction:column; align-items:flex-start; gap:8px;"><strong>🎯 Saran Simulasi: ${sug.arah} @ ${sug.entry.toFixed(2)} | SL ${sug.sl.toFixed(2)} | TP ${sug.tp.toFixed(2)} | Risk ~${sug.riskPct}%</strong><p style="font-weight:normal; font-size:0.85rem; line-height:1.6;">${sug.reasonText}</p><button type="button" class="save-btn" style="width:auto; padding:8px 20px; margin-top:5px; background:#9c27b0;" id="btn-ai-save-suggestion">+ Simpan sebagai Entry Simulasi</button></div>`;
-        box.style.display = 'block';
-        document.getElementById('btn-ai-save-suggestion').onclick = () => openAiEntryModalWithSuggestion(sug);
+        return { arah, entry, sl, tp, reasonText, tf: 'H1' };
     }
 
-    function openAiEntryModalWithSuggestion(sug) {
+    // --- Model P/L otomatis: risk 1% dari equity berjalan per trade ---
+    function calcAiCurrentEquity() {
+        let total = aiModalAwal;
+        for (const d in aiTradeData) aiTradeData[d].forEach(t => { if (t.status === 'closed') total += parseFloat(t.pl || 0); });
+        return total;
+    }
+
+    function findOpenAiTrade() {
+        for (const d in aiTradeData) {
+            const list = aiTradeData[d];
+            for (let i = 0; i < list.length; i++) { if (list[i].status === 'open') return { dateKey: d, index: i, trade: list[i] }; }
+        }
+        return null;
+    }
+
+    async function autoOpenAiPosition(candles) {
+        const sug = await computeAiSuggestion(candles);
+        if (!sug) return;
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        openAiModal(dateStr, today.getDate());
-        document.getElementById('ai-input-arah').value = sug.arah;
-        document.getElementById('ai-input-tf').value = sug.tf;
-        document.getElementById('ai-input-entry').value = sug.entry.toFixed(2);
-        document.getElementById('ai-input-sl').value = sug.sl.toFixed(2);
-        document.getElementById('ai-input-tp').value = sug.tp.toFixed(2);
-        document.getElementById('ai-input-risk').value = sug.riskPct;
-        document.getElementById('ai-input-alasan').value = sug.reasonText;
+        if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
+        const riskAmountRp = calcAiCurrentEquity() * 0.01;
+        const rrRatio = Math.abs(sug.tp - sug.entry) / Math.abs(sug.sl - sug.entry);
+        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: sug.sl, tp: sug.tp, risk: '1% equity', alasan: sug.reasonText, status: 'open', pl: 0, riskAmountRp, rrRatio, openedAt: new Date().toISOString(), closedAt: null, closeReason: null });
+        saveData('ai_trade_data_v1', aiTradeData);
+        if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
+        if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
     }
+
+    function checkAndCloseAiPosition(openInfo, candles) {
+        const { dateKey, index, trade } = openInfo;
+        if (!trade.openedAt) trade.openedAt = new Date().toISOString();
+        if (!trade.riskAmountRp) trade.riskAmountRp = calcAiCurrentEquity() * 0.01;
+        if (!trade.rrRatio) trade.rrRatio = Math.abs(trade.tp - trade.entry) / Math.abs(trade.sl - trade.entry);
+        const openedTime = new Date(trade.openedAt).getTime();
+        const relevantCandles = candles.filter(c => new Date(c.time).getTime() >= openedTime);
+        let closeReason = null, closePrice = null;
+        for (const c of relevantCandles) {
+            if (trade.arah === 'BUY') {
+                if (c.low <= trade.sl) { closeReason = 'SL'; closePrice = trade.sl; break; }
+                if (c.high >= trade.tp) { closeReason = 'TP'; closePrice = trade.tp; break; }
+            } else {
+                if (c.high >= trade.sl) { closeReason = 'SL'; closePrice = trade.sl; break; }
+                if (c.low <= trade.tp) { closeReason = 'TP'; closePrice = trade.tp; break; }
+            }
+        }
+        if (!closeReason && (Date.now() - openedTime) / (1000 * 60 * 60 * 24) >= 3) {
+            closeReason = 'timeout'; closePrice = candles[candles.length - 1].close;
+        }
+        if (!closeReason) return false;
+
+        let pl;
+        if (closeReason === 'SL') pl = -trade.riskAmountRp;
+        else if (closeReason === 'TP') pl = trade.riskAmountRp * trade.rrRatio;
+        else {
+            const dirSign = trade.arah === 'BUY' ? 1 : -1;
+            const progress = ((closePrice - trade.entry) * dirSign) / Math.abs(trade.entry - trade.sl);
+            pl = progress >= 0 ? trade.riskAmountRp * Math.min(progress, trade.rrRatio) : trade.riskAmountRp * progress;
+        }
+        aiTradeData[dateKey][index].status = 'closed';
+        aiTradeData[dateKey][index].pl = pl;
+        aiTradeData[dateKey][index].closedAt = new Date().toISOString();
+        aiTradeData[dateKey][index].closeReason = closeReason;
+        saveData('ai_trade_data_v1', aiTradeData);
+        clearAiPriceLines();
+        document.getElementById('ai-floating-pl').innerHTML = '';
+        if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
+        if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
+        return true;
+    }
+
+    function updateFloatingPl(openInfo, candles) {
+        const trade = openInfo.trade;
+        if (!trade.riskAmountRp) trade.riskAmountRp = calcAiCurrentEquity() * 0.01;
+        if (!trade.rrRatio) trade.rrRatio = Math.abs(trade.tp - trade.entry) / Math.abs(trade.sl - trade.entry);
+        const lastClose = candles[candles.length - 1].close;
+        const dirSign = trade.arah === 'BUY' ? 1 : -1;
+        const progress = ((lastClose - trade.entry) * dirSign) / Math.abs(trade.entry - trade.sl);
+        const floatingPl = progress >= 0 ? trade.riskAmountRp * Math.min(progress, trade.rrRatio) : trade.riskAmountRp * progress;
+        const el = document.getElementById('ai-floating-pl');
+        if (el) el.innerHTML = `<div class="insight-box ${floatingPl >= 0 ? 'insight-success' : 'insight-danger'}"><strong>${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)} — Floating P/L: ${floatingPl >= 0 ? '+' : ''}${formatRupiah(floatingPl)}</strong></div>`;
+    }
+
+    // --- Loop otomatis: fetch harga, update chart, cek posisi, generate entry baru kalau kosong ---
+    async function aiAutoTick() {
+        const candles = await fetchAiPriceData();
+        if (!candles) return;
+        lastAiCandles = candles;
+        if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
+
+        const openInfo = findOpenAiTrade();
+        if (openInfo) {
+            const stillOpen = !checkAndCloseAiPosition(openInfo, candles);
+            if (stillOpen) updateFloatingPl(openInfo, candles);
+        } else {
+            document.getElementById('ai-floating-pl').innerHTML = '';
+            await autoOpenAiPosition(candles);
+        }
+    }
+
+    function startAiAutoTick() {
+        if (aiTickInterval) return;
+        aiAutoTick();
+        aiTickInterval = setInterval(aiAutoTick, 15 * 60 * 1000);
+    }
+    function stopAiAutoTick() {
+        if (aiTickInterval) { clearInterval(aiTickInterval); aiTickInterval = null; }
+    }
+
+    document.getElementById('btn-ai-generate').onclick = () => {
+        const btn = document.getElementById('btn-ai-generate');
+        btn.disabled = true; btn.innerText = '⏳ Cek...';
+        aiAutoTick().finally(() => { btn.disabled = false; btn.innerText = '🔄 Cek Sekarang'; });
+    };
 
     // --- Kalender & CRUD entry simulasi ---
     function renderAiCalendar() {
@@ -957,14 +1083,14 @@ document.addEventListener("DOMContentLoaded", () => {
         e.preventDefault();
         if (!aiTradeData[currentAiDateStr]) aiTradeData[currentAiDateStr] = [];
         let statusVal = document.getElementById('ai-input-status').value;
-        let newData = { arah: document.getElementById('ai-input-arah').value, tf: document.getElementById('ai-input-tf').value, entry: document.getElementById('ai-input-entry').value, sl: document.getElementById('ai-input-sl').value, tp: document.getElementById('ai-input-tp').value, risk: document.getElementById('ai-input-risk').value, alasan: document.getElementById('ai-input-alasan').value, status: statusVal, pl: statusVal === 'closed' ? document.getElementById('ai-input-pl').value : 0 };
         let idx = parseInt(document.getElementById('ai-edit-index').value);
+        let existing = idx > -1 ? aiTradeData[currentAiDateStr][idx] : {};
+        let newData = { ...existing, arah: document.getElementById('ai-input-arah').value, tf: document.getElementById('ai-input-tf').value, entry: document.getElementById('ai-input-entry').value, sl: document.getElementById('ai-input-sl').value, tp: document.getElementById('ai-input-tp').value, risk: document.getElementById('ai-input-risk').value, alasan: document.getElementById('ai-input-alasan').value, status: statusVal, pl: statusVal === 'closed' ? document.getElementById('ai-input-pl').value : 0 };
         if (idx > -1) aiTradeData[currentAiDateStr][idx] = newData; else aiTradeData[currentAiDateStr].push(newData);
         saveData('ai_trade_data_v1', aiTradeData);
         document.getElementById('ai-cancel-edit-btn').click();
         openAiModal(currentAiDateStr, new Date(currentAiDateStr).getDate());
         renderAiCalendar();
-        document.getElementById('ai-generate-result').style.display = 'none';
     };
 
     // --- Dashboard evaluasi ---

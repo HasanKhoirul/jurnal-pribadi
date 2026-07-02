@@ -200,13 +200,12 @@
                 </div>
 
                 <div id="ai-view-market" class="dashboard-container">
-                    <div class="chart-grid" style="grid-template-columns: 2fr 1fr;">
-                        <div class="chart-card" style="padding:0; overflow:hidden;">
-                            <div id="tv-chart-container" style="height:500px;"></div>
-                        </div>
-                        <div class="chart-card" style="padding:0; overflow:hidden;">
-                            <div id="tv-calendar-container" style="height:500px;"></div>
-                        </div>
+                    <div id="ai-floating-pl" style="margin-bottom:15px;"></div>
+                    <div class="chart-card" style="padding:0; overflow:hidden; margin-bottom:20px;">
+                        <div id="lw-chart-container" style="height:500px; width:100%;"></div>
+                    </div>
+                    <div class="chart-card" style="padding:0; overflow:hidden;">
+                        <div id="tv-calendar-container" style="height:500px;"></div>
                     </div>
                 </div>
 
@@ -216,7 +215,7 @@
                             <h1 style="color:#9c27b0;">Trading AI (Simulasi)</h1>
                             <div class="action-group-main hide-for-screenshot">
                                 <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
-                                <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">🎯 Buatkan Analisa</button>
+                                <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">🔄 Cek Sekarang</button>
                                 <button id="ai-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
                             </div>
                         </div>
@@ -229,8 +228,6 @@
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Equity Terakhir</span><h3 id="ai-current-equity">Rp 0</h3></div>
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Pertumbuhan</span><h3 id="ai-equity-growth" class="netral">0.00%</h3></div>
                     </div>
-
-                    <div id="ai-generate-result" style="display:none; margin-bottom:20px;"></div>
 
                     <div class="month-navigation"><button id="ai-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="ai-month-year-display">Bulan Tahun</h2><button id="ai-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
                     <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #9c27b0;">Total Mg</div></div>
@@ -722,7 +719,7 @@
                     <div class="form-group"><label>Harga Entry</label><input type="number" step="any" id="ai-input-entry" class="form-input" required></div>
                     <div class="form-group"><label>Stop Loss</label><input type="number" step="any" id="ai-input-sl" class="form-input" required></div>
                     <div class="form-group"><label>Take Profit</label><input type="number" step="any" id="ai-input-tp" class="form-input" required></div>
-                    <div class="form-group"><label>Risk (%)</label><input type="number" step="any" id="ai-input-risk" class="form-input" required></div>
+                    <div class="form-group"><label>Risk</label><input type="text" id="ai-input-risk" class="form-input" placeholder="mis. 1% equity" required></div>
                 </div>
                 <div class="form-group"><label>Alasan Teknikal</label><input type="text" id="ai-input-alasan" class="form-input" required></div>
                 <div class="form-group"><label>Status</label><select id="ai-input-status" class="form-input"><option value="open">Masih Berjalan (Open)</option><option value="closed">Sudah Ditutup (Closed)</option></select></div>
