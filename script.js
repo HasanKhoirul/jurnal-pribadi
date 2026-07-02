@@ -707,8 +707,18 @@ document.addEventListener("DOMContentLoaded", () => {
     // MODUL TRADING AI (SIMULASI PAPER TRADING)
     // ==========================================
     let currentAiDateStr = null; let calWidgetLoaded = false;
-    let aiChart = null, aiCandleSeries = null, aiPriceLines = { entry: null, sl: null, tp: null };
+    let aiChart = null, aiCandleSeries = null, aiPriceLines = [];
     let aiTickInterval = null; let lastAiCandles = null;
+    let aiTimeframe = '1h';
+
+    // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
+    const AI_PIP_SIZE = 0.1;
+    const AI_LOT_SIZE = 0.1;
+    const AI_SL_PIPS = 50;
+    const AI_TP_LAYERS_PIPS = [80, 100, 150];
+    function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
+    function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * 1; }
+    function uscToRupiah(usc) { return (usc / 100) * liveKursIDR; }
 
     function getAiSettings() {
         return {
@@ -752,17 +762,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function clearAiPriceLines() {
         if (!aiCandleSeries) return;
-        if (aiPriceLines.entry) aiCandleSeries.removePriceLine(aiPriceLines.entry);
-        if (aiPriceLines.sl) aiCandleSeries.removePriceLine(aiPriceLines.sl);
-        if (aiPriceLines.tp) aiCandleSeries.removePriceLine(aiPriceLines.tp);
-        aiPriceLines = { entry: null, sl: null, tp: null };
+        aiPriceLines.forEach(line => aiCandleSeries.removePriceLine(line));
+        aiPriceLines = [];
     }
 
     function updateTradeLines(trade) {
         clearAiPriceLines();
-        aiPriceLines.entry = aiCandleSeries.createPriceLine({ price: parseFloat(trade.entry), color: '#ffd700', lineWidth: 1, lineStyle: 2, title: 'Entry' });
-        aiPriceLines.sl = aiCandleSeries.createPriceLine({ price: parseFloat(trade.sl), color: '#ff1744', lineWidth: 1, lineStyle: 2, title: 'SL' });
-        aiPriceLines.tp = aiCandleSeries.createPriceLine({ price: parseFloat(trade.tp), color: '#00e676', lineWidth: 1, lineStyle: 2, title: 'TP' });
+        if (!trade.layers) return;
+        aiPriceLines.push(aiCandleSeries.createPriceLine({ price: parseFloat(trade.entry), color: '#ffd700', lineWidth: 1, lineStyle: 2, title: 'Entry' }));
+        aiPriceLines.push(aiCandleSeries.createPriceLine({ price: parseFloat(trade.sl), color: '#ff1744', lineWidth: 1, lineStyle: 2, title: 'SL' }));
+        trade.layers.forEach((ly, i) => {
+            if (ly.status === 'open') aiPriceLines.push(aiCandleSeries.createPriceLine({ price: parseFloat(ly.tp), color: '#00e676', lineWidth: 1, lineStyle: 2, title: `TP${i + 1}` }));
+        });
     }
 
     function renderLightweightChart(candles) {
@@ -828,21 +839,22 @@ document.addEventListener("DOMContentLoaded", () => {
         if (avgLoss === 0) return 100;
         return 100 - (100 / (1 + (avgGain / avgLoss)));
     }
-    function findSupportResistance(candles, lookback = 30) {
-        const slice = candles.slice(-lookback);
-        return { resistance: Math.max(...slice.map(c => c.high)), support: Math.min(...slice.map(c => c.low)) };
-    }
 
     async function fetchAiPriceData() {
         const key = getAiSettings().twelvedata;
         if (!key) { alert('Isi dulu API Key TwelveData di ⚙️ Settings.'); return null; }
         try {
-            const res = await fetch(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1h&outputsize=100&apikey=${key}`);
+            const res = await fetch(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${aiTimeframe}&outputsize=100&apikey=${key}`);
             const data = await res.json();
             if (data.status === 'error' || !data.values) { alert('Gagal ambil data harga: ' + (data.message || 'unknown error')); return null; }
             return data.values.reverse().map(v => ({ time: v.datetime, open: parseFloat(v.open), high: parseFloat(v.high), low: parseFloat(v.low), close: parseFloat(v.close) }));
         } catch (err) { console.error(err); alert('Gagal konek ke TwelveData: ' + err.message); return null; }
     }
+
+    document.getElementById('ai-timeframe-select').addEventListener('change', function () {
+        aiTimeframe = this.value;
+        aiAutoTick();
+    });
 
     async function polishReasonWithLLM(rawReason, settings) {
         const prompt_ = `Tuliskan ulang analisa trading berikut jadi lebih natural dan enak dibaca dalam Bahasa Indonesia, TANPA mengubah angka atau menambah fakta baru:\n\n${rawReason}`;
@@ -864,38 +876,32 @@ document.addEventListener("DOMContentLoaded", () => {
         const closes = candles.map(c => c.close);
         const lastClose = closes[closes.length - 1];
         const ma20 = calcSMA(closes, 20); const ma50 = calcSMA(closes, 50); const rsi = calcRSI(closes, 14);
-        const { support, resistance } = findSupportResistance(candles, 30);
         if (ma20 === null || ma50 === null || rsi === null) return null;
 
         const trend = ma20 > ma50 ? 'uptrend' : 'downtrend';
-        let arah, entry = lastClose, sl, tp;
+        let arah;
         let reasonParts = [
             `Harga saat ini ${lastClose.toFixed(2)}.`,
             `MA20 (${ma20.toFixed(2)}) ${ma20 > ma50 ? 'di atas' : 'di bawah'} MA50 (${ma50.toFixed(2)}) → ${trend}.`,
-            `RSI(14) = ${rsi.toFixed(1)} (${rsi >= 70 ? 'overbought' : rsi <= 30 ? 'oversold' : 'netral'}).`,
-            `Support terdekat ${support.toFixed(2)}, resistance terdekat ${resistance.toFixed(2)}.`
+            `RSI(14) = ${rsi.toFixed(1)} (${rsi >= 70 ? 'overbought' : rsi <= 30 ? 'oversold' : 'netral'}).`
         ];
+        if (rsi >= 70) { arah = 'SELL'; reasonParts.push(`RSI overbought → potensi koreksi turun.`); }
+        else if (rsi <= 30) { arah = 'BUY'; reasonParts.push(`RSI oversold → potensi rebound naik.`); }
+        else if (trend === 'uptrend') { arah = 'BUY'; reasonParts.push(`Trend naik & RSI netral → peluang BUY mengikuti trend.`); }
+        else { arah = 'SELL'; reasonParts.push(`Trend turun & RSI netral → peluang SELL mengikuti trend.`); }
 
-        if (rsi >= 70) { arah = 'SELL'; sl = resistance; tp = ma20; reasonParts.push(`RSI overbought → potensi koreksi turun, SELL jangka pendek menuju MA20, SL di atas resistance.`); }
-        else if (rsi <= 30) { arah = 'BUY'; sl = support; tp = ma20; reasonParts.push(`RSI oversold → potensi rebound naik, BUY jangka pendek menuju MA20, SL di bawah support.`); }
-        else if (trend === 'uptrend') { arah = 'BUY'; sl = support; tp = resistance; reasonParts.push(`Trend naik & RSI netral → peluang BUY menuju resistance, SL di bawah support terakhir.`); }
-        else { arah = 'SELL'; sl = resistance; tp = support; reasonParts.push(`Trend turun & RSI netral → peluang SELL menuju support, SL di atas resistance terakhir.`); }
+        const entry = lastClose;
+        const dirSign = arah === 'BUY' ? 1 : -1;
+        const sl = entry - dirSign * pipToPrice(AI_SL_PIPS);
+        reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${AI_SL_PIPS} pips (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
 
-        if (Math.abs(entry - sl) < 0.01) return null; // hindari division by zero kalau SL == entry
         let reasonText = reasonParts.join(' ');
         const settings = getAiSettings();
         if (settings.llmProvider !== 'none' && settings.llmKey) {
             const polished = await polishReasonWithLLM(reasonText, settings);
             if (polished) reasonText = polished;
         }
-        return { arah, entry, sl, tp, reasonText, tf: 'H1' };
-    }
-
-    // --- Model P/L otomatis: risk 1% dari equity berjalan per trade ---
-    function calcAiCurrentEquity() {
-        let total = aiModalAwal;
-        for (const d in aiTradeData) aiTradeData[d].forEach(t => { if (t.status === 'closed') total += parseFloat(t.pl || 0); });
-        return total;
+        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe };
     }
 
     function findOpenAiTrade() {
@@ -912,66 +918,73 @@ document.addEventListener("DOMContentLoaded", () => {
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
-        const riskAmountRp = calcAiCurrentEquity() * 0.01;
-        const rrRatio = Math.abs(sug.tp - sug.entry) / Math.abs(sug.sl - sug.entry);
-        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: sug.sl, tp: sug.tp, risk: '1% equity', alasan: sug.reasonText, status: 'open', pl: 0, riskAmountRp, rrRatio, openedAt: new Date().toISOString(), closedAt: null, closeReason: null });
+        const layers = AI_TP_LAYERS_PIPS.map(tpPips => ({ tpPips, tp: sug.entry + sug.dirSign * pipToPrice(tpPips), lot: AI_LOT_SIZE, status: 'open', pl: 0 }));
+        aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: sug.sl, layers, alasan: sug.reasonText, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
         saveData('ai_trade_data_v1', aiTradeData);
         if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
     }
 
     function checkAndCloseAiPosition(openInfo, candles) {
-        const { dateKey, index, trade } = openInfo;
+        const { trade } = openInfo;
         if (!trade.openedAt) trade.openedAt = new Date().toISOString();
-        if (!trade.riskAmountRp) trade.riskAmountRp = calcAiCurrentEquity() * 0.01;
-        if (!trade.rrRatio) trade.rrRatio = Math.abs(trade.tp - trade.entry) / Math.abs(trade.sl - trade.entry);
+        if (!trade.layers) return false; // trade lama/manual tanpa struktur layer, biarkan diedit manual
         const openedTime = new Date(trade.openedAt).getTime();
         const relevantCandles = candles.filter(c => new Date(c.time).getTime() >= openedTime);
-        let closeReason = null, closePrice = null;
-        for (const c of relevantCandles) {
-            if (trade.arah === 'BUY') {
-                if (c.low <= trade.sl) { closeReason = 'SL'; closePrice = trade.sl; break; }
-                if (c.high >= trade.tp) { closeReason = 'TP'; closePrice = trade.tp; break; }
-            } else {
-                if (c.high >= trade.sl) { closeReason = 'SL'; closePrice = trade.sl; break; }
-                if (c.low <= trade.tp) { closeReason = 'TP'; closePrice = trade.tp; break; }
-            }
-        }
-        if (!closeReason && (Date.now() - openedTime) / (1000 * 60 * 60 * 24) >= 3) {
-            closeReason = 'timeout'; closePrice = candles[candles.length - 1].close;
-        }
-        if (!closeReason) return false;
+        let changed = false;
 
-        let pl;
-        if (closeReason === 'SL') pl = -trade.riskAmountRp;
-        else if (closeReason === 'TP') pl = trade.riskAmountRp * trade.rrRatio;
-        else {
-            const dirSign = trade.arah === 'BUY' ? 1 : -1;
-            const progress = ((closePrice - trade.entry) * dirSign) / Math.abs(trade.entry - trade.sl);
-            pl = progress >= 0 ? trade.riskAmountRp * Math.min(progress, trade.rrRatio) : trade.riskAmountRp * progress;
+        for (const c of relevantCandles) {
+            const slHit = trade.arah === 'BUY' ? c.low <= trade.sl : c.high >= trade.sl;
+            if (slHit) {
+                trade.layers.forEach(ly => { if (ly.status === 'open') { ly.status = 'sl'; ly.pl = uscToRupiah(-calcLayerPlUsc(AI_SL_PIPS)); changed = true; } });
+                break;
+            }
+            trade.layers.forEach(ly => {
+                if (ly.status !== 'open') return;
+                const tpHit = trade.arah === 'BUY' ? c.high >= ly.tp : c.low <= ly.tp;
+                if (tpHit) { ly.status = 'tp'; ly.pl = uscToRupiah(calcLayerPlUsc(ly.tpPips)); changed = true; }
+            });
+            if (trade.layers.every(ly => ly.status !== 'open')) break;
         }
-        aiTradeData[dateKey][index].status = 'closed';
-        aiTradeData[dateKey][index].pl = pl;
-        aiTradeData[dateKey][index].closedAt = new Date().toISOString();
-        aiTradeData[dateKey][index].closeReason = closeReason;
+
+        const stillHasOpenLayer = trade.layers.some(ly => ly.status === 'open');
+        if (stillHasOpenLayer && (Date.now() - openedTime) / (1000 * 60 * 60 * 24) >= 3) {
+            const lastClose = candles[candles.length - 1].close;
+            const dirSign = trade.arah === 'BUY' ? 1 : -1;
+            trade.layers.forEach(ly => {
+                if (ly.status !== 'open') return;
+                const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+                ly.status = 'timeout'; ly.pl = uscToRupiah(calcLayerPlUsc(pipsMoved)); changed = true;
+            });
+        }
+
+        if (!changed) return false;
+        trade.pl = trade.layers.reduce((sum, ly) => sum + (ly.status !== 'open' ? ly.pl : 0), 0);
+        const allResolved = trade.layers.every(ly => ly.status !== 'open');
+        if (allResolved) { trade.status = 'closed'; trade.closedAt = new Date().toISOString(); }
+
         saveData('ai_trade_data_v1', aiTradeData);
-        clearAiPriceLines();
-        document.getElementById('ai-floating-pl').innerHTML = '';
+        if (allResolved) { clearAiPriceLines(); document.getElementById('ai-floating-pl').innerHTML = ''; }
         if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
-        return true;
+        return allResolved;
     }
 
     function updateFloatingPl(openInfo, candles) {
         const trade = openInfo.trade;
-        if (!trade.riskAmountRp) trade.riskAmountRp = calcAiCurrentEquity() * 0.01;
-        if (!trade.rrRatio) trade.rrRatio = Math.abs(trade.tp - trade.entry) / Math.abs(trade.sl - trade.entry);
+        if (!trade.layers) return;
         const lastClose = candles[candles.length - 1].close;
         const dirSign = trade.arah === 'BUY' ? 1 : -1;
-        const progress = ((lastClose - trade.entry) * dirSign) / Math.abs(trade.entry - trade.sl);
-        const floatingPl = progress >= 0 ? trade.riskAmountRp * Math.min(progress, trade.rrRatio) : trade.riskAmountRp * progress;
+        let totalFloating = 0;
+        const layerRows = trade.layers.map((ly, i) => {
+            if (ly.status !== 'open') { totalFloating += ly.pl; return `Layer ${i + 1} (TP ${ly.tpPips}p): <span class="${ly.pl >= 0 ? 'profit-text' : 'loss-text'}">${ly.status.toUpperCase()} ${ly.pl >= 0 ? '+' : ''}${formatRupiah(ly.pl)}</span>`; }
+            const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+            const floatPl = uscToRupiah(calcLayerPlUsc(pipsMoved));
+            totalFloating += floatPl;
+            return `Layer ${i + 1} (TP ${ly.tpPips}p): <span class="${floatPl >= 0 ? 'profit-text' : 'loss-text'}">Floating ${floatPl >= 0 ? '+' : ''}${formatRupiah(floatPl)}</span>`;
+        });
         const el = document.getElementById('ai-floating-pl');
-        if (el) el.innerHTML = `<div class="insight-box ${floatingPl >= 0 ? 'insight-success' : 'insight-danger'}"><strong>${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)} — Floating P/L: ${floatingPl >= 0 ? '+' : ''}${formatRupiah(floatingPl)}</strong></div>`;
+        if (el) el.innerHTML = `<div class="insight-box ${totalFloating >= 0 ? 'insight-success' : 'insight-danger'}" style="flex-direction:column; align-items:flex-start; gap:6px;"><strong>${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)} (Lot ${AI_LOT_SIZE} × 3 Layer) — Total: ${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}</strong><div style="font-size:0.8rem; font-weight:normal; display:flex; flex-direction:column; gap:3px;">${layerRows.join('')}</div></div>`;
     }
 
     // --- Loop otomatis: fetch harga, update chart, cek posisi, generate entry baru kalau kosong ---
@@ -1058,7 +1071,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-modal-date-title').innerText = `Entry Simulasi Tgl ${dayNum}`;
         document.getElementById('ai-today-history').innerHTML = '';
         (aiTradeData[dateStr] || []).forEach((t, i) => {
-            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div><strong>${t.arah} @ ${t.entry}</strong><br><span style="color:#aaa; font-size:0.75rem;">SL:${t.sl} TP:${t.tp} | ${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'}</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editAiTrade('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteAiTrade('${dateStr}', ${i})">🗑️</button></div></div>`;
+            let detail = t.layers ? `SL:${parseFloat(t.sl).toFixed(2)} | ${t.layers.map((ly, idx) => `TP${idx + 1}(${ly.tpPips}p):${ly.status === 'open' ? 'Open' : ly.status.toUpperCase()}`).join(' ')}` : `SL:${t.sl} TP:${t.tp}`;
+            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong><br><span style="color:#aaa; font-size:0.75rem;">${detail} | ${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'}</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editAiTrade('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteAiTrade('${dateStr}', ${i})">🗑️</button></div></div>`;
         });
         document.getElementById('ai-entry-form').reset();
         document.getElementById('ai-edit-index').value = '-1';
@@ -1071,7 +1085,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     window.editAiTrade = (d, i) => {
         let t = aiTradeData[d][i];
-        document.getElementById('ai-input-arah').value = t.arah; document.getElementById('ai-input-tf').value = t.tf; document.getElementById('ai-input-entry').value = t.entry; document.getElementById('ai-input-sl').value = t.sl; document.getElementById('ai-input-tp').value = t.tp; document.getElementById('ai-input-risk').value = t.risk; document.getElementById('ai-input-alasan').value = t.alasan; document.getElementById('ai-input-status').value = t.status;
+        document.getElementById('ai-input-arah').value = t.arah; document.getElementById('ai-input-tf').value = t.tf || 'H1'; document.getElementById('ai-input-entry').value = t.entry; document.getElementById('ai-input-sl').value = t.sl; document.getElementById('ai-input-tp').value = t.layers ? t.layers[0].tp : t.tp; document.getElementById('ai-input-risk').value = t.layers ? `Lot ${AI_LOT_SIZE} x3 layer (edit manual = jadi 1 layer)` : t.risk; document.getElementById('ai-input-alasan').value = t.alasan; document.getElementById('ai-input-status').value = t.status;
         document.getElementById('ai-pl-group').style.display = t.status === 'closed' ? 'block' : 'none';
         document.getElementById('ai-input-pl').value = t.pl || '';
         document.getElementById('ai-edit-index').value = i; document.getElementById('ai-cancel-edit-btn').style.display = 'block';
@@ -1145,7 +1159,10 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-highest-loss-pl').innerText = maxLoss.pl < 0 ? formatRupiah(maxLoss.pl) : 'Rp 0'; document.getElementById('ai-highest-loss-desc').innerText = maxLoss.date !== '-' ? `[${maxLoss.date}] ${maxLoss.detail}` : '-';
 
         const tbody = document.getElementById('ai-dashboard-table-body'); tbody.innerHTML = tableRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
-        tableRows.forEach((e, i) => { tbody.innerHTML += `<tr><td>${i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${e.entry}</td><td>${e.sl}</td><td>${e.tp}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`; });
+        tableRows.forEach((e, i) => {
+            const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '-');
+            tbody.innerHTML += `<tr><td>${i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${parseFloat(e.entry).toFixed(2)}</td><td>${parseFloat(e.sl).toFixed(2)}</td><td>${tpDisplay}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`;
+        });
     }
     document.getElementById('ai-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderAiDashboard(); };
     document.getElementById('ai-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderAiDashboard(); };
