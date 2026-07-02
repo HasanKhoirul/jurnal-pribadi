@@ -1192,8 +1192,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const openInfo = findOpenAiTrade();
         updateLiveStatsBoxes(openInfo, candles);
+        // Kalau gak ada posisi open, biarkan pesan status terakhir (dari tombol "Cek Sekarang") tetap kelihatan — jangan dikosongin di sini, biar gak ketiban race sama tick manual.
         if (openInfo) updateFloatingPl(openInfo, candles);
-        else document.getElementById('ai-floating-pl').innerHTML = '';
     }
 
     function startAiAutoTick() {
