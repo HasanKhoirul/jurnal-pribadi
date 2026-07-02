@@ -1208,6 +1208,8 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('btn-ai-generate').onclick = () => {
         const btn = document.getElementById('btn-ai-generate');
         btn.disabled = true; btn.innerText = '⏳ Cek...';
+        // Pindah ke tab Live Market dulu — di situlah kotak notif hasil cek (#ai-floating-pl) ditampilkan, biar hasilnya kelihatan walau tombolnya dipencet dari tab lain.
+        document.getElementById('ai-menu-market').click();
         aiAutoTick().finally(() => { btn.disabled = false; btn.innerText = '🔄 Cek Sekarang'; });
     };
 
