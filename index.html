@@ -200,18 +200,26 @@
                 </div>
 
                 <div id="ai-view-market" class="dashboard-container">
+                    <div class="equity-dashboard" id="ai-live-stats" style="grid-template-columns: repeat(3, 1fr);">
+                        <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Entry Posisi</span><h3 id="ai-live-entry" style="color:#9c27b0;">Belum ada posisi</h3></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Harga Sekarang</span><h3 id="ai-live-price" class="netral">-</h3></div>
+                        <div class="equity-box" style="border-left-color:#00e676;"><span class="label">Total Floating P/L</span><h3 id="ai-live-total-pl" class="netral">Rp 0</h3></div>
+                    </div>
                     <div id="ai-floating-pl" style="margin-bottom:15px;"></div>
                     <div class="chart-card" style="padding:0; overflow:hidden; margin-bottom:20px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 0 20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 0 20px; flex-wrap:wrap; gap:10px;">
                             <h3 class="chart-title" style="margin:0; color:#9c27b0;">🥇 XAUUSD (Gold Spot)</h3>
-                            <select id="ai-timeframe-select" class="form-input" style="width:auto; height:34px; font-size:0.85rem;">
-                                <option value="5min">M5</option>
-                                <option value="15min">M15</option>
-                                <option value="30min">M30</option>
-                                <option value="1h" selected>H1</option>
-                                <option value="4h">H4</option>
-                                <option value="1day">D1</option>
-                            </select>
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <button type="button" id="btn-ai-refresh-market" class="btn-action" style="border-color:#2196f3; color:#2196f3;">🔄 Refresh</button>
+                                <select id="ai-timeframe-select" class="form-input" style="width:auto; height:34px; font-size:0.85rem;">
+                                    <option value="5min" selected>M5</option>
+                                    <option value="15min">M15</option>
+                                    <option value="30min">M30</option>
+                                    <option value="1h">H1</option>
+                                    <option value="4h">H4</option>
+                                    <option value="1day">D1</option>
+                                </select>
+                            </div>
                         </div>
                         <div id="lw-chart-container" style="height:500px; width:100%;"></div>
                     </div>

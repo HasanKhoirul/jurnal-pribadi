@@ -709,7 +709,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentAiDateStr = null; let calWidgetLoaded = false;
     let aiChart = null, aiCandleSeries = null, aiPriceLines = [];
     let aiTickInterval = null; let lastAiCandles = null;
-    let aiTimeframe = '1h';
+    let aiTimeframe = '5min';
 
     // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
     const AI_PIP_SIZE = 0.1;
@@ -803,6 +803,10 @@ document.addEventListener("DOMContentLoaded", () => {
         loadEconomicCalendarWidget();
         if (lastAiCandles) renderLightweightChart(lastAiCandles);
     });
+    document.getElementById('btn-ai-refresh-market').addEventListener('click', function() {
+        this.disabled = true; this.innerText = '⏳ Refresh...';
+        aiDisplayTick().finally(() => { this.disabled = false; this.innerText = '🔄 Refresh'; });
+    });
     document.getElementById('ai-menu-calendar').addEventListener('click', function() {
         this.classList.add('active'); document.getElementById('ai-menu-market').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
         document.getElementById('ai-view-market').style.display = 'none'; document.getElementById('ai-view-calendar').style.display = 'block'; document.getElementById('ai-view-dashboard').style.display = 'none';
@@ -891,7 +895,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById('ai-timeframe-select').addEventListener('change', function () {
         aiTimeframe = this.value;
-        aiAutoTick();
+        aiDisplayTick();
     });
 
     async function polishReasonWithLLM(rawReason, settings) {
@@ -1055,6 +1059,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
 
         const openInfo = findOpenAiTrade();
+        updateLiveStatsBoxes(openInfo, candles);
         if (openInfo) {
             updateTrailingStops(openInfo.trade, candles);
             const stillOpen = !checkAndCloseAiPosition(openInfo, candles);
@@ -1066,7 +1071,34 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             document.getElementById('ai-floating-pl').innerHTML = '';
             await autoOpenAiPosition(candles);
+            updateLiveStatsBoxes(findOpenAiTrade(), candles);
         }
+    }
+
+    function updateLiveStatsBoxes(openInfo, candles) {
+        const priceEl = document.getElementById('ai-live-price');
+        const entryEl = document.getElementById('ai-live-entry');
+        const totalEl = document.getElementById('ai-live-total-pl');
+        if (!priceEl) return;
+        if (candles && candles.length) priceEl.innerText = candles[candles.length - 1].close.toFixed(2);
+        if (!openInfo || !openInfo.trade.layers) {
+            entryEl.innerText = 'Belum ada posisi'; entryEl.className = 'netral';
+            totalEl.innerText = 'Rp 0'; totalEl.className = 'netral';
+            return;
+        }
+        const trade = openInfo.trade;
+        entryEl.innerText = `${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)}`;
+        entryEl.className = trade.arah === 'BUY' ? 'profit-text' : 'loss-text';
+        const lastClose = candles[candles.length - 1].close;
+        const dirSign = trade.arah === 'BUY' ? 1 : -1;
+        let totalFloating = 0;
+        trade.layers.forEach(ly => {
+            if (ly.status !== 'open') { totalFloating += ly.pl; return; }
+            const pipsMoved = ((lastClose - trade.entry) * dirSign) / AI_PIP_SIZE;
+            totalFloating += uscToRupiah(calcLayerPlUsc(pipsMoved));
+        });
+        totalEl.innerText = `${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}`;
+        totalEl.className = totalFloating >= 0 ? 'profit-text' : 'loss-text';
     }
 
     // --- Tick "display" — dipanggil otomatis selagi tab browser kebuka. Cuma update chart & floating P/L, TIDAK buka/tutup posisi (biar gak race sama bot server). ---
@@ -1077,6 +1109,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
 
         const openInfo = findOpenAiTrade();
+        updateLiveStatsBoxes(openInfo, candles);
         if (openInfo) updateFloatingPl(openInfo, candles);
         else document.getElementById('ai-floating-pl').innerHTML = '';
     }
@@ -1084,7 +1117,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function startAiAutoTick() {
         if (aiTickInterval) return;
         aiDisplayTick();
-        aiTickInterval = setInterval(aiDisplayTick, 15 * 60 * 1000);
+        aiTickInterval = setInterval(aiDisplayTick, 2 * 60 * 1000); // refresh tampilan tiap 2 menit (view-only, gak nulis data — keputusan buka/tutup posisi tetap di server tiap 15 menit)
     }
     function stopAiAutoTick() {
         if (aiTickInterval) { clearInterval(aiTickInterval); aiTickInterval = null; }
@@ -1172,16 +1205,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById('ai-entry-form').onsubmit = (e) => {
         e.preventDefault();
-        if (!aiTradeData[currentAiDateStr]) aiTradeData[currentAiDateStr] = [];
-        let statusVal = document.getElementById('ai-input-status').value;
-        let idx = parseInt(document.getElementById('ai-edit-index').value);
-        let existing = idx > -1 ? aiTradeData[currentAiDateStr][idx] : {};
-        let newData = { ...existing, arah: document.getElementById('ai-input-arah').value, tf: document.getElementById('ai-input-tf').value, entry: document.getElementById('ai-input-entry').value, sl: document.getElementById('ai-input-sl').value, tp: document.getElementById('ai-input-tp').value, risk: document.getElementById('ai-input-risk').value, alasan: document.getElementById('ai-input-alasan').value, status: statusVal, pl: statusVal === 'closed' ? document.getElementById('ai-input-pl').value : 0 };
-        if (idx > -1) aiTradeData[currentAiDateStr][idx] = newData; else aiTradeData[currentAiDateStr].push(newData);
-        saveData('ai_trade_data_v1', aiTradeData);
-        document.getElementById('ai-cancel-edit-btn').click();
-        openAiModal(currentAiDateStr, new Date(currentAiDateStr).getDate());
-        renderAiCalendar();
+        const saveAiEntry = () => {
+            if (!aiTradeData[currentAiDateStr]) aiTradeData[currentAiDateStr] = [];
+            let statusVal = document.getElementById('ai-input-status').value;
+            let idx = parseInt(document.getElementById('ai-edit-index').value);
+            let existing = idx > -1 ? aiTradeData[currentAiDateStr][idx] : {};
+            let newData = { ...existing, arah: document.getElementById('ai-input-arah').value, tf: document.getElementById('ai-input-tf').value, entry: document.getElementById('ai-input-entry').value, sl: document.getElementById('ai-input-sl').value, tp: document.getElementById('ai-input-tp').value, risk: document.getElementById('ai-input-risk').value, alasan: document.getElementById('ai-input-alasan').value, status: statusVal, pl: statusVal === 'closed' ? document.getElementById('ai-input-pl').value : 0 };
+            if (idx > -1) aiTradeData[currentAiDateStr][idx] = newData; else aiTradeData[currentAiDateStr].push(newData);
+            saveData('ai_trade_data_v1', aiTradeData);
+            document.getElementById('ai-cancel-edit-btn').click();
+            openAiModal(currentAiDateStr, new Date(currentAiDateStr).getDate());
+            renderAiCalendar();
+        };
+        const editIdx = parseInt(document.getElementById('ai-edit-index').value);
+        if (editIdx > -1) showConfirm("Ini bakal timpa data entry (termasuk yang otomatis dari bot) dengan perubahan manual kamu. Yakin?", saveAiEntry);
+        else saveAiEntry();
     };
 
     // --- Dashboard evaluasi ---
