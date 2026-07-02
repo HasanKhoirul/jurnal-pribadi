@@ -157,14 +157,17 @@ document.addEventListener("DOMContentLoaded", () => {
     renderHome();
     attachPublicListener();
 
+    let isFirstAuthCheck = true;
     auth.onAuthStateChanged(user => {
-        if (user) {
+        if (user && isFirstAuthCheck) {
             const lastAct = parseInt(localStorage.getItem('lastActivity') || '0');
             if (lastAct && Date.now() - lastAct > 30 * 60 * 1000) {
+                isFirstAuthCheck = false;
                 auth.signOut();
                 return;
             }
         }
+        isFirstAuthCheck = false;
         isLoggedIn = !!user;
         applyAuthState();
         rerenderActiveSection();
