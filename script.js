@@ -844,10 +844,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const key = getAiSettings().twelvedata;
         if (!key) { alert('Isi dulu API Key TwelveData di ⚙️ Settings.'); return null; }
         try {
-            const res = await fetch(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${aiTimeframe}&outputsize=100&apikey=${key}`);
+            const res = await fetch(`https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${aiTimeframe}&outputsize=100&timezone=UTC&apikey=${key}`);
             const data = await res.json();
             if (data.status === 'error' || !data.values) { alert('Gagal ambil data harga: ' + (data.message || 'unknown error')); return null; }
-            return data.values.reverse().map(v => ({ time: v.datetime, open: parseFloat(v.open), high: parseFloat(v.high), low: parseFloat(v.low), close: parseFloat(v.close) }));
+            return data.values.reverse().map(v => ({ time: v.datetime.replace(' ', 'T') + 'Z', open: parseFloat(v.open), high: parseFloat(v.high), low: parseFloat(v.low), close: parseFloat(v.close) }));
         } catch (err) { console.error(err); alert('Gagal konek ke TwelveData: ' + err.message); return null; }
     }
 
