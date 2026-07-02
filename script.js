@@ -153,6 +153,13 @@ document.addEventListener("DOMContentLoaded", () => {
     attachPublicListener();
 
     auth.onAuthStateChanged(user => {
+        if (user) {
+            const lastAct = parseInt(localStorage.getItem('lastActivity') || '0');
+            if (lastAct && Date.now() - lastAct > 30 * 60 * 1000) {
+                auth.signOut();
+                return;
+            }
+        }
         isLoggedIn = !!user;
         applyAuthState();
         rerenderActiveSection();
