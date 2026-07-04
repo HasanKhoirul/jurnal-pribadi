@@ -293,6 +293,19 @@ document.addEventListener("DOMContentLoaded", () => {
                     });
                 }
             }
+        } else if (currentExportType === 'ai') {
+            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Entry Layer1,SL Layer1,Layer1 (TP/Status),Layer2 (TP/Status),Layer3 (TP/Status),Alasan,Status Trade,Total P/L (Rp)\n";
+            const layerStr = (ly) => ly ? `${ly.tpPips}p@${parseFloat(ly.tp).toFixed(2)}:${ly.status.toUpperCase()}` : '-';
+            for(let d in aiTradeData) {
+                if(period === 'all' || d.startsWith(targetPrefix)) {
+                    aiTradeData[d].forEach(t => {
+                        const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
+                        const layers = t.layers || [];
+                        let row = [d, t.arah, t.tf || '-', t.signalType || '-', parseFloat(t.entry).toFixed(2), parseFloat(t.sl).toFixed(2), layerStr(layers[0]), layerStr(layers[1]), layerStr(layers[2]), `"${alasan}"`, t.status, t.pl || 0];
+                        csvContent += row.join(",") + "\n";
+                    });
+                }
+            }
         } else if (currentExportType === 'wealth') {
             csvContent += "ID,Tanggal,Jenis Transaksi,Keterangan,Jumlah (Rp)\n";
             wealthData.items.forEach(t => {
@@ -804,9 +817,12 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    function switchAiTab(activeMenuId, activeViewId) {
+        ['ai-menu-market', 'ai-menu-calendar', 'ai-menu-dashboard', 'ai-menu-log'].forEach(id => document.getElementById(id).classList.toggle('active', id === activeMenuId));
+        ['ai-view-market', 'ai-view-calendar', 'ai-view-dashboard', 'ai-view-log'].forEach(id => document.getElementById(id).style.display = id === activeViewId ? 'block' : 'none');
+    }
     document.getElementById('ai-menu-market').addEventListener('click', function() {
-        this.classList.add('active'); document.getElementById('ai-menu-calendar').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
-        document.getElementById('ai-view-market').style.display = 'block'; document.getElementById('ai-view-calendar').style.display = 'none'; document.getElementById('ai-view-dashboard').style.display = 'none';
+        switchAiTab('ai-menu-market', 'ai-view-market');
         loadEconomicCalendarWidget();
         if (lastAiCandles) renderLightweightChart(lastAiCandles);
     });
@@ -815,14 +831,16 @@ document.addEventListener("DOMContentLoaded", () => {
         aiDisplayTick().finally(() => { this.disabled = false; this.innerText = '🔄 Refresh'; });
     });
     document.getElementById('ai-menu-calendar').addEventListener('click', function() {
-        this.classList.add('active'); document.getElementById('ai-menu-market').classList.remove('active'); document.getElementById('ai-menu-dashboard').classList.remove('active');
-        document.getElementById('ai-view-market').style.display = 'none'; document.getElementById('ai-view-calendar').style.display = 'block'; document.getElementById('ai-view-dashboard').style.display = 'none';
+        switchAiTab('ai-menu-calendar', 'ai-view-calendar');
         renderAiCalendar();
     });
     document.getElementById('ai-menu-dashboard').addEventListener('click', function() {
-        this.classList.add('active'); document.getElementById('ai-menu-market').classList.remove('active'); document.getElementById('ai-menu-calendar').classList.remove('active');
-        document.getElementById('ai-view-market').style.display = 'none'; document.getElementById('ai-view-calendar').style.display = 'none'; document.getElementById('ai-view-dashboard').style.display = 'block';
+        switchAiTab('ai-menu-dashboard', 'ai-view-dashboard');
         renderAiDashboard();
+    });
+    document.getElementById('ai-menu-log').addEventListener('click', function() {
+        switchAiTab('ai-menu-log', 'ai-view-log');
+        renderAiLog();
     });
 
     document.getElementById('ai-modal-box').onclick = () => {
@@ -956,11 +974,12 @@ document.addEventListener("DOMContentLoaded", () => {
         return total >= AI_WINRATE_MIN_SAMPLES ? (win / total) * 100 : null;
     }
 
+    let lastSignalSkipReason = null;
     async function computeAiSuggestion(candles, tradeData) {
         const closes = candles.map(c => c.close);
         const lastClose = closes[closes.length - 1];
         const ma20 = calcSMA(closes, 20); const ma50 = calcSMA(closes, 50); const rsi = calcRSI(closes, 14);
-        if (ma20 === null || ma50 === null || rsi === null) return null;
+        if (ma20 === null || ma50 === null || rsi === null) { lastSignalSkipReason = 'Data candle belum cukup buat hitung indikator.'; return null; }
 
         const trend = ma20 > ma50 ? 'uptrend' : 'downtrend';
         let arah; let signalType;
@@ -976,7 +995,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const recentWr = getRecentSignalWinRate(tradeData, signalType);
         if (recentWr !== null && recentWr < AI_MIN_SIGNAL_WINRATE) {
-            console.log(`Skip sinyal ${signalType}: win rate ${recentWr.toFixed(0)}% dalam ${AI_WINRATE_LOOKBACK_DAYS} hari terakhir (di bawah ambang ${AI_MIN_SIGNAL_WINRATE}%).`);
+            lastSignalSkipReason = `Win rate ${signalType} ${recentWr.toFixed(0)}% dalam ${AI_WINRATE_LOOKBACK_DAYS} hari terakhir (di bawah ambang ${AI_MIN_SIGNAL_WINRATE}%).`;
+            console.log(`Skip sinyal ${signalType}: ${lastSignalSkipReason}`);
             return null;
         }
 
@@ -986,6 +1006,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const macdBullish = macd.macd > macd.signal;
             reasonParts.push(`MACD ${macdBullish ? 'bullish' : 'bearish'} (${macd.macd.toFixed(2)} vs signal ${macd.signal.toFixed(2)}).`);
             if ((arah === 'BUY' && !macdBullish) || (arah === 'SELL' && macdBullish)) {
+                lastSignalSkipReason = `MACD gak konfirmasi arah ${arah} (trend/RSI nunjuk ${arah}, tapi MACD ${macdBullish ? 'bullish' : 'bearish'}).`;
                 reasonParts.push(`MACD gak konfirmasi arah ${arah} → skip entry, tunggu konfirmasi lebih kuat.`);
                 return null;
             }
@@ -1020,7 +1041,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     async function autoOpenAiPosition(candles) {
         const sug = await computeAiSuggestion(candles, aiTradeData);
-        if (!sug) return;
+        if (!sug) return false;
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
@@ -1032,6 +1053,7 @@ document.addEventListener("DOMContentLoaded", () => {
         saveData('ai_trade_data_v1', aiTradeData);
         if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
+        return true;
     }
 
     // Begitu TP1 (layer pertama, 80 pips) kena, layer 2 & 3 langsung dikunci profit +10 pips — biar aman kalau harga balik arah.
@@ -1144,7 +1166,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         }
 
-        if (!changed) return false;
+        if (!changed) return { changed: false, allResolved: false };
         trade.pl = trade.layers.reduce((sum, ly) => sum + (notResolved(ly) ? 0 : ly.pl), 0);
         const allResolved = !trade.layers.some(notResolved);
         if (allResolved) { trade.status = 'closed'; trade.closedAt = new Date().toISOString(); }
@@ -1153,7 +1175,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (allResolved) { clearAiPriceLines(); document.getElementById('ai-floating-pl').innerHTML = ''; }
         if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
         if (document.getElementById('ai-view-dashboard').style.display !== 'none') renderAiDashboard();
-        return allResolved;
+        return { changed: true, allResolved };
     }
 
     function updateFloatingPl(openInfo, candles) {
@@ -1175,10 +1197,17 @@ document.addEventListener("DOMContentLoaded", () => {
         if (el) el.innerHTML = `<div class="insight-box ${totalFloating >= 0 ? 'insight-success' : 'insight-danger'}" style="flex-direction:column; align-items:flex-start; gap:6px;"><strong>${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)} (Lot ${AI_LOT_SIZE} × 3 Layer) — Total: ${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}</strong><div style="font-size:0.8rem; font-weight:normal; display:flex; flex-direction:column; gap:3px;">${layerRows.join('')}</div></div>`;
     }
 
+    // Catat 1 entri log tiap kali bot "coba" jalan (buka tab Log Aktivitas buat lihat histori berhasil/nihil/gagal).
+    function logAiTick(outcome, detail) {
+        if (!auth.currentUser) return;
+        db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').add({ time: new Date().toISOString(), outcome, detail: detail || '', source: 'browser' })
+            .catch(err => console.error('Gagal simpan log tick:', err));
+    }
+
     // --- Tick "penuh" (buka/tutup posisi) — cuma dipanggil manual dari tombol. Otomatis 24/7-nya dijalankan server via GitHub Actions (scripts/ai-tick.mjs), biar gak dobel/race sama browser. ---
     async function aiAutoTick() {
         const candles = await fetchAiPriceData();
-        if (!candles) return;
+        if (!candles) { logAiTick('error', 'Gagal ambil data harga dari TwelveData (lihat alert/console buat detail).'); return; }
         lastAiCandles = candles;
         if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
 
@@ -1190,6 +1219,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const closed = forceCloseAllLayersAtMarket(openInfo.trade, candles, 'news_close');
             if (closed) {
                 console.log(`📰 Posisi ditutup paksa: berita high-impact "${newsInfo.title}".`);
+                logAiTick('news_close', `Posisi ditutup paksa: berita high-impact "${newsInfo.title}".`);
                 saveData('ai_trade_data_v1', aiTradeData);
                 document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-danger">📰 Posisi ditutup paksa: berita high-impact "${newsInfo.title}".</div>`;
                 if (document.getElementById('ai-view-calendar').style.display !== 'none') renderAiCalendar();
@@ -1199,21 +1229,55 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (openInfo) {
-            const stillOpen = !checkAndCloseAiPosition(openInfo, candles);
-            if (stillOpen) updateFloatingPl(openInfo, candles);
+            const result = checkAndCloseAiPosition(openInfo, candles);
+            if (result.changed) logAiTick(result.allResolved ? 'position_closed' : 'position_updated', result.allResolved ? 'Trade selesai (semua layer resolved).' : 'Ada layer yang resolve/ke-lock tick ini.');
+            else logAiTick('waiting', 'Posisi masih open, belum ada perubahan.');
+            if (!result.allResolved) updateFloatingPl(openInfo, candles);
         } else if (!isMarketOpen()) {
+            logAiTick('market_closed', 'Weekend, market tutup.');
             document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">💤 Market lagi tutup (weekend), bot standby nunggu buka lagi.</div>`;
         } else if (newsInfo) {
+            logAiTick('news_block', `Jam rawan berita high-impact "${newsInfo.title}", entry baru ditahan.`);
             document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">📰 Berita high-impact "${newsInfo.title}" lagi berlangsung, bot menunda entry baru.</div>`;
         } else {
             document.getElementById('ai-floating-pl').innerHTML = '';
-            await autoOpenAiPosition(candles);
+            const opened = await autoOpenAiPosition(candles);
+            if (opened) logAiTick('entry_opened', 'Entry baru berhasil dibuka.');
+            else logAiTick('no_signal', lastSignalSkipReason || 'Gak ada sinyal valid tick ini.');
             const newOpenInfo = findOpenAiTrade();
             updateLiveStatsBoxes(newOpenInfo, candles);
             if (!newOpenInfo) {
                 document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">🔍 Belum ada sinyal valid tick ini (nunggu konfirmasi trend/RSI/MACD). Mohon tunggu, bot bakal coba lagi tick berikutnya.</div>`;
             }
         }
+    }
+
+    const AI_LOG_OUTCOME_LABEL = {
+        entry_opened: { emoji: '✅', label: 'Entry Dibuka' }, position_updated: { emoji: '✅', label: 'Posisi Update' }, position_closed: { emoji: '✅', label: 'Posisi Selesai' }, news_close: { emoji: '✅', label: 'Ditutup (Berita)' },
+        waiting: { emoji: '⚪', label: 'Nunggu' }, no_signal: { emoji: '⚪', label: 'Gak Ada Sinyal' }, market_closed: { emoji: '⚪', label: 'Market Tutup' }, news_block: { emoji: '⚪', label: 'Ditahan (Berita)' },
+        error: { emoji: '❌', label: 'Gagal' }, manual_reset: { emoji: '🗑️', label: 'Reset Manual' }
+    };
+    const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close']);
+    const AI_LOG_FAIL_SET = new Set(['error']);
+
+    function renderAiLog() {
+        if (!auth.currentUser) return;
+        db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').orderBy('time', 'desc').limit(200).get().then(snap => {
+            const logs = snap.docs.map(d => d.data());
+            let success = 0, fail = 0, nihil = 0;
+            logs.forEach(l => { if (AI_LOG_SUCCESS_SET.has(l.outcome)) success++; else if (AI_LOG_FAIL_SET.has(l.outcome)) fail++; else nihil++; });
+            document.getElementById('ai-log-summary').innerHTML = `
+                <div class="equity-box" style="border-left-color:#00e676;"><span class="label">✅ Berhasil</span><h3 style="color:#00e676;">${success}</h3></div>
+                <div class="equity-box" style="border-left-color:#888;"><span class="label">⚪ Nihil</span><h3 style="color:#ccc;">${nihil}</h3></div>
+                <div class="equity-box" style="border-left-color:#ff1744;"><span class="label">❌ Gagal</span><h3 style="color:#ff1744;">${fail}</h3></div>`;
+            const listEl = document.getElementById('ai-log-list');
+            listEl.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas tercatat.</p>';
+            logs.forEach(l => {
+                const meta = AI_LOG_OUTCOME_LABEL[l.outcome] || { emoji: 'ℹ️', label: l.outcome };
+                const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+                listEl.innerHTML += `<div class="history-item"><div><strong>${meta.emoji} ${meta.label}</strong> <span style="color:#666; font-size:0.75rem;">(${l.source === 'server' ? 'server' : 'browser'})</span><br><span style="color:#aaa; font-size:0.8rem;">${waktu} — ${l.detail}</span></div></div>`;
+            });
+        }).catch(err => console.error('Gagal ambil log tick:', err));
     }
 
     function updateLiveStatsBoxes(openInfo, candles) {
@@ -1306,7 +1370,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     document.getElementById('ai-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderAiCalendar(); };
     document.getElementById('ai-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderAiCalendar(); };
-    document.getElementById('ai-clear-data-btn').onclick = () => { showConfirm("Data simulasi bakal kehapus permanen loh. Yakin?", () => { aiTradeData = {}; saveData('ai_trade_data_v1', aiTradeData); renderAiCalendar(); }); };
+    document.getElementById('ai-clear-data-btn').onclick = () => {
+        document.getElementById('ai-reset-reason').value = '';
+        document.getElementById('ai-reset-reason-error').style.display = 'none';
+        document.getElementById('ai-reset-modal').style.display = 'flex';
+    };
+    document.getElementById('close-ai-reset-modal').onclick = () => document.getElementById('ai-reset-modal').style.display = 'none';
+    document.getElementById('btn-confirm-ai-reset').onclick = () => {
+        const reason = document.getElementById('ai-reset-reason').value.trim();
+        if (!reason) { document.getElementById('ai-reset-reason-error').style.display = 'block'; return; }
+        logAiTick('manual_reset', reason);
+        aiTradeData = {};
+        saveData('ai_trade_data_v1', aiTradeData);
+        renderAiCalendar();
+        document.getElementById('ai-reset-modal').style.display = 'none';
+    };
 
     function updateAiEquity(vY, vM) {
         let sumBefore = 0; let sumDuring = 0;
@@ -1324,48 +1402,15 @@ document.addEventListener("DOMContentLoaded", () => {
     function openAiModal(dateStr, dayNum) {
         currentAiDateStr = dateStr;
         document.getElementById('ai-modal-date-title').innerText = `Entry Simulasi Tgl ${dayNum}`;
-        document.getElementById('ai-today-history').innerHTML = '';
-        (aiTradeData[dateStr] || []).forEach((t, i) => {
+        const list = aiTradeData[dateStr] || [];
+        document.getElementById('ai-today-history').innerHTML = list.length ? '' : '<p style="color:#888;">Gak ada entry tanggal ini.</p>';
+        list.forEach((t) => {
             let detail = t.layers ? `SL:${parseFloat(t.sl).toFixed(2)} | ${t.layers.map((ly, idx) => `TP${idx + 1}(${ly.tpPips}p):${ly.status === 'open' ? 'Open' : ly.status.toUpperCase()}`).join(' ')}` : `SL:${t.sl} TP:${t.tp}`;
-            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong><br><span style="color:#aaa; font-size:0.75rem;">${detail} | ${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'}</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editAiTrade('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteAiTrade('${dateStr}', ${i})">🗑️</button></div></div>`;
+            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong><br><span style="color:#aaa; font-size:0.75rem;">${detail} | ${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'}</span></div></div>`;
         });
-        document.getElementById('ai-entry-form').reset();
-        document.getElementById('ai-edit-index').value = '-1';
-        document.getElementById('ai-cancel-edit-btn').style.display = 'none';
-        document.getElementById('ai-pl-group').style.display = 'none';
         document.getElementById('ai-entry-modal').style.display = 'flex';
     }
     document.getElementById('close-ai-modal').onclick = () => document.getElementById('ai-entry-modal').style.display = 'none';
-    document.getElementById('ai-input-status').addEventListener('change', function () { document.getElementById('ai-pl-group').style.display = this.value === 'closed' ? 'block' : 'none'; });
-
-    window.editAiTrade = (d, i) => {
-        let t = aiTradeData[d][i];
-        document.getElementById('ai-input-arah').value = t.arah; document.getElementById('ai-input-tf').value = t.tf || 'H1'; document.getElementById('ai-input-entry').value = t.entry; document.getElementById('ai-input-sl').value = t.sl; document.getElementById('ai-input-tp').value = t.layers ? t.layers[0].tp : t.tp; document.getElementById('ai-input-risk').value = t.layers ? `Lot ${AI_LOT_SIZE} x3 layer (edit manual = jadi 1 layer)` : t.risk; document.getElementById('ai-input-alasan').value = t.alasan; document.getElementById('ai-input-status').value = t.status;
-        document.getElementById('ai-pl-group').style.display = t.status === 'closed' ? 'block' : 'none';
-        document.getElementById('ai-input-pl').value = t.pl || '';
-        document.getElementById('ai-edit-index').value = i; document.getElementById('ai-cancel-edit-btn').style.display = 'block';
-    };
-    window.deleteAiTrade = (d, i) => { aiTradeData[d].splice(i, 1); if (!aiTradeData[d].length) delete aiTradeData[d]; saveData('ai_trade_data_v1', aiTradeData); openAiModal(d, new Date(d).getDate()); renderAiCalendar(); };
-    document.getElementById('ai-cancel-edit-btn').onclick = () => { document.getElementById('ai-entry-form').reset(); document.getElementById('ai-edit-index').value = '-1'; document.getElementById('ai-cancel-edit-btn').style.display = 'none'; document.getElementById('ai-pl-group').style.display = 'none'; };
-
-    document.getElementById('ai-entry-form').onsubmit = (e) => {
-        e.preventDefault();
-        const saveAiEntry = () => {
-            if (!aiTradeData[currentAiDateStr]) aiTradeData[currentAiDateStr] = [];
-            let statusVal = document.getElementById('ai-input-status').value;
-            let idx = parseInt(document.getElementById('ai-edit-index').value);
-            let existing = idx > -1 ? aiTradeData[currentAiDateStr][idx] : {};
-            let newData = { ...existing, arah: document.getElementById('ai-input-arah').value, tf: document.getElementById('ai-input-tf').value, entry: document.getElementById('ai-input-entry').value, sl: document.getElementById('ai-input-sl').value, tp: document.getElementById('ai-input-tp').value, risk: document.getElementById('ai-input-risk').value, alasan: document.getElementById('ai-input-alasan').value, status: statusVal, pl: statusVal === 'closed' ? document.getElementById('ai-input-pl').value : 0 };
-            if (idx > -1) aiTradeData[currentAiDateStr][idx] = newData; else aiTradeData[currentAiDateStr].push(newData);
-            saveData('ai_trade_data_v1', aiTradeData);
-            document.getElementById('ai-cancel-edit-btn').click();
-            openAiModal(currentAiDateStr, new Date(currentAiDateStr).getDate());
-            renderAiCalendar();
-        };
-        const editIdx = parseInt(document.getElementById('ai-edit-index').value);
-        if (editIdx > -1) showConfirm("Ini bakal timpa data entry (termasuk yang otomatis dari bot) dengan perubahan manual kamu. Yakin?", saveAiEntry);
-        else saveAiEntry();
-    };
 
     // --- Dashboard evaluasi ---
     function renderAiDashboard() {

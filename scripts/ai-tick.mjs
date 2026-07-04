@@ -139,11 +139,12 @@ function getRecentSignalWinRate(tradeData, signalType) {
     return total >= AI_WINRATE_MIN_SAMPLES ? (win / total) * 100 : null;
 }
 
+let lastSignalSkipReason = null;
 async function computeAiSuggestion(candles, tradeData) {
     const closes = candles.map(c => c.close);
     const lastClose = closes[closes.length - 1];
     const ma20 = calcSMA(closes, 20); const ma50 = calcSMA(closes, 50); const rsi = calcRSI(closes, 14);
-    if (ma20 === null || ma50 === null || rsi === null) return null;
+    if (ma20 === null || ma50 === null || rsi === null) { lastSignalSkipReason = 'Data candle belum cukup buat hitung indikator.'; return null; }
 
     const trend = ma20 > ma50 ? 'uptrend' : 'downtrend';
     let arah; let signalType;
@@ -159,7 +160,8 @@ async function computeAiSuggestion(candles, tradeData) {
 
     const recentWr = getRecentSignalWinRate(tradeData, signalType);
     if (recentWr !== null && recentWr < AI_MIN_SIGNAL_WINRATE) {
-        console.log(`Skip sinyal ${signalType}: win rate ${recentWr.toFixed(0)}% dalam ${AI_WINRATE_LOOKBACK_DAYS} hari terakhir (di bawah ambang ${AI_MIN_SIGNAL_WINRATE}%).`);
+        lastSignalSkipReason = `Win rate ${signalType} ${recentWr.toFixed(0)}% dalam ${AI_WINRATE_LOOKBACK_DAYS} hari terakhir (di bawah ambang ${AI_MIN_SIGNAL_WINRATE}%).`;
+        console.log(`Skip sinyal ${signalType}: ${lastSignalSkipReason}`);
         return null;
     }
 
@@ -168,6 +170,7 @@ async function computeAiSuggestion(candles, tradeData) {
         const macdBullish = macd.macd > macd.signal;
         reasonParts.push(`MACD ${macdBullish ? 'bullish' : 'bearish'} (${macd.macd.toFixed(2)} vs signal ${macd.signal.toFixed(2)}).`);
         if ((arah === 'BUY' && !macdBullish) || (arah === 'SELL' && macdBullish)) {
+            lastSignalSkipReason = `MACD gak konfirmasi arah ${arah} (trend/RSI nunjuk ${arah}, tapi MACD ${macdBullish ? 'bullish' : 'bearish'}).`;
             reasonParts.push(`MACD gak konfirmasi arah ${arah} → skip entry, tunggu konfirmasi lebih kuat.`);
             return null;
         }
@@ -326,12 +329,17 @@ function checkAndCloseAiPosition(trade, candles, liveKursIDR) {
         });
     }
 
-    if (!changed) return false;
+    if (!changed) return { changed: false, allResolved: false };
     trade.pl = trade.layers.reduce((sum, ly) => sum + (notResolved(ly) ? 0 : ly.pl), 0);
     const allResolved = !trade.layers.some(notResolved);
     if (allResolved) { trade.status = 'closed'; trade.closedAt = new Date().toISOString(); console.log('🔒 Posisi closed penuh.'); }
     else console.log('📊 Sebagian layer closed, posisi masih jalan.');
-    return true;
+    return { changed: true, allResolved };
+}
+
+function logAiTick(outcome, detail) {
+    return db.collection('appData').doc(AI_TARGET_UID).collection('ai_tick_log').add({ time: new Date().toISOString(), outcome, detail: detail || '', source: 'server' })
+        .catch(err => console.error('Gagal simpan log tick:', err.message));
 }
 
 async function main() {
@@ -342,7 +350,14 @@ async function main() {
     let aiTradeData = data.aiTradeData || {};
     const aiModalAwal = data.aiModalAwal || 2500000;
 
-    const candles = await fetchAiPriceData();
+    let candles;
+    try {
+        candles = await fetchAiPriceData();
+    } catch (err) {
+        console.error('Gagal ambil data harga:', err.message);
+        await logAiTick('error', `Gagal ambil data harga: ${err.message}`);
+        throw err;
+    }
     const liveKursIDR = await fetchLiveKursIDR();
     const newsInfo = await fetchActiveHighImpactNews();
 
@@ -351,16 +366,22 @@ async function main() {
 
     if (openInfo && newsInfo) {
         needsSave = forceCloseAllLayersAtMarket(openInfo.trade, candles, 'news_close', liveKursIDR);
-        if (needsSave) console.log(`📰 Posisi ditutup paksa: berita high-impact "${newsInfo.title}".`);
+        if (needsSave) { console.log(`📰 Posisi ditutup paksa: berita high-impact "${newsInfo.title}".`); await logAiTick('news_close', `Posisi ditutup paksa: berita high-impact "${newsInfo.title}".`); }
     } else if (openInfo) {
-        needsSave = checkAndCloseAiPosition(openInfo.trade, candles, liveKursIDR);
-        if (!needsSave) console.log('⏳ Posisi masih open, belum ada SL/TP kesentuh.');
+        const result = checkAndCloseAiPosition(openInfo.trade, candles, liveKursIDR);
+        needsSave = result.changed;
+        if (!result.changed) { console.log('⏳ Posisi masih open, belum ada SL/TP kesentuh.'); await logAiTick('waiting', 'Posisi masih open, belum ada perubahan.'); }
+        else await logAiTick(result.allResolved ? 'position_closed' : 'position_updated', result.allResolved ? 'Trade selesai (semua layer resolved).' : 'Ada layer yang resolve/ke-lock tick ini.');
     } else if (!isMarketOpen()) {
         console.log('💤 Market tutup (weekend), skip.');
+        await logAiTick('market_closed', 'Weekend, market tutup.');
     } else if (newsInfo) {
         console.log(`📰 Berita high-impact "${newsInfo.title}" lagi berlangsung, skip entry baru.`);
+        await logAiTick('news_block', `Jam rawan berita high-impact "${newsInfo.title}", entry baru ditahan.`);
     } else {
         needsSave = await autoOpenAiPosition(aiTradeData, candles);
+        if (needsSave) await logAiTick('entry_opened', 'Entry baru berhasil dibuka.');
+        else await logAiTick('no_signal', lastSignalSkipReason || 'Gak ada sinyal valid tick ini.');
     }
 
     if (needsSave) {
