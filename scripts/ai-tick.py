@@ -71,7 +71,7 @@ def resolve_symbol():
     )
 
 
-_init_kwargs = {'login': MT5_LOGIN, 'password': MT5_PASSWORD, 'server': MT5_SERVER}
+_init_kwargs = {'login': MT5_LOGIN, 'password': MT5_PASSWORD, 'server': MT5_SERVER, 'timeout': 120000}
 if MT5_TERMINAL_PATH:
     _init_kwargs['path'] = MT5_TERMINAL_PATH
 if not mt5.initialize(**_init_kwargs):
