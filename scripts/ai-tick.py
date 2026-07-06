@@ -24,6 +24,10 @@ AI_TARGET_UID = os.environ['AI_TARGET_UID']
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')  # kosong dulu, layer confidence nyusul
+MT5_LOGIN = int(os.environ['MT5_LOGIN'])
+MT5_PASSWORD = os.environ['MT5_PASSWORD']
+MT5_SERVER = os.environ['MT5_SERVER']
+MT5_TERMINAL_PATH = os.environ.get('MT5_TERMINAL_PATH', '')  # opsional, path ke terminal64.exe kalau initialize() gagal nemu otomatis
 
 SYMBOL_CANDIDATES = ['XAUUSD', 'XAUUSDm', 'XAUUSD.', 'GOLD', 'GOLDm']
 AI_TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
@@ -67,7 +71,10 @@ def resolve_symbol():
     )
 
 
-if not mt5.initialize():
+_init_kwargs = {'login': MT5_LOGIN, 'password': MT5_PASSWORD, 'server': MT5_SERVER}
+if MT5_TERMINAL_PATH:
+    _init_kwargs['path'] = MT5_TERMINAL_PATH
+if not mt5.initialize(**_init_kwargs):
     raise RuntimeError(f"MT5 initialize() gagal: {mt5.last_error()}")
 SYMBOL = resolve_symbol()
 log(f"MT5 terhubung. Simbol dipakai: {SYMBOL}")
