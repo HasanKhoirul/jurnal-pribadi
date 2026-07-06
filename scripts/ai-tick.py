@@ -84,6 +84,7 @@ cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 doc_ref = db.collection('appData').document(AI_TARGET_UID)
+public_doc_ref = db.collection('appData').document('public')
 
 
 # ---------- Telegram ----------
@@ -506,6 +507,16 @@ def force_close_all_layers_at_market(trade, bid, ask, live_kurs, status_label, n
     return True
 
 
+def push_live_candles_to_public(candles):
+    try:
+        public_doc_ref.set({
+            'aiLiveCandlesMt5': candles,
+            'aiLiveCandlesMt5UpdatedAt': datetime.now(timezone.utc).isoformat(),
+        }, merge=True)
+    except Exception as e:
+        log(f"Gagal push candle ke appData/public: {e}")
+
+
 def log_ai_tick(outcome, detail=''):
     try:
         doc_ref.collection('ai_tick_log').add({
@@ -570,6 +581,16 @@ def run_fast_tick():
 
 def run_slow_tick():
     now = datetime.now(timezone.utc)
+
+    try:
+        candles = fetch_candles(100)
+        push_live_candles_to_public(candles)
+    except Exception as e:
+        log(f"Gagal ambil data candle: {e}")
+        log_ai_tick('error', f"Gagal ambil data candle: {e}")
+        send_telegram(f"⚠️ Bot error ambil data candle: {e}")
+        return
+
     snap = doc_ref.get()
     data = snap.to_dict() if snap.exists else {}
     ai_trade_data = data.get('aiTradeData', {})
@@ -592,14 +613,6 @@ def run_slow_tick():
         msg = f"Jam rawan berita high-impact \"{news_info['title']}\", entry baru ditahan."
         log(msg)
         log_ai_tick('news_block', msg)
-        return
-
-    try:
-        candles = fetch_candles(100)
-    except Exception as e:
-        log(f"Gagal ambil data candle: {e}")
-        log_ai_tick('error', f"Gagal ambil data candle: {e}")
-        send_telegram(f"⚠️ Bot error ambil data candle: {e}")
         return
 
     opened = auto_open_ai_position(ai_trade_data, candles)

@@ -60,6 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const d = doc.data();
                 journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; sportData = d.sportData || {};
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
+                if (d.aiLiveCandlesMt5 && d.aiLiveCandlesMt5.length) { aiLiveCandlesMt5 = d.aiLiveCandlesMt5; aiLiveCandlesMt5UpdatedAt = d.aiLiveCandlesMt5UpdatedAt || null; }
                 rerenderActiveSection();
             }
         }, err => console.error('Gagal ambil data publik dari cloud:', err));
@@ -727,6 +728,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiChart = null, aiCandleSeries = null, aiPriceLines = [];
     let aiTickInterval = null; let lastAiCandles = null;
     let aiTimeframe = '5min';
+    let aiLiveCandlesMt5 = null; let aiLiveCandlesMt5UpdatedAt = null; // candle terkini dari bot VPS/MT5, disinkron lewat appData/public
 
     // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
     const AI_PIP_SIZE = 0.1;
@@ -925,7 +927,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    const AI_MT5_DATA_MAX_AGE_MINUTES = 10;
     async function fetchAiPriceData() {
+        if (aiLiveCandlesMt5 && aiLiveCandlesMt5UpdatedAt) {
+            const ageMinutes = (Date.now() - new Date(aiLiveCandlesMt5UpdatedAt).getTime()) / 60000;
+            if (ageMinutes <= AI_MT5_DATA_MAX_AGE_MINUTES) return aiLiveCandlesMt5;
+        }
         const key = getAiSettings().twelvedata;
         if (!key) { alert('Isi dulu API Key TwelveData di ⚙️ Settings.'); return null; }
         try {
@@ -1331,11 +1338,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.getElementById('btn-ai-generate').onclick = () => {
-        const btn = document.getElementById('btn-ai-generate');
-        btn.disabled = true; btn.innerText = '⏳ Cek...';
-        // Pindah ke tab Live Market dulu — di situlah kotak notif hasil cek (#ai-floating-pl) ditampilkan, biar hasilnya kelihatan walau tombolnya dipencet dari tab lain.
-        document.getElementById('ai-menu-market').click();
-        aiAutoTick().finally(() => { btn.disabled = false; btn.innerText = '🔄 Cek Sekarang'; });
+        showConfirm(
+            "Bot server (VPS) sekarang udah jalan otomatis 24/7 buat cek sinyal & posisi. Klik manual ini jalanin logic terpisah (di browser) yang bisa BENTROK sama bot server kalau dipakai bebarengan. Yakin tetap mau cek manual sekarang?",
+            () => {
+                const btn = document.getElementById('btn-ai-generate');
+                btn.disabled = true; btn.innerText = '⏳ Cek...';
+                // Pindah ke tab Live Market dulu — di situlah kotak notif hasil cek (#ai-floating-pl) ditampilkan, biar hasilnya kelihatan walau tombolnya dipencet dari tab lain.
+                document.getElementById('ai-menu-market').click();
+                aiAutoTick().finally(() => { btn.disabled = false; btn.innerText = '🔄 Cek Sekarang'; });
+            }
+        );
     };
 
     // --- Kalender & CRUD entry simulasi ---
