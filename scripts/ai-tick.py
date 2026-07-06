@@ -29,7 +29,7 @@ MT5_PASSWORD = os.environ['MT5_PASSWORD']
 MT5_SERVER = os.environ['MT5_SERVER']
 MT5_TERMINAL_PATH = os.environ.get('MT5_TERMINAL_PATH', '')  # opsional, path ke terminal64.exe kalau initialize() gagal nemu otomatis
 
-SYMBOL_CANDIDATES = ['XAUUSD', 'XAUUSDm', 'XAUUSD.', 'GOLD', 'GOLDm']
+SYMBOL_CANDIDATES = ['XAUUSD', 'XAUUSDm', 'XAUUSDc', 'XAUUSDz', 'XAUUSDr', 'XAUUSD.', 'GOLD', 'GOLDm']
 AI_TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
 AI_TIMEFRAME_LABEL = '1h'
 
