@@ -1,1 +1,4 @@
 .claude/
+scripts/.env
+scripts/*serviceAccount*.json
+

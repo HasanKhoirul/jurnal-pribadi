@@ -1,0 +1,4 @@
+MetaTrader5
+firebase-admin
+requests
+python-dotenv
