@@ -295,14 +295,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
         } else if (currentExportType === 'ai') {
-            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Entry Layer1,SL Layer1,Layer1 (TP/Status),Layer2 (TP/Status),Layer3 (TP/Status),Alasan,Status Trade,Total P/L (Rp)\n";
-            const layerStr = (ly) => ly ? `${ly.tpPips}p@${parseFloat(ly.tp).toFixed(2)}:${ly.status.toUpperCase()}` : '-';
+            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 Status,L3 PL,Alasan,Status Trade,Total P/L (Rp)\n";
+            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(2), parseFloat(ly.sl).toFixed(2), parseFloat(ly.tp).toFixed(2), AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-'];
             for(let d in aiTradeData) {
                 if(period === 'all' || d.startsWith(targetPrefix)) {
                     aiTradeData[d].forEach(t => {
                         const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
                         const layers = t.layers || [];
-                        let row = [d, t.arah, t.tf || '-', t.signalType || '-', parseFloat(t.entry).toFixed(2), parseFloat(t.sl).toFixed(2), layerStr(layers[0]), layerStr(layers[1]), layerStr(layers[2]), `"${alasan}"`, t.status, t.pl || 0];
+                        let row = [
+                            d, t.arah, t.tf || '-', t.signalType || '-',
+                            t.openedAt || '-', t.closedAt || 'Masih Open',
+                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(layers[2]),
+                            `"${alasan}"`, t.status, t.pl || 0
+                        ];
                         csvContent += row.join(",") + "\n";
                     });
                 }
@@ -1411,14 +1416,28 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
     }
 
+    const AI_LAYER_STATUS_LABEL = {
+        pending: 'Pending (belum kefill)', open: 'Masih Open', tp: 'Kena TP', sl: 'Kena SL', be: 'Breakeven',
+        timeout: 'Timeout (3 hari)', timeout_lock: 'Timeout setelah lock', news_close: 'Ditutup (berita)', cancelled: 'Dibatalkan',
+    };
+    function formatAiTime(iso) { return iso ? new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '-'; }
     function openAiModal(dateStr, dayNum) {
         currentAiDateStr = dateStr;
         document.getElementById('ai-modal-date-title').innerText = `Entry Simulasi Tgl ${dayNum}`;
         const list = aiTradeData[dateStr] || [];
         document.getElementById('ai-today-history').innerHTML = list.length ? '' : '<p style="color:#888;">Gak ada entry tanggal ini.</p>';
         list.forEach((t) => {
-            let detail = t.layers ? `SL:${parseFloat(t.sl).toFixed(2)} | ${t.layers.map((ly, idx) => `TP${idx + 1}(${ly.tpPips}p):${ly.status === 'open' ? 'Open' : ly.status.toUpperCase()}`).join(' ')}` : `SL:${t.sl} TP:${t.tp}`;
-            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong><br><span style="color:#aaa; font-size:0.75rem;">${detail} | ${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'}</span></div></div>`;
+            const layerLines = (t.layers || []).map((ly, idx) => {
+                const label = AI_LAYER_STATUS_LABEL[ly.status] || ly.status;
+                return `Layer ${idx + 1}: Entry ${parseFloat(ly.entry).toFixed(2)} | SL ${parseFloat(ly.sl).toFixed(2)} | TP ${parseFloat(ly.tp).toFixed(2)} (${ly.tpPips}p) | ${label} | ${formatRupiah(ly.pl || 0)}`;
+            }).join('<br>');
+            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div>
+                <strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'})</span><br>
+                <span style="color:#888; font-size:0.75rem;">🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
+                <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
+                <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
+                <strong>Total P/L: ${formatRupiah(t.pl || 0)}</strong>
+            </div></div>`;
         });
         document.getElementById('ai-entry-modal').style.display = 'flex';
     }
