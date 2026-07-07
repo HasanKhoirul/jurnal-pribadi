@@ -22,6 +22,8 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
   },
   modalAwal: number,      // modal awal Jurnal XAUUSD manual
   aiLiveCandlesMt5: [ { time: string(ISO), open: number, high: number, low: number, close: number } ],  // candle H1 terkini dari bot VPS/MT5, dipush ulang tiap slow-loop (~5 menit)
+  aiLivePriceMt5: number,  // harga tick (mid bid/ask) terkini dari bot VPS/MT5, dipush tiap fast-loop (~10 detik), buat "Harga Sekarang" biar berasa live
+  aiLivePriceMt5UpdatedAt: string (ISO),
   aiLiveCandlesMt5UpdatedAt: string (ISO),  // dipakai script.js buat cek data ini basi (>10 menit) atau enggak, fallback ke TwelveData kalau basi
   sportData: {
     "YYYY-MM-DD": [

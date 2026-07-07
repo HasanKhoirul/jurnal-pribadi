@@ -517,6 +517,16 @@ def push_live_candles_to_public(candles):
         log(f"Gagal push candle ke appData/public: {e}")
 
 
+def push_live_price_to_public(tick):
+    try:
+        public_doc_ref.set({
+            'aiLivePriceMt5': (tick.bid + tick.ask) / 2,
+            'aiLivePriceMt5UpdatedAt': datetime.now(timezone.utc).isoformat(),
+        }, merge=True)
+    except Exception as e:
+        log(f"Gagal push live price ke appData/public: {e}")
+
+
 def log_ai_tick(outcome, detail=''):
     try:
         doc_ref.collection('ai_tick_log').add({
@@ -546,6 +556,8 @@ def run_fast_tick():
     if tick is None:
         log(f"Gagal ambil tick MT5: {mt5.last_error()}")
         return
+
+    push_live_price_to_public(tick)
 
     snap = doc_ref.get()
     data = snap.to_dict() if snap.exists else {}

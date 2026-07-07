@@ -235,7 +235,7 @@
                             <h1 style="color:#9c27b0;">Trading AI (Simulasi)</h1>
                             <div class="action-group-main hide-for-screenshot">
                                 <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
-                                <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="renderAiCalendar()">🔄 Refresh</button>
+                                <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="aiRefreshBtnClick(this, 'calendar')">🔄 Refresh</button>
                                 <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">🔄 Cek Sekarang</button>
                                 <button class="btn-action btn-export" onclick="openExportMenu('ai')">📤 Export</button>
                                 <button id="ai-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
@@ -258,7 +258,7 @@
 
                 <div id="ai-view-dashboard" class="dashboard-container" style="display:none;">
                     <div class="month-navigation" style="margin-bottom:20px;"><button id="ai-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="ai-dash-month-year-display" style="color:#9c27b0;">Bulan Tahun</h2><button id="ai-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                    <button class="btn-action hide-for-screenshot" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" onclick="renderAiDashboard()">🔄 Refresh</button>
+                    <button class="btn-action hide-for-screenshot" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" onclick="aiRefreshBtnClick(this, 'dashboard')">🔄 Refresh</button>
                     <div id="ai-empty-state" class="empty-state-dash"></div>
                     <div id="ai-dash-content">
                         <div id="ai-risk-insight" style="margin-bottom:15px;"></div>
@@ -280,7 +280,7 @@
                 <div id="ai-view-log" class="dashboard-container" style="display:none;">
                     <h1 style="color:#9c27b0; margin-bottom:15px;">📜 Log Aktivitas Bot</h1>
                     <p style="color:#888; font-size:0.85rem; margin-bottom:15px;">Catatan tiap kali bot "coba" jalan (dari browser maupun server GitHub Actions) — 200 aktivitas terakhir.</p>
-                    <button class="btn-action" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" onclick="renderAiLog()">🔄 Refresh</button>
+                    <button class="btn-action" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" onclick="aiRefreshBtnClick(this, 'log')">🔄 Refresh</button>
                     <div id="ai-log-summary" class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-bottom:20px;"></div>
                     <div id="ai-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
                 </div>

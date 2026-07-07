@@ -61,6 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; sportData = d.sportData || {};
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
                 if (d.aiLiveCandlesMt5 && d.aiLiveCandlesMt5.length) { aiLiveCandlesMt5 = d.aiLiveCandlesMt5; aiLiveCandlesMt5UpdatedAt = d.aiLiveCandlesMt5UpdatedAt || null; }
+                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; }
                 rerenderActiveSection();
             }
         }, err => console.error('Gagal ambil data publik dari cloud:', err));
@@ -247,9 +248,18 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('confirm-no').onclick = function() { document.getElementById('custom-confirm').style.display = 'none'; };
     }
     // Expose ke window biar bisa dipanggil dari tombol Refresh (inline onclick) di masing-masing tab Trading AI
-    window.renderAiCalendar = () => renderAiCalendar();
-    window.renderAiDashboard = () => renderAiDashboard();
-    window.renderAiLog = () => renderAiLog();
+    window.aiRefreshBtnClick = function(btn, kind) {
+        const orig = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = '⏳ Refresh...';
+        const restore = () => { btn.disabled = false; btn.innerHTML = orig; };
+        setTimeout(() => {
+            let result;
+            if (kind === 'calendar') result = renderAiCalendar();
+            else if (kind === 'dashboard') result = renderAiDashboard();
+            else if (kind === 'log') result = renderAiLog();
+            Promise.resolve(result).finally(restore);
+        }, 30);
+    };
 
     const emptyStateHTML = `<h3 style="color:#ffd700; margin-bottom:10px;">Belum ada transaksi/progress bulan ini yah 👀</h3><p style="color:#aaa;">Semoga kamu di bulan sebelumnya dan ini akan lebih baik gituu! 🚀</p>`;
 
@@ -756,6 +766,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiTickInterval = null; let lastAiCandles = null;
     let aiTimeframe = '5min';
     let aiLiveCandlesMt5 = null; let aiLiveCandlesMt5UpdatedAt = null; // candle terkini dari bot VPS/MT5, disinkron lewat appData/public
+    let aiLivePriceMt5 = null; let aiLivePriceMt5UpdatedAt = null; // harga tick terkini dari bot VPS/MT5 (update tiap ~10 detik), buat "Harga Sekarang" biar berasa live
+    const AI_LIVE_PRICE_MAX_AGE_SECONDS = 30;
 
     // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
     const AI_PIP_SIZE = 0.1;
@@ -1295,8 +1307,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const AI_LOG_FAIL_SET = new Set(['error']);
 
     function renderAiLog() {
-        if (!auth.currentUser) return;
-        db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').orderBy('time', 'desc').limit(200).get().then(snap => {
+        if (!auth.currentUser) return Promise.resolve();
+        return db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').orderBy('time', 'desc').limit(200).get().then(snap => {
             const logs = snap.docs.map(d => d.data());
             let success = 0, fail = 0, nihil = 0;
             logs.forEach(l => { if (AI_LOG_SUCCESS_SET.has(l.outcome)) success++; else if (AI_LOG_FAIL_SET.has(l.outcome)) fail++; else nihil++; });
@@ -1319,7 +1331,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const entryEl = document.getElementById('ai-live-entry');
         const totalEl = document.getElementById('ai-live-total-pl');
         if (!priceEl) return;
-        if (candles && candles.length) priceEl.innerText = candles[candles.length - 1].close.toFixed(2);
+        const liveAgeSec = aiLivePriceMt5UpdatedAt ? (Date.now() - new Date(aiLivePriceMt5UpdatedAt).getTime()) / 1000 : Infinity;
+        if (aiLivePriceMt5 && liveAgeSec <= AI_LIVE_PRICE_MAX_AGE_SECONDS) priceEl.innerText = parseFloat(aiLivePriceMt5).toFixed(2);
+        else if (candles && candles.length) priceEl.innerText = candles[candles.length - 1].close.toFixed(2);
         if (!openInfo || !openInfo.trade.layers) {
             entryEl.innerText = 'Belum ada posisi'; entryEl.className = 'netral';
             totalEl.innerText = 'Rp 0'; totalEl.className = 'netral';
