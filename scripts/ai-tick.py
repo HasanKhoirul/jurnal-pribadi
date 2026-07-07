@@ -553,6 +553,16 @@ def get_cached_news(now):
     return _news_cache['result']
 
 
+_kurs_cache = {'checked_at': None, 'result': 16000}
+
+
+def get_cached_kurs(now):
+    if _kurs_cache['checked_at'] is None or (now - _kurs_cache['checked_at']) >= timedelta(seconds=SLOW_LOOP_SECONDS):
+        _kurs_cache['result'] = fetch_live_kurs_idr()
+        _kurs_cache['checked_at'] = now
+    return _kurs_cache['result']
+
+
 def run_fast_tick():
     now = datetime.now(timezone.utc)
     tick = mt5.symbol_info_tick(SYMBOL)
@@ -571,7 +581,7 @@ def run_fast_tick():
     if not open_info:
         return
 
-    live_kurs = fetch_live_kurs_idr()
+    live_kurs = get_cached_kurs(now)
     news_info = get_cached_news(now)
 
     if news_info:

@@ -1,8 +1,9 @@
+# Cron dimatiin (bukan dihapus) - logic trading udah dipindah ke bot VPS+MT5 (scripts/ai-tick.py).
+# Kalau workflow ini masih jalan bareng bot VPS, dua-duanya baca-tulis dokumen Firestore yang sama
+# tanpa transaction, resiko saling nimpa update. workflow_dispatch dibiarin buat manual-trigger kalau perlu.
 name: Trading AI Auto Tick
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch: {}
 
 jobs:
