@@ -92,7 +92,7 @@ def send_telegram(text):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            data={'chat_id': TELEGRAM_CHAT_ID, 'text': text},
+            data={'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'},
             timeout=10,
         )
     except Exception as e:
@@ -351,10 +351,13 @@ def auto_open_ai_position(ai_trade_data, candles):
     log(f"Entry baru dibuka: {sug['arah']} @ {sug['entry']:.2f} "
         f"(layer2/3 pending di {layers[1]['entry']:.2f} / {layers[2]['entry']:.2f}).")
     send_telegram(
-        f"🟢 SINYAL {sug['arah']} XAUUSD\n"
-        f"Entry: {sug['entry']:.2f} | SL: {layers[0]['sl']:.2f} ({AI_SL_PIPS} pips)\n"
-        f"TP1: {layers[0]['tp']:.2f} / TP2: {layers[1]['tp']:.2f} / TP3: {layers[2]['tp']:.2f}\n"
-        f"Alasan: {sug['reasonText']}"
+        f"🟢 <b>SINYAL {sug['arah']} XAUUSD</b>\n\n"
+        f"<b>Entry:</b> <code>{sug['entry']:.2f}</code>\n"
+        f"<b>SL:</b> <code>{layers[0]['sl']:.2f}</code> ({AI_SL_PIPS} pips)\n\n"
+        f"<b>TP1:</b> <code>{layers[0]['tp']:.2f}</code>\n"
+        f"<b>TP2:</b> <code>{layers[1]['tp']:.2f}</code>\n"
+        f"<b>TP3:</b> <code>{layers[2]['tp']:.2f}</code>\n\n"
+        f"📝 <i>{sug['reasonText']}</i>"
     )
     return True
 
@@ -575,10 +578,10 @@ def run_fast_tick():
         changed = force_close_all_layers_at_market(open_info['trade'], tick.bid, tick.ask, live_kurs, 'news_close', now)
         if changed:
             doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
-            msg = f"📰 Posisi ditutup paksa: berita high-impact \"{news_info['title']}\"."
+            msg = f"Posisi ditutup paksa: berita high-impact \"{news_info['title']}\"."
             log(msg)
             log_ai_tick('news_close', msg)
-            send_telegram(msg)
+            send_telegram(f"📰 <b>Posisi Ditutup (Berita)</b>\n\n{msg}")
         return
 
     result = check_and_close_position_tick(open_info['trade'], tick.bid, tick.ask, live_kurs, now)
@@ -588,7 +591,9 @@ def run_fast_tick():
         detail = ' '.join(result['notes']) or ('Trade selesai.' if result['allResolved'] else 'Ada layer yang resolve/lock.')
         log(detail)
         log_ai_tick(outcome, detail)
-        send_telegram(('🔒 ' if result['allResolved'] else '📊 ') + detail)
+        header = '🔒 <b>Trade Selesai</b>' if result['allResolved'] else '📊 <b>Update Posisi</b>'
+        notes_html = '\n'.join(result['notes']) or detail
+        send_telegram(f"{header}\n\n{notes_html}")
 
 
 def run_slow_tick():
@@ -600,7 +605,7 @@ def run_slow_tick():
     except Exception as e:
         log(f"Gagal ambil data candle: {e}")
         log_ai_tick('error', f"Gagal ambil data candle: {e}")
-        send_telegram(f"⚠️ Bot error ambil data candle: {e}")
+        send_telegram(f"⚠️ <b>Bot Error</b>\n\nGagal ambil data candle: {e}")
         return
 
     snap = doc_ref.get()
