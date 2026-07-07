@@ -870,7 +870,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     document.getElementById('btn-ai-refresh-market').addEventListener('click', function() {
         this.disabled = true; this.innerText = '⏳ Refresh...';
-        aiDisplayTick().finally(() => { this.disabled = false; this.innerText = '🔄 Refresh'; });
+        aiDisplayTick().finally(() => { this.disabled = false; this.innerText = '🔃 Refresh'; });
     });
     document.getElementById('ai-menu-calendar').addEventListener('click', function() {
         switchAiTab('ai-menu-calendar', 'ai-view-calendar');
@@ -1408,24 +1408,40 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close']);
     const AI_LOG_FAIL_SET = new Set(['error']);
+    function categorizeAiLog(outcome) { return AI_LOG_SUCCESS_SET.has(outcome) ? 'success' : AI_LOG_FAIL_SET.has(outcome) ? 'fail' : 'nihil'; }
+
+    let aiLastLogs = [];
+    let aiLogFilter = new Set(['success', 'nihil', 'fail']); // default semua kecentang, murni filter tampilan - gak pernah ubah query/limit 200 di atas
+
+    window.toggleAiLogFilter = function(category, btn) {
+        if (aiLogFilter.has(category)) aiLogFilter.delete(category); else aiLogFilter.add(category);
+        btn.classList.toggle('ai-log-filter-off', !aiLogFilter.has(category));
+        renderAiLogList();
+    };
+
+    function renderAiLogList() {
+        const listEl = document.getElementById('ai-log-list');
+        const filtered = aiLastLogs.filter(l => aiLogFilter.has(categorizeAiLog(l.outcome)));
+        listEl.innerHTML = filtered.length ? '' : '<p style="color:#888;">Gak ada aktivitas yang cocok sama filter ini.</p>';
+        filtered.forEach(l => {
+            const meta = AI_LOG_OUTCOME_LABEL[l.outcome] || { emoji: 'ℹ️', label: l.outcome };
+            const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+            listEl.innerHTML += `<div class="history-item"><div><strong>${meta.emoji} ${meta.label}</strong> <span style="color:#666; font-size:0.75rem;">(${l.source === 'server' ? 'server' : 'browser'})</span><br><span style="color:#aaa; font-size:0.8rem;">${waktu} — ${l.detail}</span></div></div>`;
+        });
+    }
 
     function renderAiLog() {
         if (!auth.currentUser) return Promise.resolve();
         return db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').orderBy('time', 'desc').limit(200).get().then(snap => {
             const logs = snap.docs.map(d => d.data());
+            aiLastLogs = logs;
             let success = 0, fail = 0, nihil = 0;
-            logs.forEach(l => { if (AI_LOG_SUCCESS_SET.has(l.outcome)) success++; else if (AI_LOG_FAIL_SET.has(l.outcome)) fail++; else nihil++; });
+            logs.forEach(l => { const cat = categorizeAiLog(l.outcome); if (cat === 'success') success++; else if (cat === 'fail') fail++; else nihil++; });
             document.getElementById('ai-log-summary').innerHTML = `
                 <div class="equity-box" style="border-left-color:#00e676;"><span class="label">✅ Berhasil</span><h3 style="color:#00e676;">${success}</h3></div>
                 <div class="equity-box" style="border-left-color:#888;"><span class="label">⚪ Nihil</span><h3 style="color:#ccc;">${nihil}</h3></div>
                 <div class="equity-box" style="border-left-color:#ff1744;"><span class="label">❌ Gagal</span><h3 style="color:#ff1744;">${fail}</h3></div>`;
-            const listEl = document.getElementById('ai-log-list');
-            listEl.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas tercatat.</p>';
-            logs.forEach(l => {
-                const meta = AI_LOG_OUTCOME_LABEL[l.outcome] || { emoji: 'ℹ️', label: l.outcome };
-                const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
-                listEl.innerHTML += `<div class="history-item"><div><strong>${meta.emoji} ${meta.label}</strong> <span style="color:#666; font-size:0.75rem;">(${l.source === 'server' ? 'server' : 'browser'})</span><br><span style="color:#aaa; font-size:0.8rem;">${waktu} — ${l.detail}</span></div></div>`;
-            });
+            renderAiLogList();
         }).catch(err => console.error('Gagal ambil log tick:', err));
     }
 
@@ -1489,7 +1505,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 btn.disabled = true; btn.innerText = '⏳ Cek...';
                 // Pindah ke tab Live Market dulu — di situlah kotak notif hasil cek (#ai-floating-pl) ditampilkan, biar hasilnya kelihatan walau tombolnya dipencet dari tab lain.
                 document.getElementById('ai-menu-market').click();
-                aiAutoTick().finally(() => { btn.disabled = false; btn.innerText = '🔄 Cek Sekarang'; });
+                aiAutoTick().finally(() => { btn.disabled = false; btn.innerText = '⚡ Cek Sekarang'; });
             }
         );
     };
@@ -1560,6 +1576,11 @@ document.addEventListener("DOMContentLoaded", () => {
         timeout: 'Timeout (3 hari)', timeout_lock: 'Timeout setelah lock', news_close: 'Ditutup (berita)', cancelled: 'Dibatalkan',
     };
     function formatAiTime(iso) { return iso ? new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '-'; }
+    window.toggleAiHistDetail = function(headerEl) {
+        headerEl.nextElementSibling.classList.toggle('open');
+        headerEl.querySelector('.ai-hist-arrow').classList.toggle('open');
+    };
+
     function openAiModal(dateStr, dayNum) {
         currentAiDateStr = dateStr;
         document.getElementById('ai-modal-date-title').innerText = `Entry Simulasi Tgl ${dayNum}`;
@@ -1570,12 +1591,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 const label = AI_LAYER_STATUS_LABEL[ly.status] || ly.status;
                 return `Layer ${idx + 1}: Entry ${parseFloat(ly.entry).toFixed(2)} | SL ${parseFloat(ly.sl).toFixed(2)} | TP ${parseFloat(ly.tp).toFixed(2)} (${ly.tpPips}p) | ${label} | ${formatRupiah(ly.pl || 0)}`;
             }).join('<br>');
-            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}">
-                <div style="cursor:pointer;" onclick="const d=this.nextElementSibling; const a=this.querySelector('.ai-hist-arrow'); const open=d.style.display==='block'; d.style.display = open ? 'none' : 'block'; a.innerText = open ? '▼' : '▲';">
-                    <strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'})</span>
-                    <span class="ai-hist-arrow" style="float:right; color:#666;">▼</span>
+            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ai-hist-collapsible ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}">
+                <div class="ai-hist-header" onclick="toggleAiHistDetail(this)">
+                    <span><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'})</span></span>
+                    <span class="ai-hist-arrow">▼</span>
                 </div>
-                <div style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #444;">
+                <div class="ai-hist-detail">
                     <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'}) 🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
                     <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
                     <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
