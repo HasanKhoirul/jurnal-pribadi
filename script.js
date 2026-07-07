@@ -91,7 +91,16 @@ document.addEventListener("DOMContentLoaded", () => {
         else if (targetId === 'view-expenses') { if (document.getElementById('exp-menu-dashboard').classList.contains('active')) renderExpDashboard(); else renderExpCalendar(); }
         else if (targetId === 'view-sports') { if (document.getElementById('sport-menu-dashboard').classList.contains('active')) renderSportDashboard(); else renderSportCalendar(); }
         else if (targetId === 'view-wealth') renderWealthDashboard();
-        else if (targetId === 'view-ai-trading' && isLoggedIn) { if (document.getElementById('ai-menu-dashboard').classList.contains('active')) renderAiDashboard(); else if (document.getElementById('ai-menu-calendar').classList.contains('active')) renderAiCalendar(); }
+        else if (targetId === 'view-ai-trading' && isLoggedIn) {
+            if (document.getElementById('ai-menu-dashboard').classList.contains('active')) renderAiDashboard();
+            else if (document.getElementById('ai-menu-calendar').classList.contains('active')) renderAiCalendar();
+            else if (document.getElementById('ai-menu-log').classList.contains('active')) renderAiLog();
+            else if (document.getElementById('ai-menu-market').classList.contains('active') && lastAiCandles) {
+                const openInfo = findOpenAiTrade();
+                updateLiveStatsBoxes(openInfo, lastAiCandles);
+                if (openInfo) updateFloatingPl(openInfo, lastAiCandles);
+            }
+        }
     }
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -237,6 +246,10 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('confirm-yes').onclick = function() { document.getElementById('custom-confirm').style.display = 'none'; onYes(); };
         document.getElementById('confirm-no').onclick = function() { document.getElementById('custom-confirm').style.display = 'none'; };
     }
+    // Expose ke window biar bisa dipanggil dari tombol Refresh (inline onclick) di masing-masing tab Trading AI
+    window.renderAiCalendar = () => renderAiCalendar();
+    window.renderAiDashboard = () => renderAiDashboard();
+    window.renderAiLog = () => renderAiLog();
 
     const emptyStateHTML = `<h3 style="color:#ffd700; margin-bottom:10px;">Belum ada transaksi/progress bulan ini yah 👀</h3><p style="color:#aaa;">Semoga kamu di bulan sebelumnya dan ini akan lebih baik gituu! 🚀</p>`;
 
@@ -464,12 +477,20 @@ document.addEventListener("DOMContentLoaded", () => {
         else { let expTotal = 0; for(let d in expData) { if(d.startsWith(targetPrefix)) expData[d].forEach(t => expTotal += parseFloat(t.amount)); } expHtml = `<h3 style="color:#ff1744; margin-top:10px;">-${formatRupiah(expTotal)}</h3><p style="font-size:0.8rem; color:#aaa;">Pengeluaran ${monthNames[m]} ${y}</p>`; }
         
         let wealthHtml = '';
-        if(!isLoggedIn) { wealthHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; } 
+        if(!isLoggedIn) { wealthHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; }
         else {
             let wInc = 0, wExp = 0; wealthData.items.forEach(i => { if(i.type === 'income') wInc += parseFloat(i.amount); else wExp += parseFloat(i.amount); });
             let defisit = (wInc - wExp) - wealthData.realMoney;
             if(defisit > 0) wealthHtml = `<h3 style="color:#ff1744; margin-top:10px;">Defisit: ${formatRupiah(defisit)}</h3><p style="font-size:0.8rem; color:#aaa;">Target Recovery</p>`;
             else wealthHtml = `<h3 style="color:#00e676; margin-top:10px;">Aman / Surplus</h3><p style="font-size:0.8rem; color:#aaa;">Tabungan terjaga</p>`;
+        }
+
+        let aiHtml = '';
+        if(!isLoggedIn) { aiHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; }
+        else {
+            let aiClosedPl = 0, aiClosedCount = 0;
+            for(let d in aiTradeData) { if(d.startsWith(targetPrefix)) aiTradeData[d].forEach(t => { if(t.status === 'closed') { aiClosedPl += parseFloat(t.pl || 0); aiClosedCount++; } }); }
+            aiHtml = `<h3 class="${aiClosedPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${aiClosedPl > 0 ? '+' : ''}${formatRupiah(aiClosedPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${aiClosedCount} trade closed - ${monthNames[m]} ${y}</p>`;
         }
 
         const homeWidgets = document.getElementById('home-widgets');
@@ -479,6 +500,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div class="dash-card"><h3 style="color:#ff1744; border-bottom: 1px dashed #444; padding-bottom:10px;">🛒 Belanja Bulanan</h3>${expHtml}</div>
                 <div class="dash-card"><h3 style="color:#2196f3; border-bottom: 1px dashed #444; padding-bottom:10px;">🏃‍♂️ Jurnal Olahraga</h3><h3 style="color:#2196f3; margin-top:10px;">${sportSesi} Sesi | ${sportMenit} Menit</h3><p style="font-size:0.8rem; color:#aaa;">Aktivitas Fisik ${monthNames[m]} ${y}</p></div>
                 <div class="dash-card"><h3 style="color:#ffb300; border-bottom: 1px dashed #444; padding-bottom:10px;">💰 Status Kekayaan</h3>${wealthHtml}</div>
+                <div class="dash-card"><h3 style="color:#9c27b0; border-bottom: 1px dashed #444; padding-bottom:10px;">🤖 Trading AI</h3>${aiHtml}</div>
             `;
         }
     }
@@ -1431,13 +1453,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 const label = AI_LAYER_STATUS_LABEL[ly.status] || ly.status;
                 return `Layer ${idx + 1}: Entry ${parseFloat(ly.entry).toFixed(2)} | SL ${parseFloat(ly.sl).toFixed(2)} | TP ${parseFloat(ly.tp).toFixed(2)} (${ly.tpPips}p) | ${label} | ${formatRupiah(ly.pl || 0)}`;
             }).join('<br>');
-            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}"><div>
-                <strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'})</span><br>
-                <span style="color:#888; font-size:0.75rem;">🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
-                <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
-                <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
-                <strong>Total P/L: ${formatRupiah(t.pl || 0)}</strong>
-            </div></div>`;
+            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}">
+                <div style="cursor:pointer;" onclick="const d=this.nextElementSibling; const a=this.querySelector('.ai-hist-arrow'); const open=d.style.display==='block'; d.style.display = open ? 'none' : 'block'; a.innerText = open ? '▼' : '▲';">
+                    <strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'})</span>
+                    <span class="ai-hist-arrow" style="float:right; color:#666;">▼</span>
+                </div>
+                <div style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #444;">
+                    <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'}) 🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
+                    <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
+                    <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
+                    <strong>Total P/L: ${formatRupiah(t.pl || 0)}</strong>
+                </div>
+            </div>`;
         });
         document.getElementById('ai-entry-modal').style.display = 'flex';
     }
