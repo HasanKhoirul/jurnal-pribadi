@@ -37,20 +37,52 @@ FAST_LOOP_SECONDS = 10
 SLOW_LOOP_SECONDS = 300  # 5 menit
 
 # ---------- Konstanta trading (harus identik ai-tick.mjs / FIRESTORE_SCHEMA.md) ----------
+# Nilai di bawah ini cuma default awal - dibaca ulang & bisa di-override tiap tick lewat
+# aiSettings.master di Firestore (diatur dari menu "Master Setting" web app), lewat apply_ai_settings().
 AI_PIP_SIZE = 0.1
-AI_LOT_SIZE = 0.1
-AI_SL_PIPS = 50
-AI_TP_LAYERS_PIPS = [80, 100, 150]
-AI_LAYER_STAGGER_PIPS = 10
-AI_LOCK_PIPS_AFTER_TP1 = 10
-AI_DEEP_LOCK_TRIGGER_PIPS = 100
-AI_DEEP_LOCK_PIPS = 80
-AI_DEEP_LOCK_TIMEOUT_MINUTES = 15
-AI_MIN_SIGNAL_WINRATE = 35
-AI_WINRATE_LOOKBACK_DAYS = 14
-AI_WINRATE_MIN_SAMPLES = 5
-AI_NEWS_PRE_MINUTES = 10
-AI_NEWS_POST_MINUTES = 40
+AI_MASTER_DEFAULTS = {
+    'slPips': 50, 'tpLayerPips': [80, 100, 150], 'lotSize': 0.1, 'layerStaggerPips': 10,
+    'lockPipsAfterTp1': 10, 'deepLockTriggerPips': 100, 'deepLockPips': 80, 'deepLockTimeoutMinutes': 15,
+    'minSignalWinrate': 35, 'winrateLookbackDays': 14, 'winrateMinSamples': 5,
+    'newsPreMinutes': 10, 'newsPostMinutes': 40,
+}
+AI_LOT_SIZE = AI_MASTER_DEFAULTS['lotSize']
+AI_SL_PIPS = AI_MASTER_DEFAULTS['slPips']
+AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS['tpLayerPips']
+AI_LAYER_STAGGER_PIPS = AI_MASTER_DEFAULTS['layerStaggerPips']
+AI_LOCK_PIPS_AFTER_TP1 = AI_MASTER_DEFAULTS['lockPipsAfterTp1']
+AI_DEEP_LOCK_TRIGGER_PIPS = AI_MASTER_DEFAULTS['deepLockTriggerPips']
+AI_DEEP_LOCK_PIPS = AI_MASTER_DEFAULTS['deepLockPips']
+AI_DEEP_LOCK_TIMEOUT_MINUTES = AI_MASTER_DEFAULTS['deepLockTimeoutMinutes']
+AI_MIN_SIGNAL_WINRATE = AI_MASTER_DEFAULTS['minSignalWinrate']
+AI_WINRATE_LOOKBACK_DAYS = AI_MASTER_DEFAULTS['winrateLookbackDays']
+AI_WINRATE_MIN_SAMPLES = AI_MASTER_DEFAULTS['winrateMinSamples']
+AI_NEWS_PRE_MINUTES = AI_MASTER_DEFAULTS['newsPreMinutes']
+AI_NEWS_POST_MINUTES = AI_MASTER_DEFAULTS['newsPostMinutes']
+
+
+def apply_ai_settings(master):
+    global AI_LOT_SIZE, AI_SL_PIPS, AI_TP_LAYERS_PIPS, AI_LAYER_STAGGER_PIPS, AI_LOCK_PIPS_AFTER_TP1
+    global AI_DEEP_LOCK_TRIGGER_PIPS, AI_DEEP_LOCK_PIPS, AI_DEEP_LOCK_TIMEOUT_MINUTES
+    global AI_MIN_SIGNAL_WINRATE, AI_WINRATE_LOOKBACK_DAYS, AI_WINRATE_MIN_SAMPLES
+    global AI_NEWS_PRE_MINUTES, AI_NEWS_POST_MINUTES
+    master = master or {}
+    tp_layers = master.get('tpLayerPips')
+    if not (isinstance(tp_layers, list) and len(tp_layers) == 3 and all(isinstance(x, (int, float)) for x in tp_layers)):
+        tp_layers = AI_MASTER_DEFAULTS['tpLayerPips']
+    AI_LOT_SIZE = master.get('lotSize', AI_MASTER_DEFAULTS['lotSize'])
+    AI_SL_PIPS = master.get('slPips', AI_MASTER_DEFAULTS['slPips'])
+    AI_TP_LAYERS_PIPS = tp_layers
+    AI_LAYER_STAGGER_PIPS = master.get('layerStaggerPips', AI_MASTER_DEFAULTS['layerStaggerPips'])
+    AI_LOCK_PIPS_AFTER_TP1 = master.get('lockPipsAfterTp1', AI_MASTER_DEFAULTS['lockPipsAfterTp1'])
+    AI_DEEP_LOCK_TRIGGER_PIPS = master.get('deepLockTriggerPips', AI_MASTER_DEFAULTS['deepLockTriggerPips'])
+    AI_DEEP_LOCK_PIPS = master.get('deepLockPips', AI_MASTER_DEFAULTS['deepLockPips'])
+    AI_DEEP_LOCK_TIMEOUT_MINUTES = master.get('deepLockTimeoutMinutes', AI_MASTER_DEFAULTS['deepLockTimeoutMinutes'])
+    AI_MIN_SIGNAL_WINRATE = master.get('minSignalWinrate', AI_MASTER_DEFAULTS['minSignalWinrate'])
+    AI_WINRATE_LOOKBACK_DAYS = master.get('winrateLookbackDays', AI_MASTER_DEFAULTS['winrateLookbackDays'])
+    AI_WINRATE_MIN_SAMPLES = master.get('winrateMinSamples', AI_MASTER_DEFAULTS['winrateMinSamples'])
+    AI_NEWS_PRE_MINUTES = master.get('newsPreMinutes', AI_MASTER_DEFAULTS['newsPreMinutes'])
+    AI_NEWS_POST_MINUTES = master.get('newsPostMinutes', AI_MASTER_DEFAULTS['newsPostMinutes'])
 
 
 def log(msg):
@@ -576,6 +608,7 @@ def run_fast_tick():
     data = snap.to_dict() if snap.exists else {}
     ai_trade_data = data.get('aiTradeData', {})
     ai_modal_awal = data.get('aiModalAwal', 2500000)
+    apply_ai_settings((data.get('aiSettings') or {}).get('master'))
 
     open_info = find_open_ai_trade(ai_trade_data)
     if not open_info:

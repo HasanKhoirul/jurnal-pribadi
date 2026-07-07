@@ -20,9 +20,17 @@ initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore();
 
 const AI_PIP_SIZE = 0.1;
-const AI_LOT_SIZE = 0.1;
-const AI_SL_PIPS = 50;
-const AI_TP_LAYERS_PIPS = [80, 100, 150];
+// Nilai default di sini - dibaca ulang & bisa di-override tiap tick lewat aiSettings.master
+// di Firestore (diatur dari menu "Master Setting" web app), lewat applyAiSettings().
+const AI_MASTER_DEFAULTS = {
+    slPips: 50, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
+    lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
+    minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
+    newsPreMinutes: 10, newsPostMinutes: 40
+};
+let AI_LOT_SIZE = AI_MASTER_DEFAULTS.lotSize;
+let AI_SL_PIPS = AI_MASTER_DEFAULTS.slPips;
+let AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS.tpLayerPips;
 
 function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
 function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * 1; }
@@ -78,8 +86,8 @@ function isHighImpactNewsWindowFallback() {
     if (day === 0 || day === 6) return false;
     return hour >= 12 && hour < 15;
 }
-const AI_NEWS_PRE_MINUTES = 10;
-const AI_NEWS_POST_MINUTES = 40;
+let AI_NEWS_PRE_MINUTES = AI_MASTER_DEFAULTS.newsPreMinutes;
+let AI_NEWS_POST_MINUTES = AI_MASTER_DEFAULTS.newsPostMinutes;
 async function fetchActiveHighImpactNews() {
     try {
         const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
@@ -123,9 +131,9 @@ async function polishReasonWithLLM(rawReason) {
 }
 
 // Adaptif: kalau win rate tipe sinyal tertentu lagi jelek belakangan ini, bot skip generate sinyal itu dulu (proporsi entry condong ke yang lebih akurat).
-const AI_MIN_SIGNAL_WINRATE = 35;
-const AI_WINRATE_LOOKBACK_DAYS = 14;
-const AI_WINRATE_MIN_SAMPLES = 5;
+let AI_MIN_SIGNAL_WINRATE = AI_MASTER_DEFAULTS.minSignalWinrate;
+let AI_WINRATE_LOOKBACK_DAYS = AI_MASTER_DEFAULTS.winrateLookbackDays;
+let AI_WINRATE_MIN_SAMPLES = AI_MASTER_DEFAULTS.winrateMinSamples;
 function getRecentSignalWinRate(tradeData, signalType) {
     const cutoff = Date.now() - AI_WINRATE_LOOKBACK_DAYS * 86400000;
     let total = 0, win = 0;
@@ -204,7 +212,7 @@ function todayWibDateStr() {
 }
 
 // Jarak antar layer pending order bertingkat: layer 0 = harga sinyal (market), layer 1 = -10 pips, layer 2 = -20 pips (arah "lebih murah/baik").
-const AI_LAYER_STAGGER_PIPS = 10;
+let AI_LAYER_STAGGER_PIPS = AI_MASTER_DEFAULTS.layerStaggerPips;
 
 async function autoOpenAiPosition(aiTradeData, candles) {
     const sug = await computeAiSuggestion(candles, aiTradeData);
@@ -221,11 +229,30 @@ async function autoOpenAiPosition(aiTradeData, candles) {
 }
 
 // Begitu TP1 (layer pertama, 80 pips) kena, layer 2 & 3 langsung dikunci profit +10 pips — biar aman kalau harga balik arah.
-const AI_LOCK_PIPS_AFTER_TP1 = 10;
+let AI_LOCK_PIPS_AFTER_TP1 = AI_MASTER_DEFAULTS.lockPipsAfterTp1;
 // Khusus layer terakhir (target 150 pips): begitu floating profit-nya sendiri tembus 100 pips, SL dikunci lebih dalam ke +80 pips dan mulai hitung mundur — kalau TP 150 belum kena dalam waktu segitu, tutup paksa di market (dijamin minimal +80 pips).
-const AI_DEEP_LOCK_TRIGGER_PIPS = 100;
-const AI_DEEP_LOCK_PIPS = 80;
-const AI_DEEP_LOCK_TIMEOUT_MINUTES = 15;
+let AI_DEEP_LOCK_TRIGGER_PIPS = AI_MASTER_DEFAULTS.deepLockTriggerPips;
+let AI_DEEP_LOCK_PIPS = AI_MASTER_DEFAULTS.deepLockPips;
+let AI_DEEP_LOCK_TIMEOUT_MINUTES = AI_MASTER_DEFAULTS.deepLockTimeoutMinutes;
+
+function applyAiSettings(master) {
+    master = master || {};
+    const tpLayers = Array.isArray(master.tpLayerPips) && master.tpLayerPips.length === 3 && master.tpLayerPips.every(x => typeof x === 'number')
+        ? master.tpLayerPips : AI_MASTER_DEFAULTS.tpLayerPips;
+    AI_LOT_SIZE = master.lotSize ?? AI_MASTER_DEFAULTS.lotSize;
+    AI_SL_PIPS = master.slPips ?? AI_MASTER_DEFAULTS.slPips;
+    AI_TP_LAYERS_PIPS = tpLayers;
+    AI_LAYER_STAGGER_PIPS = master.layerStaggerPips ?? AI_MASTER_DEFAULTS.layerStaggerPips;
+    AI_LOCK_PIPS_AFTER_TP1 = master.lockPipsAfterTp1 ?? AI_MASTER_DEFAULTS.lockPipsAfterTp1;
+    AI_DEEP_LOCK_TRIGGER_PIPS = master.deepLockTriggerPips ?? AI_MASTER_DEFAULTS.deepLockTriggerPips;
+    AI_DEEP_LOCK_PIPS = master.deepLockPips ?? AI_MASTER_DEFAULTS.deepLockPips;
+    AI_DEEP_LOCK_TIMEOUT_MINUTES = master.deepLockTimeoutMinutes ?? AI_MASTER_DEFAULTS.deepLockTimeoutMinutes;
+    AI_MIN_SIGNAL_WINRATE = master.minSignalWinrate ?? AI_MASTER_DEFAULTS.minSignalWinrate;
+    AI_WINRATE_LOOKBACK_DAYS = master.winrateLookbackDays ?? AI_MASTER_DEFAULTS.winrateLookbackDays;
+    AI_WINRATE_MIN_SAMPLES = master.winrateMinSamples ?? AI_MASTER_DEFAULTS.winrateMinSamples;
+    AI_NEWS_PRE_MINUTES = master.newsPreMinutes ?? AI_MASTER_DEFAULTS.newsPreMinutes;
+    AI_NEWS_POST_MINUTES = master.newsPostMinutes ?? AI_MASTER_DEFAULTS.newsPostMinutes;
+}
 
 // Layer 1/2 (index 1 & 2) yang masih pending order (belum kefill) dibatalkan begitu layer 0 (market entry) selesai — udah gak relevan lagi.
 function cancelPendingSiblings(trade) {
@@ -349,6 +376,7 @@ async function main() {
     const data = snap.exists ? snap.data() : {};
     let aiTradeData = data.aiTradeData || {};
     const aiModalAwal = data.aiModalAwal || 2500000;
+    applyAiSettings(data.aiSettings?.master);
 
     let candles;
     try {

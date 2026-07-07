@@ -235,6 +235,7 @@
                             <h1 style="color:#9c27b0;">Trading AI (Simulasi)</h1>
                             <div class="action-group-main hide-for-screenshot">
                                 <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
+                                <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-ai-master-settings">🎛️ Master Setting</button>
                                 <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="aiRefreshBtnClick(this, 'calendar')">🔄 Refresh</button>
                                 <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">🔄 Cek Sekarang</button>
                                 <button class="btn-action btn-export" onclick="openExportMenu('ai')">📤 Export</button>
@@ -763,6 +764,50 @@
             <div class="form-group" style="margin-top:10px;"><label>Provider LLM (opsional, buat teks alasan lebih natural)</label><select id="ai-llm-provider" class="form-input"><option value="none">Tidak pakai (template saja)</option><option value="gemini">Google Gemini</option><option value="claude">Claude (Anthropic)</option></select></div>
             <div class="form-group" style="margin-top:10px;"><label>API Key LLM (kosongkan kalau "Tidak pakai")</label><input type="text" id="ai-key-llm" class="form-input" placeholder="Masukkan API key..."></div>
             <button id="btn-save-ai-settings" class="save-btn" style="background:#9c27b0; margin-top:20px;">Simpan Settings</button>
+        </div>
+    </div>
+
+    <div id="ai-master-modal" class="modal">
+        <div class="modal-content" style="width: 520px; max-height: 85vh; overflow-y: auto;">
+            <span class="close-btn" onclick="document.getElementById('ai-master-modal').style.display='none'">&times;</span>
+            <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting Trading Bot</h2>
+            <p style="color:#aaa; font-size:0.85rem; margin-bottom:15px;">Semua parameter ini dipakai bot VPS/MT5 (kepakai otomatis tiap tick, ~10 detik, gak perlu restart bot) dan simulasi manual di web. Ubah SL/TP/Lot cuma berlaku buat trade BARU — posisi yang lagi open tetap pakai angka lama.</p>
+
+            <h3 style="color:#ff9800; font-size:0.9rem; margin:15px 0 8px;">📊 Risk Insight (tampilan doang, gak ngeblok bot)</h3>
+            <div class="form-group"><label>Limit Risk (%)</label><input type="number" id="ai-master-risk-limit-pct" class="form-input" step="1" min="1"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Periode Risk</label><select id="ai-master-risk-period" class="form-input"><option value="monthly">Bulanan</option><option value="weekly">Mingguan (minggu berjalan)</option></select></div>
+
+            <h3 style="color:#ff9800; font-size:0.9rem; margin:18px 0 8px;">🎯 SL & TP</h3>
+            <div class="form-group"><label>SL (pips)</label><input type="number" id="ai-master-sl-pips" class="form-input" step="1" min="1"></div>
+            <div class="form-group" style="margin-top:10px; display:flex; gap:8px;">
+                <div style="flex:1;"><label>TP Layer 1 (pips)</label><input type="number" id="ai-master-tp1-pips" class="form-input" step="1" min="1"></div>
+                <div style="flex:1;"><label>TP Layer 2 (pips)</label><input type="number" id="ai-master-tp2-pips" class="form-input" step="1" min="1"></div>
+                <div style="flex:1;"><label>TP Layer 3 (pips)</label><input type="number" id="ai-master-tp3-pips" class="form-input" step="1" min="1"></div>
+            </div>
+            <div class="form-group" style="margin-top:10px;"><label>Lot per Layer</label><input type="number" id="ai-master-lot-size" class="form-input" step="0.01" min="0.01"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Jarak Antar Layer (pips)</label><input type="number" id="ai-master-layer-stagger-pips" class="form-input" step="1" min="1"></div>
+
+            <h3 style="color:#ff9800; font-size:0.9rem; margin:18px 0 8px;">🔒 Lock & Deep-Lock</h3>
+            <div class="form-group"><label>Kunci Profit Layer 2&amp;3 Setelah Layer 1 TP (pips)</label><input type="number" id="ai-master-lock-pips-after-tp1" class="form-input" step="1" min="0"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Ambang Deep-Lock (pips floating profit Layer 3)</label><input type="number" id="ai-master-deep-lock-trigger-pips" class="form-input" step="1" min="1"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Deep-Lock SL Layer 3 ke (pips)</label><input type="number" id="ai-master-deep-lock-pips" class="form-input" step="1" min="0"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Timeout Setelah Deep-Lock (menit)</label><input type="number" id="ai-master-deep-lock-timeout-minutes" class="form-input" step="1" min="1"></div>
+
+            <h3 style="color:#ff9800; font-size:0.9rem; margin:18px 0 8px;">📈 Filter Sinyal</h3>
+            <div class="form-group"><label>Ambang Minimum Win Rate (%)</label><input type="number" id="ai-master-min-signal-winrate" class="form-input" step="1" min="0" max="100"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Lookback Win Rate (hari)</label><input type="number" id="ai-master-winrate-lookback-days" class="form-input" step="1" min="1"></div>
+            <div class="form-group" style="margin-top:10px;"><label>Minimal Sample Sebelum Filter Aktif</label><input type="number" id="ai-master-winrate-min-samples" class="form-input" step="1" min="1"></div>
+
+            <h3 style="color:#ff9800; font-size:0.9rem; margin:18px 0 8px;">📰 Jeda Berita High-Impact</h3>
+            <div class="form-group" style="display:flex; gap:8px;">
+                <div style="flex:1;"><label>Sebelum Rilis (menit)</label><input type="number" id="ai-master-news-pre-minutes" class="form-input" step="1" min="0"></div>
+                <div style="flex:1;"><label>Sesudah Rilis (menit)</label><input type="number" id="ai-master-news-post-minutes" class="form-input" step="1" min="0"></div>
+            </div>
+
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button id="btn-reset-ai-master" class="btn-action" style="flex:1; border-color:#666; color:#aaa;">Reset ke Default</button>
+                <button id="btn-save-ai-master" class="save-btn" style="flex:1; background:#ff9800;">Simpan</button>
+            </div>
         </div>
     </div>
 

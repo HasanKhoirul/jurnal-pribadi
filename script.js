@@ -78,6 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 localStorage.setItem('ai_settings_v1', JSON.stringify(aiSettings));
+                applyMasterSettings();
                 rerenderActiveSection();
             }
         }, err => { console.error('Gagal ambil data privat dari cloud:', err); alert('Gagal ambil data privat: ' + err.code); });
@@ -771,9 +772,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
     const AI_PIP_SIZE = 0.1;
-    const AI_LOT_SIZE = 0.1;
-    const AI_SL_PIPS = 50;
-    const AI_TP_LAYERS_PIPS = [80, 100, 150];
+    let AI_LOT_SIZE = 0.1;
+    let AI_SL_PIPS = 50;
+    let AI_TP_LAYERS_PIPS = [80, 100, 150];
     function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
     function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * 1; }
     function uscToRupiah(usc) { return (usc / 100) * liveKursIDR; }
@@ -947,8 +948,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (day === 0 || day === 6) return false;
         return hour >= 12 && hour < 15;
     }
-    const AI_NEWS_PRE_MINUTES = 10;
-    const AI_NEWS_POST_MINUTES = 40;
+    let AI_NEWS_PRE_MINUTES = 10;
+    let AI_NEWS_POST_MINUTES = 40;
     async function fetchActiveHighImpactNews() {
         try {
             const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
@@ -1004,9 +1005,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Adaptif: kalau win rate tipe sinyal tertentu lagi jelek belakangan ini, bot skip generate sinyal itu dulu (proporsi entry condong ke yang lebih akurat).
-    const AI_MIN_SIGNAL_WINRATE = 35;
-    const AI_WINRATE_LOOKBACK_DAYS = 14;
-    const AI_WINRATE_MIN_SAMPLES = 5;
+    let AI_MIN_SIGNAL_WINRATE = 35;
+    let AI_WINRATE_LOOKBACK_DAYS = 14;
+    let AI_WINRATE_MIN_SAMPLES = 5;
     function getRecentSignalWinRate(tradeData, signalType) {
         const cutoff = Date.now() - AI_WINRATE_LOOKBACK_DAYS * 86400000;
         let total = 0, win = 0;
@@ -1083,7 +1084,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Jarak antar layer pending order bertingkat: layer 0 = harga sinyal (market), layer 1 = -10 pips, layer 2 = -20 pips (arah "lebih murah/baik").
-    const AI_LAYER_STAGGER_PIPS = 10;
+    let AI_LAYER_STAGGER_PIPS = 10;
 
     async function autoOpenAiPosition(candles) {
         const sug = await computeAiSuggestion(candles, aiTradeData);
@@ -1103,11 +1104,113 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Begitu TP1 (layer pertama, 80 pips) kena, layer 2 & 3 langsung dikunci profit +10 pips — biar aman kalau harga balik arah.
-    const AI_LOCK_PIPS_AFTER_TP1 = 10;
+    let AI_LOCK_PIPS_AFTER_TP1 = 10;
     // Khusus layer terakhir (target 150 pips): begitu floating profit-nya sendiri tembus 100 pips, SL dikunci lebih dalam ke +80 pips dan mulai hitung mundur — kalau TP 150 belum kena dalam waktu segitu, tutup paksa di market (dijamin minimal +80 pips).
-    const AI_DEEP_LOCK_TRIGGER_PIPS = 100;
-    const AI_DEEP_LOCK_PIPS = 80;
-    const AI_DEEP_LOCK_TIMEOUT_MINUTES = 15;
+    let AI_DEEP_LOCK_TRIGGER_PIPS = 100;
+    let AI_DEEP_LOCK_PIPS = 80;
+    let AI_DEEP_LOCK_TIMEOUT_MINUTES = 15;
+
+    const AI_MASTER_DEFAULTS = {
+        slPips: 50, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
+        lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
+        minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
+        newsPreMinutes: 10, newsPostMinutes: 40,
+        riskLimitPct: 10, riskPeriod: 'monthly'
+    };
+    function getMasterSettings() {
+        return Object.assign({}, AI_MASTER_DEFAULTS, (aiSettings && aiSettings.master) || {});
+    }
+    function applyMasterSettings() {
+        const m = getMasterSettings();
+        AI_SL_PIPS = m.slPips;
+        AI_TP_LAYERS_PIPS = (Array.isArray(m.tpLayerPips) && m.tpLayerPips.length === 3) ? m.tpLayerPips : AI_MASTER_DEFAULTS.tpLayerPips;
+        AI_LOT_SIZE = m.lotSize;
+        AI_LAYER_STAGGER_PIPS = m.layerStaggerPips;
+        AI_LOCK_PIPS_AFTER_TP1 = m.lockPipsAfterTp1;
+        AI_DEEP_LOCK_TRIGGER_PIPS = m.deepLockTriggerPips;
+        AI_DEEP_LOCK_PIPS = m.deepLockPips;
+        AI_DEEP_LOCK_TIMEOUT_MINUTES = m.deepLockTimeoutMinutes;
+        AI_MIN_SIGNAL_WINRATE = m.minSignalWinrate;
+        AI_WINRATE_LOOKBACK_DAYS = m.winrateLookbackDays;
+        AI_WINRATE_MIN_SAMPLES = m.winrateMinSamples;
+        AI_NEWS_PRE_MINUTES = m.newsPreMinutes;
+        AI_NEWS_POST_MINUTES = m.newsPostMinutes;
+    }
+    applyMasterSettings();
+
+    document.getElementById('btn-ai-master-settings').onclick = () => {
+        const m = getMasterSettings();
+        document.getElementById('ai-master-risk-limit-pct').value = m.riskLimitPct;
+        document.getElementById('ai-master-risk-period').value = m.riskPeriod;
+        document.getElementById('ai-master-sl-pips').value = m.slPips;
+        document.getElementById('ai-master-tp1-pips').value = m.tpLayerPips[0];
+        document.getElementById('ai-master-tp2-pips').value = m.tpLayerPips[1];
+        document.getElementById('ai-master-tp3-pips').value = m.tpLayerPips[2];
+        document.getElementById('ai-master-lot-size').value = m.lotSize;
+        document.getElementById('ai-master-layer-stagger-pips').value = m.layerStaggerPips;
+        document.getElementById('ai-master-lock-pips-after-tp1').value = m.lockPipsAfterTp1;
+        document.getElementById('ai-master-deep-lock-trigger-pips').value = m.deepLockTriggerPips;
+        document.getElementById('ai-master-deep-lock-pips').value = m.deepLockPips;
+        document.getElementById('ai-master-deep-lock-timeout-minutes').value = m.deepLockTimeoutMinutes;
+        document.getElementById('ai-master-min-signal-winrate').value = m.minSignalWinrate;
+        document.getElementById('ai-master-winrate-lookback-days').value = m.winrateLookbackDays;
+        document.getElementById('ai-master-winrate-min-samples').value = m.winrateMinSamples;
+        document.getElementById('ai-master-news-pre-minutes').value = m.newsPreMinutes;
+        document.getElementById('ai-master-news-post-minutes').value = m.newsPostMinutes;
+        document.getElementById('ai-master-modal').style.display = 'flex';
+    };
+    document.getElementById('btn-reset-ai-master').onclick = () => {
+        aiSettings = Object.assign({}, aiSettings, { master: Object.assign({}, AI_MASTER_DEFAULTS) });
+        saveData('ai_settings_v1', aiSettings);
+        applyMasterSettings();
+        document.getElementById('ai-master-modal').style.display = 'none';
+        alert('Master Setting dikembalikan ke default.');
+    };
+    document.getElementById('btn-save-ai-master').onclick = () => {
+        const readNum = (id) => parseFloat(document.getElementById(id).value);
+        const fields = {
+            riskLimitPct: readNum('ai-master-risk-limit-pct'),
+            slPips: readNum('ai-master-sl-pips'),
+            tp1: readNum('ai-master-tp1-pips'), tp2: readNum('ai-master-tp2-pips'), tp3: readNum('ai-master-tp3-pips'),
+            lotSize: readNum('ai-master-lot-size'),
+            layerStaggerPips: readNum('ai-master-layer-stagger-pips'),
+            lockPipsAfterTp1: readNum('ai-master-lock-pips-after-tp1'),
+            deepLockTriggerPips: readNum('ai-master-deep-lock-trigger-pips'),
+            deepLockPips: readNum('ai-master-deep-lock-pips'),
+            deepLockTimeoutMinutes: readNum('ai-master-deep-lock-timeout-minutes'),
+            minSignalWinrate: readNum('ai-master-min-signal-winrate'),
+            winrateLookbackDays: readNum('ai-master-winrate-lookback-days'),
+            winrateMinSamples: readNum('ai-master-winrate-min-samples'),
+            newsPreMinutes: readNum('ai-master-news-pre-minutes'),
+            newsPostMinutes: readNum('ai-master-news-post-minutes')
+        };
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0;
+        if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
+        aiSettings = Object.assign({}, aiSettings, {
+            master: {
+                riskLimitPct: fields.riskLimitPct,
+                riskPeriod: document.getElementById('ai-master-risk-period').value,
+                slPips: fields.slPips,
+                tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
+                lotSize: fields.lotSize,
+                layerStaggerPips: fields.layerStaggerPips,
+                lockPipsAfterTp1: fields.lockPipsAfterTp1,
+                deepLockTriggerPips: fields.deepLockTriggerPips,
+                deepLockPips: fields.deepLockPips,
+                deepLockTimeoutMinutes: fields.deepLockTimeoutMinutes,
+                minSignalWinrate: fields.minSignalWinrate,
+                winrateLookbackDays: fields.winrateLookbackDays,
+                winrateMinSamples: fields.winrateMinSamples,
+                newsPreMinutes: fields.newsPreMinutes,
+                newsPostMinutes: fields.newsPostMinutes
+            }
+        });
+        saveData('ai_settings_v1', aiSettings);
+        applyMasterSettings();
+        document.getElementById('ai-master-modal').style.display = 'none';
+        renderAiDashboard();
+        alert(auth.currentUser ? 'Master Setting tersimpan & disinkronkan — otomatis kepakai bot VPS dalam ~10 detik.' : 'Master Setting tersimpan di device ini (login dulu biar sync ke bot VPS).');
+    };
 
     // Paksa tutup semua layer yang masih open di harga market sekarang (dipakai buat news guard, pola sama kayak timeout).
     function forceCloseAllLayersAtMarket(trade, candles, statusLabel) {
@@ -1484,6 +1587,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     document.getElementById('close-ai-modal').onclick = () => document.getElementById('ai-entry-modal').style.display = 'none';
 
+    // Basis "minggu berjalan sekarang" (Senin-Minggu real, bukan minggu dari bulan yang lagi dibrowse) — kotak risk insight ini status real-time, bukan laporan historis.
+    function getCurrentWeekPl(tradeData) {
+        const now = new Date();
+        const dow = (now.getDay() + 6) % 7; // Senin=0 ... Minggu=6
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+        let pl = 0;
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(monday); d.setDate(monday.getDate() + i);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            (tradeData[key] || []).forEach(t => { pl += parseFloat(t.pl || 0); });
+        }
+        return pl;
+    }
+
     // --- Dashboard evaluasi ---
     function renderAiDashboard() {
         const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
@@ -1515,19 +1632,22 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; return; }
         emptyState.style.display = 'none'; dashContent.style.display = 'block';
 
-        const riskLimit = aiModalAwal * 0.10;
-        const usedPct = monthPl < 0 ? Math.min((Math.abs(monthPl) / riskLimit) * 100, 999) : 0;
+        const masterS = getMasterSettings();
+        const riskPeriodLabel = masterS.riskPeriod === 'weekly' ? 'minggu' : 'bulan';
+        const periodPl = masterS.riskPeriod === 'weekly' ? getCurrentWeekPl(aiTradeData) : monthPl;
+        const riskLimit = aiModalAwal * (masterS.riskLimitPct / 100);
+        const usedPct = periodPl < 0 ? Math.min((Math.abs(periodPl) / riskLimit) * 100, 999) : 0;
         const riskBox = document.getElementById('ai-risk-insight');
-        if (monthPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Aman! Bulan ini masih profit ${formatRupiah(monthPl)}, belum kepakai risk budget.</div>`;
-        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Risk terpakai ${usedPct.toFixed(0)}% dari limit 10%/bulan (${formatRupiah(Math.abs(monthPl))} dari ${formatRupiah(riskLimit)}).</div>`;
-        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">⚠️ Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit 10%/bulan. Kurangi ukuran posisi.</div>`;
-        else riskBox.innerHTML = `<div class="insight-box insight-danger">🚨 LIMIT TERLAMPAUI! Rugi bulan ini ${formatRupiah(Math.abs(monthPl))}, lewat batas 10% modal (${formatRupiah(riskLimit)}). STOP entry baru bulan ini.</div>`;
+        if (periodPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Aman! ${riskPeriodLabel === 'minggu' ? 'Minggu' : 'Bulan'} ini masih profit ${formatRupiah(periodPl)}, belum kepakai risk budget.</div>`;
+        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel} (${formatRupiah(Math.abs(periodPl))} dari ${formatRupiah(riskLimit)}).</div>`;
+        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">⚠️ Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}. Kurangi ukuran posisi.</div>`;
+        else riskBox.innerHTML = `<div class="insight-box insight-danger">🚨 LIMIT TERLAMPAUI! Rugi ${riskPeriodLabel} ini ${formatRupiah(Math.abs(periodPl))}, lewat batas ${masterS.riskLimitPct}% modal (${formatRupiah(riskLimit)}). STOP entry baru ${riskPeriodLabel} ini.</div>`;
 
         let closedTrades = tableRows.filter(t => t.status === 'closed');
         let overboughtMistakes = closedTrades.filter(t => t.arah === 'BUY' && t.alasan && t.alasan.toLowerCase().includes('overbought')).length;
         let oversoldMistakes = closedTrades.filter(t => t.arah === 'SELL' && t.alasan && t.alasan.toLowerCase().includes('oversold')).length;
         let winRate = closedTrades.length > 0 ? ((winCount / closedTrades.length) * 100).toFixed(0) : 0;
-        document.getElementById('ai-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${monthPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit 10%/bulan.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
+        document.getElementById('ai-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${periodPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
 
         let signalStats = {};
         closedTrades.forEach(t => {

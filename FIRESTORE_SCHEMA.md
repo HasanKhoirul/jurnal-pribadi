@@ -48,7 +48,24 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
   aiSettings: {
     twelvedata: string,       // API key TwelveData (browser only, dipakai chart/manual tick)
     llmProvider: "none"|"gemini"|"claude",
-    llmKey: string
+    llmKey: string,
+    master: {                  // diatur dari menu "🎛️ Master Setting" - dibaca ulang tiap tick oleh bot VPS (ai-tick.py) & ai-tick.mjs, gak perlu restart bot
+      riskLimitPct: number,     // default 10 - CUMA dipakai kotak insight dashboard browser (script.js), TIDAK dipakai bot (gak nge-block entry)
+      riskPeriod: "monthly"|"weekly",  // default "monthly" - "weekly" = minggu berjalan sekarang (Senin-Minggu real), bukan minggu dari bulan yang dibrowse
+      slPips: number,                   // default 50
+      tpLayerPips: [number, number, number],  // default [80, 100, 150], index 0/1/2 = layer 1/2/3
+      lotSize: number,                   // default 0.1
+      layerStaggerPips: number,          // default 10
+      lockPipsAfterTp1: number,          // default 10
+      deepLockTriggerPips: number,       // default 100
+      deepLockPips: number,              // default 80
+      deepLockTimeoutMinutes: number,    // default 15
+      minSignalWinrate: number,          // default 35
+      winrateLookbackDays: number,       // default 14
+      winrateMinSamples: number,         // default 5
+      newsPreMinutes: number,            // default 10
+      newsPostMinutes: number            // default 40
+    }
   },
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiTradeData: {
@@ -95,7 +112,9 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
 
 ## Konstanta kunci logic Trading AI (harus sama persis kalau diporting ke bahasa lain)
 
-| Konstanta | Nilai | Keterangan |
+Nilai di tabel ini cuma **default** — semuanya (kecuali `AI_PIP_SIZE`) bisa di-override lewat `aiSettings.master` (lihat di atas), diatur dari menu "🎛️ Master Setting" di web app. `AI_LOT_SIZE`..`AI_NEWS_POST_MINUTES` di kode masing-masing (script.js/ai-tick.py/ai-tick.mjs) dibaca ulang tiap tick dari settings ini.
+
+| Konstanta | Nilai default | Keterangan |
 |---|---|---|
 | `AI_PIP_SIZE` | 0.1 | 1 pip = 0.1 harga (XAUUSD) |
 | `AI_LOT_SIZE` | 0.1 | Lot per layer (Cent account Exness) |
