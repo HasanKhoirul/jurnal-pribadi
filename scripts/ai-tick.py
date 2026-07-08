@@ -41,13 +41,15 @@ SLOW_LOOP_SECONDS = 300  # 5 menit
 # aiSettings.master di Firestore (diatur dari menu "Master Setting" web app), lewat apply_ai_settings().
 AI_PIP_SIZE = 0.1
 AI_MASTER_DEFAULTS = {
-    'slPips': 50, 'tpLayerPips': [80, 100, 150], 'lotSize': 0.1, 'layerStaggerPips': 10,
+    'slPips': 50, 'slMode': 'fixed', 'atrMultiplier': 1.5, 'tpLayerPips': [80, 100, 150], 'lotSize': 0.1, 'layerStaggerPips': 10,
     'lockPipsAfterTp1': 10, 'deepLockTriggerPips': 100, 'deepLockPips': 80, 'deepLockTimeoutMinutes': 15,
     'minSignalWinrate': 35, 'winrateLookbackDays': 14, 'winrateMinSamples': 5,
     'newsPreMinutes': 10, 'newsPostMinutes': 40,
 }
 AI_LOT_SIZE = AI_MASTER_DEFAULTS['lotSize']
 AI_SL_PIPS = AI_MASTER_DEFAULTS['slPips']
+AI_SL_MODE = AI_MASTER_DEFAULTS['slMode']  # 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
+AI_ATR_MULTIPLIER = AI_MASTER_DEFAULTS['atrMultiplier']
 AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS['tpLayerPips']
 AI_LAYER_STAGGER_PIPS = AI_MASTER_DEFAULTS['layerStaggerPips']
 AI_LOCK_PIPS_AFTER_TP1 = AI_MASTER_DEFAULTS['lockPipsAfterTp1']
@@ -62,7 +64,7 @@ AI_NEWS_POST_MINUTES = AI_MASTER_DEFAULTS['newsPostMinutes']
 
 
 def apply_ai_settings(master):
-    global AI_LOT_SIZE, AI_SL_PIPS, AI_TP_LAYERS_PIPS, AI_LAYER_STAGGER_PIPS, AI_LOCK_PIPS_AFTER_TP1
+    global AI_LOT_SIZE, AI_SL_PIPS, AI_SL_MODE, AI_ATR_MULTIPLIER, AI_TP_LAYERS_PIPS, AI_LAYER_STAGGER_PIPS, AI_LOCK_PIPS_AFTER_TP1
     global AI_DEEP_LOCK_TRIGGER_PIPS, AI_DEEP_LOCK_PIPS, AI_DEEP_LOCK_TIMEOUT_MINUTES
     global AI_MIN_SIGNAL_WINRATE, AI_WINRATE_LOOKBACK_DAYS, AI_WINRATE_MIN_SAMPLES
     global AI_NEWS_PRE_MINUTES, AI_NEWS_POST_MINUTES
@@ -72,6 +74,8 @@ def apply_ai_settings(master):
         tp_layers = AI_MASTER_DEFAULTS['tpLayerPips']
     AI_LOT_SIZE = master.get('lotSize', AI_MASTER_DEFAULTS['lotSize'])
     AI_SL_PIPS = master.get('slPips', AI_MASTER_DEFAULTS['slPips'])
+    AI_SL_MODE = 'atr' if master.get('slMode') == 'atr' else 'fixed'
+    AI_ATR_MULTIPLIER = master.get('atrMultiplier', AI_MASTER_DEFAULTS['atrMultiplier'])
     AI_TP_LAYERS_PIPS = tp_layers
     AI_LAYER_STAGGER_PIPS = master.get('layerStaggerPips', AI_MASTER_DEFAULTS['layerStaggerPips'])
     AI_LOCK_PIPS_AFTER_TP1 = master.get('lockPipsAfterTp1', AI_MASTER_DEFAULTS['lockPipsAfterTp1'])
@@ -193,6 +197,17 @@ def calc_bollinger(closes, period=20, mult=2):
     variance = sum((x - mean) ** 2 for x in sl) / period
     stdev = math.sqrt(variance)
     return {'upper': mean + mult * stdev, 'lower': mean - mult * stdev, 'mid': mean}
+
+
+# Average True Range - jarak SL adaptif ikut volatilitas terkini (dipakai kalau AI_SL_MODE == 'atr')
+def calc_atr(candles, period=14):
+    if len(candles) < period + 1:
+        return None
+    trs = []
+    for i in range(len(candles) - period, len(candles)):
+        c, prev_close = candles[i], candles[i - 1]['close']
+        trs.append(max(c['high'] - c['low'], abs(c['high'] - prev_close), abs(c['low'] - prev_close)))
+    return sum(trs) / period
 
 
 def is_market_open(now):
@@ -331,14 +346,20 @@ def compute_ai_suggestion(candles, trade_data):
 
     dir_sign = 1 if arah == 'BUY' else -1
     entry = last_close
-    sl = entry - dir_sign * pip_to_price(AI_SL_PIPS)
+    sl_pips_used = AI_SL_PIPS
+    if AI_SL_MODE == 'atr':
+        atr = calc_atr(candles, 14)
+        if atr is not None:
+            sl_pips_used = min(120, max(30, round((atr / AI_PIP_SIZE) * AI_ATR_MULTIPLIER)))
+    sl = entry - dir_sign * pip_to_price(sl_pips_used)
     reason_parts.append(
-        f"Entry {entry:.2f}, SL {AI_SL_PIPS} pips ({sl:.2f}), TP berlapis {'/'.join(map(str, AI_TP_LAYERS_PIPS))} pips, lot {AI_LOT_SIZE} x3 layer."
+        f"Entry {entry:.2f}, SL {sl_pips_used} pips{' (adaptif ATR)' if AI_SL_MODE == 'atr' else ''} ({sl:.2f}), TP berlapis {'/'.join(map(str, AI_TP_LAYERS_PIPS))} pips, lot {AI_LOT_SIZE} x3 layer."
     )
 
     return {
         'arah': arah, 'entry': entry, 'sl': sl, 'dirSign': dir_sign,
         'reasonText': ' '.join(reason_parts), 'tf': AI_TIMEFRAME_LABEL, 'signalType': signal_type,
+        'slPipsUsed': sl_pips_used,
     }
 
 
@@ -368,7 +389,7 @@ def auto_open_ai_position(ai_trade_data, candles):
             'tpPips': tp_pips,
             'entry': layer_entry,
             'tp': layer_entry + sug['dirSign'] * pip_to_price(tp_pips),
-            'sl': layer_entry - sug['dirSign'] * pip_to_price(AI_SL_PIPS),
+            'sl': layer_entry - sug['dirSign'] * pip_to_price(sug['slPipsUsed']),
             'lot': AI_LOT_SIZE,
             'status': 'open' if i == 0 else 'pending',
             'pl': 0,
@@ -385,7 +406,7 @@ def auto_open_ai_position(ai_trade_data, candles):
     send_telegram(
         f"🟢 <b>SINYAL {sug['arah']} XAUUSD</b>\n\n"
         f"<b>Entry:</b> <code>{sug['entry']:.2f}</code>\n"
-        f"<b>SL:</b> <code>{layers[0]['sl']:.2f}</code> ({AI_SL_PIPS} pips)\n\n"
+        f"<b>SL:</b> <code>{layers[0]['sl']:.2f}</code> ({sug['slPipsUsed']} pips)\n\n"
         f"<b>TP1:</b> <code>{layers[0]['tp']:.2f}</code>\n"
         f"<b>TP2:</b> <code>{layers[1]['tp']:.2f}</code>\n"
         f"<b>TP3:</b> <code>{layers[2]['tp']:.2f}</code>\n\n"

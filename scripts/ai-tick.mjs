@@ -23,13 +23,15 @@ const AI_PIP_SIZE = 0.1;
 // Nilai default di sini - dibaca ulang & bisa di-override tiap tick lewat aiSettings.master
 // di Firestore (diatur dari menu "Master Setting" web app), lewat applyAiSettings().
 const AI_MASTER_DEFAULTS = {
-    slPips: 50, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
+    slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
     lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
     minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
     newsPreMinutes: 10, newsPostMinutes: 40
 };
 let AI_LOT_SIZE = AI_MASTER_DEFAULTS.lotSize;
 let AI_SL_PIPS = AI_MASTER_DEFAULTS.slPips;
+let AI_SL_MODE = AI_MASTER_DEFAULTS.slMode; // 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
+let AI_ATR_MULTIPLIER = AI_MASTER_DEFAULTS.atrMultiplier;
 let AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS.tpLayerPips;
 
 function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
@@ -71,6 +73,16 @@ function calcBollinger(closes, period = 20, mult = 2) {
     const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
     const stdev = Math.sqrt(variance);
     return { upper: mean + mult * stdev, lower: mean - mult * stdev, mid: mean };
+}
+// Average True Range - jarak SL adaptif ikut volatilitas terkini (dipakai kalau AI_SL_MODE === 'atr')
+function calcATR(candles, period = 14) {
+    if (candles.length < period + 1) return null;
+    const trs = [];
+    for (let i = candles.length - period; i < candles.length; i++) {
+        const c = candles[i], prevClose = candles[i - 1].close;
+        trs.push(Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose)));
+    }
+    return trs.reduce((a, b) => a + b, 0) / period;
 }
 
 function isMarketOpen() {
@@ -188,14 +200,19 @@ async function computeAiSuggestion(candles, tradeData) {
 
     const entry = lastClose;
     const dirSign = arah === 'BUY' ? 1 : -1;
-    const sl = entry - dirSign * pipToPrice(AI_SL_PIPS);
-    reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${AI_SL_PIPS} pips (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
+    let slPipsUsed = AI_SL_PIPS;
+    if (AI_SL_MODE === 'atr') {
+        const atr = calcATR(candles, 14);
+        if (atr !== null) slPipsUsed = Math.min(120, Math.max(30, Math.round((atr / AI_PIP_SIZE) * AI_ATR_MULTIPLIER)));
+    }
+    const sl = entry - dirSign * pipToPrice(slPipsUsed);
+    reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${slPipsUsed} pips${AI_SL_MODE === 'atr' ? ' (adaptif ATR)' : ''} (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
 
     let reasonText = reasonParts.join(' ');
     const polished = await polishReasonWithLLM(reasonText);
     if (polished) reasonText = polished;
 
-    return { arah, entry, sl, dirSign, reasonText, tf: AI_TIMEFRAME, signalType };
+    return { arah, entry, sl, dirSign, reasonText, tf: AI_TIMEFRAME, signalType, slPipsUsed };
 }
 
 function findOpenAiTrade(aiTradeData) {
@@ -221,7 +238,7 @@ async function autoOpenAiPosition(aiTradeData, candles) {
     if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
     const layers = AI_TP_LAYERS_PIPS.map((tpPips, i) => {
         const layerEntry = sug.entry - sug.dirSign * pipToPrice(i * AI_LAYER_STAGGER_PIPS);
-        return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(AI_SL_PIPS), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+        return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(sug.slPipsUsed), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
     });
     aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: layers[0].sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
     console.log(`✅ Entry baru dibuka: ${sug.arah} @ ${sug.entry.toFixed(2)} (layer 2 & 3 pending di ${layers[1].entry.toFixed(2)} / ${layers[2].entry.toFixed(2)}).`);
@@ -241,6 +258,8 @@ function applyAiSettings(master) {
         ? master.tpLayerPips : AI_MASTER_DEFAULTS.tpLayerPips;
     AI_LOT_SIZE = master.lotSize ?? AI_MASTER_DEFAULTS.lotSize;
     AI_SL_PIPS = master.slPips ?? AI_MASTER_DEFAULTS.slPips;
+    AI_SL_MODE = master.slMode === 'atr' ? 'atr' : 'fixed';
+    AI_ATR_MULTIPLIER = master.atrMultiplier ?? AI_MASTER_DEFAULTS.atrMultiplier;
     AI_TP_LAYERS_PIPS = tpLayers;
     AI_LAYER_STAGGER_PIPS = master.layerStaggerPips ?? AI_MASTER_DEFAULTS.layerStaggerPips;
     AI_LOCK_PIPS_AFTER_TP1 = master.lockPipsAfterTp1 ?? AI_MASTER_DEFAULTS.lockPipsAfterTp1;

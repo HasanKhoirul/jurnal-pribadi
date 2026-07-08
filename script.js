@@ -774,6 +774,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const AI_PIP_SIZE = 0.1;
     let AI_LOT_SIZE = 0.1;
     let AI_SL_PIPS = 50;
+    let AI_SL_MODE = 'fixed'; // 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
+    let AI_ATR_MULTIPLIER = 1.5;
     let AI_TP_LAYERS_PIPS = [80, 100, 150];
     function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
     function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * 1; }
@@ -933,6 +935,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const stdev = Math.sqrt(variance);
         return { upper: mean + mult * stdev, lower: mean - mult * stdev, mid: mean };
     }
+    // Average True Range - jarak SL adaptif ikut volatilitas terkini (dipakai kalau AI_SL_MODE === 'atr')
+    function calcATR(candles, period = 14) {
+        if (candles.length < period + 1) return null;
+        const trs = [];
+        for (let i = candles.length - period; i < candles.length; i++) {
+            const c = candles[i], prevClose = candles[i - 1].close;
+            trs.push(Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose)));
+        }
+        return trs.reduce((a, b) => a + b, 0) / period;
+    }
 
     // --- Guard waktu: hindari auto-entry saat market tutup / ada berita high-impact ---
     function isMarketOpen() {
@@ -1063,8 +1075,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const entry = lastClose;
         const dirSign = arah === 'BUY' ? 1 : -1;
-        const sl = entry - dirSign * pipToPrice(AI_SL_PIPS);
-        reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${AI_SL_PIPS} pips (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
+        let slPipsUsed = AI_SL_PIPS;
+        if (AI_SL_MODE === 'atr') {
+            const atr = calcATR(candles, 14);
+            if (atr !== null) slPipsUsed = Math.min(120, Math.max(30, Math.round((atr / AI_PIP_SIZE) * AI_ATR_MULTIPLIER)));
+        }
+        const sl = entry - dirSign * pipToPrice(slPipsUsed);
+        reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${slPipsUsed} pips${AI_SL_MODE === 'atr' ? ' (adaptif ATR)' : ''} (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
 
         let reasonText = reasonParts.join(' ');
         const settings = getAiSettings();
@@ -1072,7 +1089,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const polished = await polishReasonWithLLM(reasonText, settings);
             if (polished) reasonText = polished;
         }
-        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe, signalType };
+        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe, signalType, slPipsUsed };
     }
 
     function findOpenAiTrade() {
@@ -1094,7 +1111,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
         const layers = AI_TP_LAYERS_PIPS.map((tpPips, i) => {
             const layerEntry = sug.entry - sug.dirSign * pipToPrice(i * AI_LAYER_STAGGER_PIPS);
-            return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(AI_SL_PIPS), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+            return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(sug.slPipsUsed), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
         });
         aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: layers[0].sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
         saveData('ai_trade_data_v1', aiTradeData);
@@ -1111,7 +1128,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let AI_DEEP_LOCK_TIMEOUT_MINUTES = 15;
 
     const AI_MASTER_DEFAULTS = {
-        slPips: 50, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
+        slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
         lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
         minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
         newsPreMinutes: 10, newsPostMinutes: 40,
@@ -1123,6 +1140,8 @@ document.addEventListener("DOMContentLoaded", () => {
     function applyMasterSettings() {
         const m = getMasterSettings();
         AI_SL_PIPS = m.slPips;
+        AI_SL_MODE = m.slMode === 'atr' ? 'atr' : 'fixed';
+        AI_ATR_MULTIPLIER = m.atrMultiplier;
         AI_TP_LAYERS_PIPS = (Array.isArray(m.tpLayerPips) && m.tpLayerPips.length === 3) ? m.tpLayerPips : AI_MASTER_DEFAULTS.tpLayerPips;
         AI_LOT_SIZE = m.lotSize;
         AI_LAYER_STAGGER_PIPS = m.layerStaggerPips;
@@ -1143,6 +1162,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-risk-limit-pct').value = m.riskLimitPct;
         document.getElementById('ai-master-risk-period').value = m.riskPeriod;
         document.getElementById('ai-master-sl-pips').value = m.slPips;
+        document.getElementById('ai-master-sl-mode').value = m.slMode;
+        document.getElementById('ai-master-atr-multiplier').value = m.atrMultiplier;
         document.getElementById('ai-master-tp1-pips').value = m.tpLayerPips[0];
         document.getElementById('ai-master-tp2-pips').value = m.tpLayerPips[1];
         document.getElementById('ai-master-tp3-pips').value = m.tpLayerPips[2];
@@ -1171,6 +1192,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const fields = {
             riskLimitPct: readNum('ai-master-risk-limit-pct'),
             slPips: readNum('ai-master-sl-pips'),
+            atrMultiplier: readNum('ai-master-atr-multiplier'),
             tp1: readNum('ai-master-tp1-pips'), tp2: readNum('ai-master-tp2-pips'), tp3: readNum('ai-master-tp3-pips'),
             lotSize: readNum('ai-master-lot-size'),
             layerStaggerPips: readNum('ai-master-layer-stagger-pips'),
@@ -1184,13 +1206,15 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPreMinutes: readNum('ai-master-news-pre-minutes'),
             newsPostMinutes: readNum('ai-master-news-post-minutes')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0;
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0;
         if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
         aiSettings = Object.assign({}, aiSettings, {
             master: {
                 riskLimitPct: fields.riskLimitPct,
                 riskPeriod: document.getElementById('ai-master-risk-period').value,
                 slPips: fields.slPips,
+                slMode: document.getElementById('ai-master-sl-mode').value,
+                atrMultiplier: fields.atrMultiplier,
                 tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
                 lotSize: fields.lotSize,
                 layerStaggerPips: fields.layerStaggerPips,

@@ -52,7 +52,9 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     master: {                  // diatur dari menu "🎛️ Master Setting" - dibaca ulang tiap tick oleh bot VPS (ai-tick.py) & ai-tick.mjs, gak perlu restart bot
       riskLimitPct: number,     // default 10 - CUMA dipakai kotak insight dashboard browser (script.js), TIDAK dipakai bot (gak nge-block entry)
       riskPeriod: "monthly"|"weekly",  // default "monthly" - "weekly" = minggu berjalan sekarang (Senin-Minggu real), bukan minggu dari bulan yang dibrowse
-      slPips: number,                   // default 50
+      slPips: number,                   // default 50 - dipakai kalau slMode "fixed"
+      slMode: "fixed"|"atr",             // default "fixed" - "atr" = SL ikut ATR(14) H1 x atrMultiplier, di-clamp 30-120 pips (clamp hardcode, bukan field)
+      atrMultiplier: number,             // default 1.5 - dipakai kalau slMode "atr"
       tpLayerPips: [number, number, number],  // default [80, 100, 150], index 0/1/2 = layer 1/2/3
       lotSize: number,                   // default 0.1
       layerStaggerPips: number,          // default 10
@@ -118,8 +120,10 @@ Nilai di tabel ini cuma **default** — semuanya (kecuali `AI_PIP_SIZE`) bisa di
 |---|---|---|
 | `AI_PIP_SIZE` | 0.1 | 1 pip = 0.1 harga (XAUUSD) |
 | `AI_LOT_SIZE` | 0.1 | Lot per layer (Cent account Exness) |
-| `AI_SL_PIPS` | 50 | SL awal tiap layer |
-| `AI_TP_LAYERS_PIPS` | [80, 100, 150] | TP per layer index 0/1/2 |
+| `AI_SL_PIPS` | 50 | SL awal tiap layer (dipakai kalau `AI_SL_MODE` "fixed") |
+| `AI_SL_MODE` | "fixed" | "fixed" \| "atr" - "atr" hitung SL dari ATR(14) H1 x `AI_ATR_MULTIPLIER`, di-clamp 30-120 pips (clamp hardcode di kode, bukan setting) |
+| `AI_ATR_MULTIPLIER` | 1.5 | Pengali ATR(14) buat SL, dipakai kalau `AI_SL_MODE` "atr" |
+| `AI_TP_LAYERS_PIPS` | [80, 100, 150] | TP per layer index 0/1/2 (selalu fixed, gak ikut ATR) |
 | `AI_LAYER_STAGGER_PIPS` | 10 | Jarak pending order antar layer |
 | `AI_LOCK_PIPS_AFTER_TP1` | 10 | Kunci profit layer 1&2 begitu layer 0 TP |
 | `AI_DEEP_LOCK_TRIGGER_PIPS` | 100 | Floating profit layer terakhir buat trigger deep-lock |
