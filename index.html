@@ -814,6 +814,10 @@
                 </div>
             </div>
             <div class="master-row"><label>Lot per Layer</label><input type="number" id="ai-master-lot-size" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Satuan Nilai Kontrak</label><select id="ai-master-pip-value-unit" class="master-input wide"><option value="cent">Cent (akun Cent)</option><option value="usd">USD (akun Standard)</option></select></div>
+            <div class="master-row"><label>Nilai per Pip (per 0.1 lot, satuan di atas)</label><input type="number" id="ai-master-pip-value-per-lot" class="master-input" step="0.01" min="0.01"></div>
+            <div id="ai-master-pl-preview" style="background:#0d0d0d; border:1px solid #333; border-radius:6px; padding:10px 14px; margin:4px 0 12px; font-size:0.85rem; line-height:1.6; color:#ccc;"></div>
+            <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Preview pakai angka SL manual di atas — kalau Mode SL Adaptif aktif, SL asli tiap sinyal bisa beda.</p>
             <div class="master-row"><label>Jarak Antar Layer (pips)</label><input type="number" id="ai-master-layer-stagger-pips" class="master-input" step="1" min="1"></div>
 
             <h3 class="master-group-title">🔒 Lock & Deep-Lock</h3>

@@ -45,12 +45,15 @@ AI_MASTER_DEFAULTS = {
     'lockPipsAfterTp1': 10, 'deepLockTriggerPips': 100, 'deepLockPips': 80, 'deepLockTimeoutMinutes': 15,
     'minSignalWinrate': 35, 'winrateLookbackDays': 14, 'winrateMinSamples': 5,
     'newsPreMinutes': 10, 'newsPostMinutes': 40,
+    'pipValueUnit': 'cent', 'pipValuePerLot': 1,
 }
 AI_LOT_SIZE = AI_MASTER_DEFAULTS['lotSize']
 AI_SL_PIPS = AI_MASTER_DEFAULTS['slPips']
 AI_SL_MODE = AI_MASTER_DEFAULTS['slMode']  # 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
 AI_ATR_MULTIPLIER = AI_MASTER_DEFAULTS['atrMultiplier']
 AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS['tpLayerPips']
+AI_PIP_VALUE_UNIT = AI_MASTER_DEFAULTS['pipValueUnit']  # 'cent' | 'usd' - satuan AI_PIP_VALUE_PER_LOT
+AI_PIP_VALUE_PER_LOT = AI_MASTER_DEFAULTS['pipValuePerLot']
 AI_LAYER_STAGGER_PIPS = AI_MASTER_DEFAULTS['layerStaggerPips']
 AI_LOCK_PIPS_AFTER_TP1 = AI_MASTER_DEFAULTS['lockPipsAfterTp1']
 AI_DEEP_LOCK_TRIGGER_PIPS = AI_MASTER_DEFAULTS['deepLockTriggerPips']
@@ -68,6 +71,7 @@ def apply_ai_settings(master):
     global AI_DEEP_LOCK_TRIGGER_PIPS, AI_DEEP_LOCK_PIPS, AI_DEEP_LOCK_TIMEOUT_MINUTES
     global AI_MIN_SIGNAL_WINRATE, AI_WINRATE_LOOKBACK_DAYS, AI_WINRATE_MIN_SAMPLES
     global AI_NEWS_PRE_MINUTES, AI_NEWS_POST_MINUTES
+    global AI_PIP_VALUE_UNIT, AI_PIP_VALUE_PER_LOT
     master = master or {}
     tp_layers = master.get('tpLayerPips')
     if not (isinstance(tp_layers, list) and len(tp_layers) == 3 and all(isinstance(x, (int, float)) for x in tp_layers)):
@@ -77,6 +81,8 @@ def apply_ai_settings(master):
     AI_SL_MODE = 'atr' if master.get('slMode') == 'atr' else 'fixed'
     AI_ATR_MULTIPLIER = master.get('atrMultiplier', AI_MASTER_DEFAULTS['atrMultiplier'])
     AI_TP_LAYERS_PIPS = tp_layers
+    AI_PIP_VALUE_UNIT = 'usd' if master.get('pipValueUnit') == 'usd' else 'cent'
+    AI_PIP_VALUE_PER_LOT = master.get('pipValuePerLot', AI_MASTER_DEFAULTS['pipValuePerLot'])
     AI_LAYER_STAGGER_PIPS = master.get('layerStaggerPips', AI_MASTER_DEFAULTS['layerStaggerPips'])
     AI_LOCK_PIPS_AFTER_TP1 = master.get('lockPipsAfterTp1', AI_MASTER_DEFAULTS['lockPipsAfterTp1'])
     AI_DEEP_LOCK_TRIGGER_PIPS = master.get('deepLockTriggerPips', AI_MASTER_DEFAULTS['deepLockTriggerPips'])
@@ -141,11 +147,13 @@ def pip_to_price(pips):
 
 
 def calc_layer_pl_usc(pips):
-    return pips * (AI_LOT_SIZE / 0.1) * 1
+    return pips * (AI_LOT_SIZE / 0.1) * AI_PIP_VALUE_PER_LOT
 
 
+# Nama fungsi dipertahankan "usc" apa adanya (dipanggil di banyak tempat) - sekarang unit-aware lewat AI_PIP_VALUE_UNIT.
 def usc_to_rupiah(usc, kurs):
-    return (usc / 100) * kurs
+    usd = usc if AI_PIP_VALUE_UNIT == 'usd' else usc / 100
+    return usd * kurs
 
 
 def calc_sma(closes, period):

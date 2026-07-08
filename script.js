@@ -777,9 +777,12 @@ document.addEventListener("DOMContentLoaded", () => {
     let AI_SL_MODE = 'fixed'; // 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
     let AI_ATR_MULTIPLIER = 1.5;
     let AI_TP_LAYERS_PIPS = [80, 100, 150];
+    let AI_PIP_VALUE_UNIT = 'cent'; // 'cent' | 'usd' - satuan AI_PIP_VALUE_PER_LOT
+    let AI_PIP_VALUE_PER_LOT = 1; // nilai 1 pip pada lot referensi 0.1, dalam AI_PIP_VALUE_UNIT
     function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
-    function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * 1; }
-    function uscToRupiah(usc) { return (usc / 100) * liveKursIDR; }
+    function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * AI_PIP_VALUE_PER_LOT; }
+    // Nama fungsi dipertahankan "usc" apa adanya (dipanggil di banyak tempat) - sekarang unit-aware lewat AI_PIP_VALUE_UNIT.
+    function uscToRupiah(usc) { const usd = AI_PIP_VALUE_UNIT === 'usd' ? usc : usc / 100; return usd * liveKursIDR; }
 
     function getAiSettings() {
         return aiSettings;
@@ -1132,7 +1135,8 @@ document.addEventListener("DOMContentLoaded", () => {
         lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
         minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
         newsPreMinutes: 10, newsPostMinutes: 40,
-        riskLimitPct: 10, riskPeriod: 'monthly'
+        riskLimitPct: 10, riskPeriod: 'monthly',
+        pipValueUnit: 'cent', pipValuePerLot: 1
     };
     function getMasterSettings() {
         return Object.assign({}, AI_MASTER_DEFAULTS, (aiSettings && aiSettings.master) || {});
@@ -1144,6 +1148,8 @@ document.addEventListener("DOMContentLoaded", () => {
         AI_ATR_MULTIPLIER = m.atrMultiplier;
         AI_TP_LAYERS_PIPS = (Array.isArray(m.tpLayerPips) && m.tpLayerPips.length === 3) ? m.tpLayerPips : AI_MASTER_DEFAULTS.tpLayerPips;
         AI_LOT_SIZE = m.lotSize;
+        AI_PIP_VALUE_UNIT = m.pipValueUnit === 'usd' ? 'usd' : 'cent';
+        AI_PIP_VALUE_PER_LOT = m.pipValuePerLot;
         AI_LAYER_STAGGER_PIPS = m.layerStaggerPips;
         AI_LOCK_PIPS_AFTER_TP1 = m.lockPipsAfterTp1;
         AI_DEEP_LOCK_TRIGGER_PIPS = m.deepLockTriggerPips;
@@ -1167,6 +1173,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-tp1-pips').value = m.tpLayerPips[0];
         document.getElementById('ai-master-tp2-pips').value = m.tpLayerPips[1];
         document.getElementById('ai-master-tp3-pips').value = m.tpLayerPips[2];
+        document.getElementById('ai-master-pip-value-unit').value = m.pipValueUnit;
+        document.getElementById('ai-master-pip-value-per-lot').value = m.pipValuePerLot;
         document.getElementById('ai-master-lot-size').value = m.lotSize;
         document.getElementById('ai-master-layer-stagger-pips').value = m.layerStaggerPips;
         document.getElementById('ai-master-lock-pips-after-tp1').value = m.lockPipsAfterTp1;
@@ -1179,7 +1187,29 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-news-pre-minutes').value = m.newsPreMinutes;
         document.getElementById('ai-master-news-post-minutes').value = m.newsPostMinutes;
         document.getElementById('ai-master-modal').style.display = 'flex';
+        updateAiMasterPreview();
     };
+
+    function updateAiMasterPreview() {
+        const readNum = (id) => parseFloat(document.getElementById(id).value);
+        const lot = readNum('ai-master-lot-size');
+        const slPips = readNum('ai-master-sl-pips');
+        const tp1 = readNum('ai-master-tp1-pips'), tp2 = readNum('ai-master-tp2-pips'), tp3 = readNum('ai-master-tp3-pips');
+        const unit = document.getElementById('ai-master-pip-value-unit').value;
+        const pipValue = readNum('ai-master-pip-value-per-lot');
+        const el = document.getElementById('ai-master-pl-preview');
+        if ([lot, slPips, tp1, tp2, tp3, pipValue].some(v => isNaN(v) || v <= 0)) { el.innerHTML = '<span style="color:#888;">Isi semua field lot/SL/TP/nilai-pip dulu buat lihat preview.</span>'; return; }
+        const toRp = (pips) => { const amount = pips * (lot / 0.1) * pipValue; const usd = unit === 'usd' ? amount : amount / 100; return usd * liveKursIDR; };
+        el.innerHTML = `Preview nilai (lot ${lot}, kurs saat ini):<br>` +
+            `SL &nbsp;&nbsp;&nbsp;: <span class="loss-text">-${formatRupiah(toRp(slPips))}</span><br>` +
+            `TP L1 : <span class="profit-text">+${formatRupiah(toRp(tp1))}</span><br>` +
+            `TP L2 : <span class="profit-text">+${formatRupiah(toRp(tp2))}</span><br>` +
+            `TP L3 : <span class="profit-text">+${formatRupiah(toRp(tp3))}</span>`;
+    }
+    ['ai-master-lot-size', 'ai-master-sl-pips', 'ai-master-tp1-pips', 'ai-master-tp2-pips', 'ai-master-tp3-pips', 'ai-master-pip-value-per-lot'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateAiMasterPreview);
+    });
+    document.getElementById('ai-master-pip-value-unit').addEventListener('change', updateAiMasterPreview);
     document.getElementById('btn-reset-ai-master').onclick = () => {
         aiSettings = Object.assign({}, aiSettings, { master: Object.assign({}, AI_MASTER_DEFAULTS) });
         saveData('ai_settings_v1', aiSettings);
@@ -1194,6 +1224,7 @@ document.addEventListener("DOMContentLoaded", () => {
             slPips: readNum('ai-master-sl-pips'),
             atrMultiplier: readNum('ai-master-atr-multiplier'),
             tp1: readNum('ai-master-tp1-pips'), tp2: readNum('ai-master-tp2-pips'), tp3: readNum('ai-master-tp3-pips'),
+            pipValuePerLot: readNum('ai-master-pip-value-per-lot'),
             lotSize: readNum('ai-master-lot-size'),
             layerStaggerPips: readNum('ai-master-layer-stagger-pips'),
             lockPipsAfterTp1: readNum('ai-master-lock-pips-after-tp1'),
@@ -1206,7 +1237,7 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPreMinutes: readNum('ai-master-news-pre-minutes'),
             newsPostMinutes: readNum('ai-master-news-post-minutes')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0;
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0;
         if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
         aiSettings = Object.assign({}, aiSettings, {
             master: {
@@ -1216,6 +1247,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 slMode: document.getElementById('ai-master-sl-mode').value,
                 atrMultiplier: fields.atrMultiplier,
                 tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
+                pipValueUnit: document.getElementById('ai-master-pip-value-unit').value,
+                pipValuePerLot: fields.pipValuePerLot,
                 lotSize: fields.lotSize,
                 layerStaggerPips: fields.layerStaggerPips,
                 lockPipsAfterTp1: fields.lockPipsAfterTp1,

@@ -56,6 +56,8 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       slMode: "fixed"|"atr",             // default "fixed" - "atr" = SL ikut ATR(14) H1 x atrMultiplier, di-clamp 30-120 pips (clamp hardcode, bukan field)
       atrMultiplier: number,             // default 1.5 - dipakai kalau slMode "atr"
       tpLayerPips: [number, number, number],  // default [80, 100, 150], index 0/1/2 = layer 1/2/3
+      pipValueUnit: "cent"|"usd",        // default "cent" - satuan pipValuePerLot. Kalibrasi sekarang khusus akun Cent user, GANTI MANUAL (bukan konversi otomatis) kalau pindah jenis akun, ambil angkanya dari spesifikasi kontrak simbol di broker
+      pipValuePerLot: number,            // default 1 - nilai 1 pip pada lot referensi 0.1, dalam satuan pipValueUnit (default: 1 Cent per 0.1 lot, sesuai akun Cent)
       lotSize: number,                   // default 0.1
       layerStaggerPips: number,          // default 10
       lockPipsAfterTp1: number,          // default 10

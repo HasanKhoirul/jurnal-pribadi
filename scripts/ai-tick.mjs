@@ -26,17 +26,21 @@ const AI_MASTER_DEFAULTS = {
     slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
     lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
     minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
-    newsPreMinutes: 10, newsPostMinutes: 40
+    newsPreMinutes: 10, newsPostMinutes: 40,
+    pipValueUnit: 'cent', pipValuePerLot: 1
 };
 let AI_LOT_SIZE = AI_MASTER_DEFAULTS.lotSize;
 let AI_SL_PIPS = AI_MASTER_DEFAULTS.slPips;
 let AI_SL_MODE = AI_MASTER_DEFAULTS.slMode; // 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
 let AI_ATR_MULTIPLIER = AI_MASTER_DEFAULTS.atrMultiplier;
 let AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS.tpLayerPips;
+let AI_PIP_VALUE_UNIT = AI_MASTER_DEFAULTS.pipValueUnit; // 'cent' | 'usd' - satuan AI_PIP_VALUE_PER_LOT
+let AI_PIP_VALUE_PER_LOT = AI_MASTER_DEFAULTS.pipValuePerLot;
 
 function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
-function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * 1; }
-function uscToRupiah(usc, liveKursIDR) { return (usc / 100) * liveKursIDR; }
+function calcLayerPlUsc(pips) { return pips * (AI_LOT_SIZE / 0.1) * AI_PIP_VALUE_PER_LOT; }
+// Nama fungsi dipertahankan "usc" apa adanya (dipanggil di banyak tempat) - sekarang unit-aware lewat AI_PIP_VALUE_UNIT.
+function uscToRupiah(usc, liveKursIDR) { const usd = AI_PIP_VALUE_UNIT === 'usd' ? usc : usc / 100; return usd * liveKursIDR; }
 
 function calcSMA(closes, period) {
     if (closes.length < period) return null;
@@ -261,6 +265,8 @@ function applyAiSettings(master) {
     AI_SL_MODE = master.slMode === 'atr' ? 'atr' : 'fixed';
     AI_ATR_MULTIPLIER = master.atrMultiplier ?? AI_MASTER_DEFAULTS.atrMultiplier;
     AI_TP_LAYERS_PIPS = tpLayers;
+    AI_PIP_VALUE_UNIT = master.pipValueUnit === 'usd' ? 'usd' : 'cent';
+    AI_PIP_VALUE_PER_LOT = master.pipValuePerLot ?? AI_MASTER_DEFAULTS.pipValuePerLot;
     AI_LAYER_STAGGER_PIPS = master.layerStaggerPips ?? AI_MASTER_DEFAULTS.layerStaggerPips;
     AI_LOCK_PIPS_AFTER_TP1 = master.lockPipsAfterTp1 ?? AI_MASTER_DEFAULTS.lockPipsAfterTp1;
     AI_DEEP_LOCK_TRIGGER_PIPS = master.deepLockTriggerPips ?? AI_MASTER_DEFAULTS.deepLockTriggerPips;
