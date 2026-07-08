@@ -1475,7 +1475,7 @@ document.addEventListener("DOMContentLoaded", () => {
         waiting: { emoji: '⚪', label: 'Nunggu' }, no_signal: { emoji: '⚪', label: 'Gak Ada Sinyal' }, market_closed: { emoji: '⚪', label: 'Market Tutup' }, news_block: { emoji: '⚪', label: 'Ditahan (Berita)' },
         error: { emoji: '❌', label: 'Gagal' }, manual_reset: { emoji: '🗑️', label: 'Reset Manual' }
     };
-    const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close']);
+    const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close', 'restart']);
     const AI_LOG_FAIL_SET = new Set(['error']);
     function categorizeAiLog(outcome) { return AI_LOG_SUCCESS_SET.has(outcome) ? 'success' : AI_LOG_FAIL_SET.has(outcome) ? 'fail' : 'nihil'; }
 

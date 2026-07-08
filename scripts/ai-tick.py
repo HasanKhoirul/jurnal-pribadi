@@ -629,7 +629,7 @@ def handle_restart_request():
         }}, merge=True)
     except Exception as e:
         log(f"Gagal update status botControl: {e}")
-    log_ai_tick('restart', result_msg)
+    log_ai_tick('restart' if success else 'error', result_msg)
 
     if success:
         log("Update berhasil, restart proses...")
