@@ -273,6 +273,25 @@
                             <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="ai-highest-loss-pl" class="loss-text">Rp 0</h3><p id="ai-highest-loss-desc" class="desc-text">-</p></div>
                         </div>
 
+                        <div class="chart-grid">
+                            <div class="chart-card" style="display: flex; flex-direction: column;">
+                                <h3 class="chart-title">Grafik P/L Harian</h3>
+                                <div style="flex-grow: 1; position: relative; min-height: 250px;">
+                                    <canvas id="ai-plChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card" style="text-align: center;">
+                                <h3 class="chart-title">Win Rate</h3>
+                                <div style="position: relative; width: 100%; max-width: 250px; margin: 0 auto;">
+                                    <canvas id="ai-winRateChart"></canvas>
+                                    <div id="ai-win-rate-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; color: #fff; display: flex; flex-direction: column; gap: 5px;">
+                                        <span style="font-size: 1.5rem;">0% Win</span>
+                                        <span style="font-size: 1.1rem; color: #ff1744;">0% Loss</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="table-container"><h3 class="chart-title" style="margin-bottom:15px;">Detail Entry Simulasi</h3>
                         <table class="data-table"><thead><tr><th>No</th><th>Tanggal</th><th>Arah</th><th>Entry</th><th>SL</th><th>TP</th><th>Alasan</th><th style="text-align:right;">P/L (Rp)</th></tr></thead><tbody id="ai-dashboard-table-body"></tbody></table></div>
                     </div>

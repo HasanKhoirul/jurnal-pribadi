@@ -1647,29 +1647,33 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --- Dashboard evaluasi ---
+    let aiPlChartInstance = null; let aiWinRateChartInstance = null;
     function renderAiDashboard() {
         const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
         document.getElementById('ai-dash-month-year-display').innerText = `${monthNames[m]} ${y}`;
 
-        let monthHasData = false; let monthPl = 0; let winCount = 0;
+        let monthHasData = false; let monthPl = 0; let winCount = 0; let lossCount = 0;
         let maxWin = { pl: 0, date: '-', detail: '-' }; let maxLoss = { pl: 0, date: '-', detail: '-' };
         const firstDay = new Date(y, m, 1).getDay(); const daysInMonth = new Date(y, m + 1, 0).getDate();
         let weeklyReports = []; for (let i = 0; i < Math.ceil((firstDay + daysInMonth) / 7); i++) weeklyReports.push({ wins: 0, losses: 0, pl: 0, hasData: false });
         let tableRows = [];
+        let chartLabels = [], profitDataArr = [], lossDataArr = [];
 
         for (let i = 1; i <= daysInMonth; i++) {
             const fDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
             const trades = aiTradeData[fDate] || []; let wIdx = Math.floor((firstDay + i - 1) / 7);
             if (trades.length > 0) {
                 monthHasData = true; weeklyReports[wIdx].hasData = true;
+                let dailyProfit = 0, dailyLoss = 0;
                 trades.forEach(t => {
                     let p = parseFloat(t.pl || 0); monthPl += p;
-                    if (t.status === 'closed') { if (p >= 0) { winCount++; weeklyReports[wIdx].wins++; } else { weeklyReports[wIdx].losses++; } }
+                    if (t.status === 'closed') { if (p >= 0) { winCount++; weeklyReports[wIdx].wins++; dailyProfit += p; } else { lossCount++; weeklyReports[wIdx].losses++; dailyLoss += p; } }
                     weeklyReports[wIdx].pl += p;
                     if (p > maxWin.pl) maxWin = { pl: p, date: fDate, detail: t.alasan };
                     if (p < maxLoss.pl) maxLoss = { pl: p, date: fDate, detail: t.alasan };
                     tableRows.push({ date: fDate, ...t, plVal: p });
                 });
+                chartLabels.push(`Tgl ${i}`); profitDataArr.push(dailyProfit); lossDataArr.push(dailyLoss);
             }
         }
 
@@ -1714,6 +1718,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
         document.getElementById('ai-highest-win-pl').innerText = maxWin.pl > 0 ? `+${formatRupiah(maxWin.pl)}` : 'Rp 0'; document.getElementById('ai-highest-win-desc').innerText = maxWin.date !== '-' ? `[${maxWin.date}] ${maxWin.detail}` : '-';
         document.getElementById('ai-highest-loss-pl').innerText = maxLoss.pl < 0 ? formatRupiah(maxLoss.pl) : 'Rp 0'; document.getElementById('ai-highest-loss-desc').innerText = maxLoss.date !== '-' ? `[${maxLoss.date}] ${maxLoss.detail}` : '-';
+
+        if (aiPlChartInstance) aiPlChartInstance.destroy();
+        aiPlChartInstance = new Chart(document.getElementById('ai-plChart').getContext('2d'), {
+            type: 'bar',
+            data: { labels: chartLabels, datasets: [
+                { label: 'Total Profit', data: profitDataArr, backgroundColor: '#00e676', borderRadius: 4 },
+                { label: 'Total Loss', data: lossDataArr, backgroundColor: '#ff1744', borderRadius: 4 }
+            ]},
+            options: {
+                maintainAspectRatio: false,
+                scales: { x: { stacked: true }, y: { stacked: true } },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { footer: function(tooltipItems) { let total = 0; tooltipItems.forEach(function(ti) { total += ti.parsed.y; }); return 'Net P/L: ' + formatRupiah(total); } } }
+                }
+            }
+        });
+
+        if (aiWinRateChartInstance) aiWinRateChartInstance.destroy();
+        aiWinRateChartInstance = new Chart(document.getElementById('ai-winRateChart').getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: ['Win', 'Loss'], datasets: [{ data: [winCount, lossCount], backgroundColor: ['#00e676', '#ff1744'], borderWidth: 0 }] },
+            options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+        let aiWinPct = closedTrades.length > 0 ? Math.round((winCount / closedTrades.length) * 100) : 0;
+        let aiLossPct = closedTrades.length > 0 ? 100 - aiWinPct : 0;
+        document.getElementById('ai-win-rate-text').innerHTML = `<span style="font-size:1.5rem;">${aiWinPct}% Win</span><span style="font-size:1.1rem; color:#ff1744;">${aiLossPct}% Loss</span>`;
 
         const tbody = document.getElementById('ai-dashboard-table-body'); tbody.innerHTML = tableRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
         tableRows.forEach((e, i) => {
