@@ -7,8 +7,10 @@
 # biar web app (script.js) tetap bisa baca/render tanpa perubahan.
 
 import os
+import sys
 import time
 import math
+import subprocess
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -603,6 +605,42 @@ def log_ai_tick(outcome, detail=''):
         log(f"Gagal simpan log tick: {e}")
 
 
+# Dipicu tombol "Restart Bot (VPS)" di web (nulis botControl.restartRequested lewat Firestore).
+# git pull + restart diri sendiri pakai kode baru - kalau pull gagal, bot TETAP jalan pakai kode lama (gak mati total).
+def handle_restart_request():
+    now = datetime.now(timezone.utc)
+    log("Restart diminta dari web, ambil kode terbaru...")
+    send_telegram("🔄 Restart diminta dari web, ambil kode terbaru...")
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        result = subprocess.run(['git', 'pull'], cwd=repo_root, capture_output=True, text=True, timeout=30)
+        success = result.returncode == 0
+        result_msg = 'success' if success else f'failed: {result.stderr[:200]}'
+    except Exception as e:
+        success = False
+        result_msg = f'failed: {e}'
+
+    try:
+        doc_ref.set({'botControl': {
+            'restartRequested': False,
+            'lastRestartAt': now.isoformat(),
+            'lastRestartResult': result_msg,
+        }}, merge=True)
+    except Exception as e:
+        log(f"Gagal update status botControl: {e}")
+    log_ai_tick('restart', result_msg)
+
+    if success:
+        log("Update berhasil, restart proses...")
+        send_telegram("✅ Update berhasil, bot restart pakai kode terbaru...")
+        mt5.shutdown()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        log(f"Restart gagal: {result_msg}. Bot lanjut jalan pakai kode lama.")
+        send_telegram(f"⚠️ Restart gagal: {result_msg}. Bot lanjut jalan pakai kode lama.")
+
+
 # ---------- State di memori, direfresh tiap loop dari Firestore ----------
 _news_cache = {'checked_at': None, 'result': None}
 
@@ -638,6 +676,10 @@ def run_fast_tick():
     ai_trade_data = data.get('aiTradeData', {})
     ai_modal_awal = data.get('aiModalAwal', 2500000)
     apply_ai_settings((data.get('aiSettings') or {}).get('master'))
+
+    if (data.get('botControl') or {}).get('restartRequested'):
+        handle_restart_request()
+        return
 
     open_info = find_open_ai_trade(ai_trade_data)
     if not open_info:

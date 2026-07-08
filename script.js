@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiModalAwal = parseFloat(localStorage.getItem('ai_modal_awal')) || 2500000;
     const defaultAiSettings = { twelvedata: localStorage.getItem('ai_key_twelvedata') || '', llmProvider: localStorage.getItem('ai_llm_provider') || 'none', llmKey: localStorage.getItem('ai_key_llm') || '' };
     let aiSettings = JSON.parse(localStorage.getItem('ai_settings_v1')) || defaultAiSettings;
+    let botControl = JSON.parse(localStorage.getItem('ai_bot_control_v1')) || {};
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
@@ -37,7 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
         localStorage.setItem(key, JSON.stringify(obj));
         clearTimeout(pushTimer);
         pushTimer = setTimeout(() => {
-            if (key === 'expense_data_v1' || key === 'wealth_data_v1' || key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_settings_v1') pushPrivateToCloud();
+            if (key === 'expense_data_v1' || key === 'wealth_data_v1' || key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_settings_v1' || key === 'ai_bot_control_v1') pushPrivateToCloud();
             else pushPublicToCloud();
         }, 800);
     }
@@ -50,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function pushPrivateToCloud() {
         if (!auth.currentUser) return Promise.resolve();
-        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal, aiSettings })
+        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal, aiSettings, botControl })
             .catch(err => { console.error('Gagal sync data privat ke cloud:', err); throw err; });
     }
 
@@ -75,9 +76,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 expData = d.expData || {}; wealthData = d.wealthData || defaultWealthHistory;
                 aiTradeData = d.aiTradeData || {}; aiModalAwal = d.aiModalAwal || 2500000;
                 aiSettings = d.aiSettings || defaultAiSettings;
+                botControl = d.botControl || {};
                 localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 localStorage.setItem('ai_settings_v1', JSON.stringify(aiSettings));
+                localStorage.setItem('ai_bot_control_v1', JSON.stringify(botControl));
                 applyMasterSettings();
                 rerenderActiveSection();
             }
@@ -1267,6 +1270,15 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-modal').style.display = 'none';
         renderAiDashboard();
         alert(auth.currentUser ? 'Master Setting tersimpan & disinkronkan — otomatis kepakai bot VPS dalam ~10 detik.' : 'Master Setting tersimpan di device ini (login dulu biar sync ke bot VPS).');
+    };
+
+    // Kirim sinyal restart ke bot VPS lewat Firestore (botControl) - bot yang lagi jalan yang deteksi & eksekusi git pull + restart sendiri tiap fast-loop.
+    // Kalau proses bot lagi mati total, sinyal ini nunggu doang sampai bot dinyalain manual lagi (gak ada yang baca kalau gak ada proses hidup).
+    document.getElementById('btn-ai-restart-bot').onclick = () => {
+        if (!confirm('Restart bot VPS sekarang? Bot bakal ambil kode terbaru & jalan ulang otomatis dalam ~10 detik (cuma jalan kalau proses bot lagi hidup).')) return;
+        botControl = { restartRequested: true, requestedAt: new Date().toISOString() };
+        saveData('ai_bot_control_v1', botControl);
+        alert('Sinyal restart terkirim. Cek tab Log Aktivitas dalam ~30 detik buat konfirmasi hasilnya.');
     };
 
     // Paksa tutup semua layer yang masih open di harga market sekarang (dipakai buat news guard, pola sama kayak timeout).

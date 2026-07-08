@@ -71,6 +71,12 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       newsPostMinutes: number            // default 40
     }
   },
+  botControl: {                // command channel ke bot VPS (BUKAN setting kayak aiSettings) - dipicu tombol "🔄 Restart Bot (VPS)" di web
+    restartRequested: boolean,  // true = ada permintaan restart yang belum diproses. Cuma efektif kalau proses ai-tick.py lagi HIDUP - kalau bot mati total, sinyal ini nunggu doang sampai dinyalain manual
+    requestedAt: string (ISO),
+    lastRestartAt: string (ISO) | null,   // diisi bot setelah selesai proses (git pull + restart diri sendiri via os.execv)
+    lastRestartResult: string | null      // "success" | "failed: <pesan git pull>"
+  },
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiTradeData: {
     "YYYY-MM-DD": [
