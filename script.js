@@ -1154,7 +1154,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let tpPipsUsed = [...AI_TP_LAYERS_PIPS];
         let deepLockTriggerPipsUsed = AI_DEEP_LOCK_TRIGGER_PIPS;
         let deepLockPipsUsed = AI_DEEP_LOCK_PIPS;
-        if (AI_TP_MODE === 'adaptive') {
+        if (AI_TP_MODE === 'adaptive' && AI_SL_PIPS > 0) {
             tpPipsUsed = AI_TP_LAYERS_PIPS.map(tp => Math.round(slPipsUsed * (tp / AI_SL_PIPS)));
             deepLockTriggerPipsUsed = Math.round(slPipsUsed * (AI_DEEP_LOCK_TRIGGER_PIPS / AI_SL_PIPS));
             deepLockPipsUsed = Math.round(slPipsUsed * (AI_DEEP_LOCK_PIPS / AI_SL_PIPS));

@@ -11,6 +11,8 @@ import sys
 import time
 import math
 import subprocess
+import threading
+import copy
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -373,7 +375,7 @@ def compute_ai_suggestion(candles, trade_data):
     tp_pips_used = list(AI_TP_LAYERS_PIPS)
     deep_lock_trigger_used = AI_DEEP_LOCK_TRIGGER_PIPS
     deep_lock_pips_used = AI_DEEP_LOCK_PIPS
-    if AI_TP_MODE == 'adaptive':
+    if AI_TP_MODE == 'adaptive' and AI_SL_PIPS > 0:
         tp_pips_used = [round(sl_pips_used * (tp / AI_SL_PIPS)) for tp in AI_TP_LAYERS_PIPS]
         deep_lock_trigger_used = round(sl_pips_used * (AI_DEEP_LOCK_TRIGGER_PIPS / AI_SL_PIPS))
         deep_lock_pips_used = round(sl_pips_used * (AI_DEEP_LOCK_PIPS / AI_SL_PIPS))
@@ -736,21 +738,43 @@ def send_periodic_summary(ai_trade_data, tick):
     send_telegram(f"📊 <b>P/L Keseluruhan</b>\n\n{format_rupiah(all_pl)} dari {all_n} entry closed.")
 
 
+# Kirim summary di thread terpisah - 4x send_telegram() berurutan (masing2 bisa timeout 10 detik)
+# gak boleh nge-block fast loop yang harus tetap tiap-tick cek SL/TP/deep-lock.
+_summary_in_flight = False
+
+
 def maybe_send_summary(ai_trade_data, bot_control, tick, now):
+    global _summary_in_flight
+    if _summary_in_flight:
+        return  # masih ada kiriman summary sebelumnya yang belum kelar, jangan numpuk
+
     manual = bool(bot_control.get('summaryRequested'))
     last_at_str = bot_control.get('lastSummaryAt')
     due = True
     if last_at_str and not manual:
-        elapsed_hours = (now - datetime.fromisoformat(last_at_str)).total_seconds() / 3600
-        due = elapsed_hours >= AI_SUMMARY_INTERVAL_HOURS
+        try:
+            elapsed_hours = (now - datetime.fromisoformat(last_at_str)).total_seconds() / 3600
+            due = elapsed_hours >= AI_SUMMARY_INTERVAL_HOURS
+        except Exception:
+            due = True
     if not (manual or due):
         return
-    send_periodic_summary(ai_trade_data, tick)
-    try:
-        doc_ref.set({'botControl': {'summaryRequested': False, 'lastSummaryAt': now.isoformat()}}, merge=True)
-    except Exception as e:
-        log(f"Gagal update status summary: {e}")
-    log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
+
+    _summary_in_flight = True
+    trade_data_snapshot = copy.deepcopy(ai_trade_data)  # putus dari ai_trade_data asli - fast loop terus mutasi itu setelah ini return
+
+    def _worker():
+        global _summary_in_flight
+        try:
+            send_periodic_summary(trade_data_snapshot, tick)
+            doc_ref.set({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}, merge=True)
+            log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
+        except Exception as e:
+            log(f"Gagal kirim/update status summary: {e}")
+        finally:
+            _summary_in_flight = False
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 # ---------- State di memori, direfresh tiap loop dari Firestore ----------
