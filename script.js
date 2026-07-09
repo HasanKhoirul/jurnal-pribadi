@@ -62,7 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; sportData = d.sportData || {};
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
                 if (d.aiLiveCandlesMt5 && d.aiLiveCandlesMt5.length) { aiLiveCandlesMt5 = d.aiLiveCandlesMt5; aiLiveCandlesMt5UpdatedAt = d.aiLiveCandlesMt5UpdatedAt || null; }
-                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; updateLivePriceBox(); updateLastCandleWithLivePrice(); }
+                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; updateLivePriceBox(); updateLastCandleWithLivePrice(); updateTrendSummary(); }
                 rerenderActiveSection();
             }
         }, err => console.error('Gagal ambil data publik dari cloud:', err));
@@ -864,6 +864,7 @@ document.addEventListener("DOMContentLoaded", () => {
             aiCandleSeries.setData(candles.map(c => ({ time: Math.floor(new Date(c.time).getTime() / 1000), open: c.open, high: c.high, low: c.low, close: c.close })));
             const openInfo = findOpenAiTrade();
             if (openInfo) updateTradeLines(openInfo.trade); else clearAiPriceLines();
+            updateTrendSummary();
         });
     }
 
@@ -876,6 +877,34 @@ document.addEventListener("DOMContentLoaded", () => {
         const c = candles || lastAiCandles;
         if (aiLivePriceMt5 && liveAgeSec <= AI_LIVE_PRICE_MAX_AGE_SECONDS) priceEl.innerText = parseFloat(aiLivePriceMt5).toFixed(2);
         else if (c && c.length) priceEl.innerText = c[c.length - 1].close.toFixed(2);
+    }
+
+    // Summary Trend/RSI/MACD di tab Live Market - reuse persis fungsi hitung yang sama dipakai bot buat nentuin sinyal
+    // (calcSMA/calcRSI/calcMACD), jadi ini literally "apa yang bot lihat sekarang", bukan indikator terpisah.
+    function updateTrendSummary() {
+        const trendEl = document.getElementById('ai-trend-summary-trend');
+        if (!trendEl || !lastAiCandles || lastAiCandles.length < 35) return;
+        const rsiEl = document.getElementById('ai-trend-summary-rsi');
+        const macdEl = document.getElementById('ai-trend-summary-macd');
+        const closes = lastAiCandles.map(c => c.close);
+        const ma20 = calcSMA(closes, 20), ma50 = calcSMA(closes, 50), rsi = calcRSI(closes, 14), macd = calcMACD(closes);
+        if (ma20 !== null && ma50 !== null) {
+            const up = ma20 > ma50;
+            trendEl.innerHTML = up ? '📈 Naik' : '📉 Turun';
+            trendEl.className = up ? 'profit-text' : 'loss-text';
+        }
+        if (rsi !== null) {
+            const extreme = rsi >= 70 || rsi <= 30;
+            const zone = rsi >= 70 ? 'Overbought' : rsi <= 30 ? 'Oversold' : 'Netral';
+            rsiEl.innerHTML = `${rsi.toFixed(1)} <span style="font-size:0.6em;">(${zone})</span>`;
+            rsiEl.className = extreme ? '' : 'netral';
+            rsiEl.style.color = extreme ? '#ff9800' : '';
+        }
+        if (macd) {
+            const bullish = macd.macd > macd.signal;
+            macdEl.innerHTML = bullish ? '🐂 Bullish' : '🐻 Bearish';
+            macdEl.className = bullish ? 'profit-text' : 'loss-text';
+        }
     }
 
     // "Napasin" candle terakhir pakai harga tick live (update tiap ~10 detik dari bot, gratis - gak nambah write Firestore
