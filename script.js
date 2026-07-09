@@ -62,7 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; sportData = d.sportData || {};
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
                 if (d.aiLiveCandlesMt5 && d.aiLiveCandlesMt5.length) { aiLiveCandlesMt5 = d.aiLiveCandlesMt5; aiLiveCandlesMt5UpdatedAt = d.aiLiveCandlesMt5UpdatedAt || null; }
-                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; updateLastCandleWithLivePrice(); }
+                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; updateLivePriceBox(); updateLastCandleWithLivePrice(); }
                 rerenderActiveSection();
             }
         }, err => console.error('Gagal ambil data publik dari cloud:', err));
@@ -867,6 +867,17 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Satu-satunya tempat yang nulis ke kotak "Harga Sekarang" - dipanggil tiap ada tick baru (~10 detik) DAN dari updateLiveStatsBoxes,
+    // biar gak ada 2 sumber logic yang bisa nyimpang kayak sebelumnya (kotak vs chart beda angka).
+    function updateLivePriceBox(candles) {
+        const priceEl = document.getElementById('ai-live-price');
+        if (!priceEl) return;
+        const liveAgeSec = aiLivePriceMt5UpdatedAt ? (Date.now() - new Date(aiLivePriceMt5UpdatedAt).getTime()) / 1000 : Infinity;
+        const c = candles || lastAiCandles;
+        if (aiLivePriceMt5 && liveAgeSec <= AI_LIVE_PRICE_MAX_AGE_SECONDS) priceEl.innerText = parseFloat(aiLivePriceMt5).toFixed(2);
+        else if (c && c.length) priceEl.innerText = c[c.length - 1].close.toFixed(2);
+    }
+
     // "Napasin" candle terakhir pakai harga tick live (update tiap ~10 detik dari bot, gratis - gak nambah write Firestore
     // kayak kalau full candle array di-push lebih sering). Cuma jalan kalau chart lagi nampilin candle MT5 (bukan TwelveData historis).
     function updateLastCandleWithLivePrice() {
@@ -1537,13 +1548,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updateLiveStatsBoxes(openInfo, candles) {
-        const priceEl = document.getElementById('ai-live-price');
         const entryEl = document.getElementById('ai-live-entry');
         const totalEl = document.getElementById('ai-live-total-pl');
-        if (!priceEl) return;
-        const liveAgeSec = aiLivePriceMt5UpdatedAt ? (Date.now() - new Date(aiLivePriceMt5UpdatedAt).getTime()) / 1000 : Infinity;
-        if (aiLivePriceMt5 && liveAgeSec <= AI_LIVE_PRICE_MAX_AGE_SECONDS) priceEl.innerText = parseFloat(aiLivePriceMt5).toFixed(2);
-        else if (candles && candles.length) priceEl.innerText = candles[candles.length - 1].close.toFixed(2);
+        if (!document.getElementById('ai-live-price')) return;
+        updateLivePriceBox(candles);
         if (!openInfo || !openInfo.trade.layers) {
             entryEl.innerText = 'Belum ada posisi'; entryEl.className = 'netral';
             totalEl.innerText = 'Rp 0'; totalEl.className = 'netral';
