@@ -49,6 +49,7 @@ AI_MASTER_DEFAULTS = {
     'newsPreMinutes': 10, 'newsPostMinutes': 40,
     'pipValueUnit': 'cent', 'pipValuePerLot': 1,
     'tpMode': 'fixed',
+    'summaryIntervalHours': 6,
 }
 AI_LOT_SIZE = AI_MASTER_DEFAULTS['lotSize']
 AI_SL_PIPS = AI_MASTER_DEFAULTS['slPips']
@@ -68,6 +69,7 @@ AI_WINRATE_LOOKBACK_DAYS = AI_MASTER_DEFAULTS['winrateLookbackDays']
 AI_WINRATE_MIN_SAMPLES = AI_MASTER_DEFAULTS['winrateMinSamples']
 AI_NEWS_PRE_MINUTES = AI_MASTER_DEFAULTS['newsPreMinutes']
 AI_NEWS_POST_MINUTES = AI_MASTER_DEFAULTS['newsPostMinutes']
+AI_SUMMARY_INTERVAL_HOURS = AI_MASTER_DEFAULTS['summaryIntervalHours']
 
 
 def apply_ai_settings(master):
@@ -76,6 +78,7 @@ def apply_ai_settings(master):
     global AI_MIN_SIGNAL_WINRATE, AI_WINRATE_LOOKBACK_DAYS, AI_WINRATE_MIN_SAMPLES
     global AI_NEWS_PRE_MINUTES, AI_NEWS_POST_MINUTES
     global AI_PIP_VALUE_UNIT, AI_PIP_VALUE_PER_LOT
+    global AI_SUMMARY_INTERVAL_HOURS
     master = master or {}
     tp_layers = master.get('tpLayerPips')
     if not (isinstance(tp_layers, list) and len(tp_layers) == 3 and all(isinstance(x, (int, float)) for x in tp_layers)):
@@ -98,6 +101,7 @@ def apply_ai_settings(master):
     AI_WINRATE_MIN_SAMPLES = master.get('winrateMinSamples', AI_MASTER_DEFAULTS['winrateMinSamples'])
     AI_NEWS_PRE_MINUTES = master.get('newsPreMinutes', AI_MASTER_DEFAULTS['newsPreMinutes'])
     AI_NEWS_POST_MINUTES = master.get('newsPostMinutes', AI_MASTER_DEFAULTS['newsPostMinutes'])
+    AI_SUMMARY_INTERVAL_HOURS = master.get('summaryIntervalHours', AI_MASTER_DEFAULTS['summaryIntervalHours'])
 
 
 def log(msg):
@@ -400,6 +404,41 @@ def today_wib_date_str():
     return now_wib.strftime('%Y-%m-%d')
 
 
+def format_rupiah(value):
+    return f"Rp{value:,.0f}".replace(',', '.')
+
+
+def _sum_closed_pl(trades):
+    closed = [t for t in trades if t.get('status') == 'closed']
+    return sum(float(t.get('pl', 0) or 0) for t in closed), len(closed)
+
+
+def get_today_pl(ai_trade_data):
+    return _sum_closed_pl(ai_trade_data.get(today_wib_date_str(), []))
+
+
+def get_current_week_pl(ai_trade_data):
+    now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
+    monday_str = (now_wib - timedelta(days=now_wib.weekday())).strftime('%Y-%m-%d')
+    total, count = 0.0, 0
+    for date_str, trades in ai_trade_data.items():
+        if date_str < monday_str:
+            continue
+        t, c = _sum_closed_pl(trades)
+        total += t
+        count += c
+    return total, count
+
+
+def get_all_time_pl(ai_trade_data):
+    total, count = 0.0, 0
+    for trades in ai_trade_data.values():
+        t, c = _sum_closed_pl(trades)
+        total += t
+        count += c
+    return total, count
+
+
 def auto_open_ai_position(ai_trade_data, candles):
     sug = compute_ai_suggestion(candles, ai_trade_data)
     if not sug:
@@ -663,6 +702,57 @@ def handle_restart_request():
         send_telegram(f"⚠️ Restart gagal: {result_msg}. Bot lanjut jalan pakai kode lama.")
 
 
+# Dipicu tombol "Kirim Summary Sekarang" di web ATAU otomatis tiap AI_SUMMARY_INTERVAL_HOURS jam.
+# Datanya (ai_trade_data) udah kebaca doc_ref.get() tiap tick buat keperluan lain - ngirim summary ini
+# gak nambah read Firestore sama sekali, cuma format teks + kirim ke Telegram (gratis).
+def send_periodic_summary(ai_trade_data, tick):
+    open_info = find_open_ai_trade(ai_trade_data)
+    if open_info:
+        trade = open_info['trade']
+        dir_sign = 1 if trade['arah'] == 'BUY' else -1
+        px = exit_price_for(trade['arah'], tick.bid, tick.ask)
+        live_kurs = get_cached_kurs(datetime.now(timezone.utc))
+        total_floating = 0.0
+        for ly in trade.get('layers', []):
+            if ly['status'] != 'open':
+                continue
+            pips = ((px - ly['entry']) * dir_sign) / AI_PIP_SIZE
+            total_floating += usc_to_rupiah(calc_layer_pl_usc(pips), live_kurs)
+        send_telegram(
+            f"📍 <b>Posisi Terbuka</b>\n\n"
+            f"{trade['arah']} @ {trade['entry']:.2f}\n"
+            f"Floating P/L: <b>{format_rupiah(total_floating)}</b>"
+        )
+    else:
+        send_telegram("📍 <b>Posisi Terbuka</b>\n\nGak ada posisi open saat ini.")
+
+    today_pl, today_n = get_today_pl(ai_trade_data)
+    send_telegram(f"📅 <b>P/L Hari Ini</b>\n\n{format_rupiah(today_pl)} dari {today_n} entry closed.")
+
+    week_pl, week_n = get_current_week_pl(ai_trade_data)
+    send_telegram(f"🗓️ <b>P/L Minggu Ini</b>\n\n{format_rupiah(week_pl)} dari {week_n} entry closed.")
+
+    all_pl, all_n = get_all_time_pl(ai_trade_data)
+    send_telegram(f"📊 <b>P/L Keseluruhan</b>\n\n{format_rupiah(all_pl)} dari {all_n} entry closed.")
+
+
+def maybe_send_summary(ai_trade_data, bot_control, tick, now):
+    manual = bool(bot_control.get('summaryRequested'))
+    last_at_str = bot_control.get('lastSummaryAt')
+    due = True
+    if last_at_str and not manual:
+        elapsed_hours = (now - datetime.fromisoformat(last_at_str)).total_seconds() / 3600
+        due = elapsed_hours >= AI_SUMMARY_INTERVAL_HOURS
+    if not (manual or due):
+        return
+    send_periodic_summary(ai_trade_data, tick)
+    try:
+        doc_ref.set({'botControl': {'summaryRequested': False, 'lastSummaryAt': now.isoformat()}}, merge=True)
+    except Exception as e:
+        log(f"Gagal update status summary: {e}")
+    log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
+
+
 # ---------- State di memori, direfresh tiap loop dari Firestore ----------
 _news_cache = {'checked_at': None, 'result': None}
 
@@ -684,14 +774,21 @@ def get_cached_kurs(now):
     return _kurs_cache['result']
 
 
+AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3  # push tampilan tiap ~30 detik (3 x FAST_LOOP_SECONDS) - eksekusi (SL/TP/dst) TETAP tiap tick, baca harga langsung dari MT5, gak kepengaruh throttle ini
+_fast_tick_count = 0
+
+
 def run_fast_tick():
+    global _fast_tick_count
     now = datetime.now(timezone.utc)
     tick = mt5.symbol_info_tick(SYMBOL)
     if tick is None:
         log(f"Gagal ambil tick MT5: {mt5.last_error()}")
         return
 
-    push_live_price_to_public(tick)
+    _fast_tick_count += 1
+    if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0:
+        push_live_price_to_public(tick)
 
     snap = doc_ref.get()
     data = snap.to_dict() if snap.exists else {}
@@ -699,9 +796,12 @@ def run_fast_tick():
     ai_modal_awal = data.get('aiModalAwal', 2500000)
     apply_ai_settings((data.get('aiSettings') or {}).get('master'))
 
-    if (data.get('botControl') or {}).get('restartRequested'):
+    bot_control = data.get('botControl') or {}
+    if bot_control.get('restartRequested'):
         handle_restart_request()
         return
+
+    maybe_send_summary(ai_trade_data, bot_control, tick, now)
 
     open_info = find_open_ai_trade(ai_trade_data)
     if not open_info:

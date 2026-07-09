@@ -242,6 +242,7 @@
                                 <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
                                 <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-ai-master-settings">🎛️ Master Setting</button>
                                 <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-ai-restart-bot">🔄 Restart Bot (VPS)</button>
+                                <button class="btn-action" style="border-color:#00bcd4; color:#00bcd4;" id="btn-ai-send-summary">📊 Kirim Summary</button>
                                 <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="aiRefreshBtnClick(this, 'calendar')">🔃 Refresh</button>
                                 <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">⚡ Cek Sekarang</button>
                                 <button class="btn-action btn-export" onclick="openExportMenu('ai')">📤 Export</button>
@@ -863,6 +864,9 @@
                     <input type="number" id="ai-master-news-post-minutes" class="master-input small" step="1" min="0">
                 </div>
             </div>
+
+            <h3 class="master-group-title">📊 Summary Telegram</h3>
+            <div class="master-row"><label>Interval Otomatis (jam)</label><input type="number" id="ai-master-summary-interval-hours" class="master-input" step="1" min="1"></div>
 
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button id="btn-reset-ai-master" class="btn-action" style="flex:1; border-color:#666; color:#aaa;">Reset ke Default</button>

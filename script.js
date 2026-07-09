@@ -770,8 +770,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiTickInterval = null; let lastAiCandles = null;
     let aiTimeframe = '1h'; // default H1 biar out-of-the-box pakai data MT5 real-time gratis (gak butuh API key TwelveData)
     let aiLiveCandlesMt5 = null; let aiLiveCandlesMt5UpdatedAt = null; // candle terkini dari bot VPS/MT5, disinkron lewat appData/public
-    let aiLivePriceMt5 = null; let aiLivePriceMt5UpdatedAt = null; // harga tick terkini dari bot VPS/MT5 (update tiap ~10 detik), buat "Harga Sekarang" biar berasa live
-    const AI_LIVE_PRICE_MAX_AGE_SECONDS = 30;
+    let aiLivePriceMt5 = null; let aiLivePriceMt5UpdatedAt = null; // harga tick terkini dari bot VPS/MT5 (di-throttle bot ~30 detik biar irit kuota Firestore, eksekusi SL/TP tetap tiap ~10 detik gak kepengaruh)
+    const AI_LIVE_PRICE_MAX_AGE_SECONDS = 45; // dinaikin dari 30 - kasih buffer biar gak sempet kelihatan "stale" pas mepet siklus push ~30 detik dari bot
 
     // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
     const AI_PIP_SIZE = 0.1;
@@ -1215,7 +1215,8 @@ document.addEventListener("DOMContentLoaded", () => {
         newsPreMinutes: 10, newsPostMinutes: 40,
         riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
-        tpMode: 'fixed'
+        tpMode: 'fixed',
+        summaryIntervalHours: 6
     };
     function getMasterSettings() {
         return Object.assign({}, AI_MASTER_DEFAULTS, (aiSettings && aiSettings.master) || {});
@@ -1267,6 +1268,7 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-winrate-min-samples').value = m.winrateMinSamples;
         document.getElementById('ai-master-news-pre-minutes').value = m.newsPreMinutes;
         document.getElementById('ai-master-news-post-minutes').value = m.newsPostMinutes;
+        document.getElementById('ai-master-summary-interval-hours').value = m.summaryIntervalHours;
         document.getElementById('ai-master-modal').style.display = 'flex';
         updateAiMasterPreview();
     };
@@ -1316,9 +1318,10 @@ document.addEventListener("DOMContentLoaded", () => {
             winrateLookbackDays: readNum('ai-master-winrate-lookback-days'),
             winrateMinSamples: readNum('ai-master-winrate-min-samples'),
             newsPreMinutes: readNum('ai-master-news-pre-minutes'),
-            newsPostMinutes: readNum('ai-master-news-post-minutes')
+            newsPostMinutes: readNum('ai-master-news-post-minutes'),
+            summaryIntervalHours: readNum('ai-master-summary-interval-hours')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0;
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0;
         if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
         aiSettings = Object.assign({}, aiSettings, {
             master: {
@@ -1341,7 +1344,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 winrateLookbackDays: fields.winrateLookbackDays,
                 winrateMinSamples: fields.winrateMinSamples,
                 newsPreMinutes: fields.newsPreMinutes,
-                newsPostMinutes: fields.newsPostMinutes
+                newsPostMinutes: fields.newsPostMinutes,
+                summaryIntervalHours: fields.summaryIntervalHours
             }
         });
         saveData('ai_settings_v1', aiSettings);
@@ -1353,11 +1357,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Kirim sinyal restart ke bot VPS lewat Firestore (botControl) - bot yang lagi jalan yang deteksi & eksekusi git pull + restart sendiri tiap fast-loop.
     // Kalau proses bot lagi mati total, sinyal ini nunggu doang sampai bot dinyalain manual lagi (gak ada yang baca kalau gak ada proses hidup).
+    // Pakai spread (...botControl) - JANGAN replace total objeknya, biar field summaryRequested/lastSummaryAt dari fitur summary gak ke-wipe.
     document.getElementById('btn-ai-restart-bot').onclick = () => {
         if (!confirm('Restart bot VPS sekarang? Bot bakal ambil kode terbaru & jalan ulang otomatis dalam ~10 detik (cuma jalan kalau proses bot lagi hidup).')) return;
-        botControl = { restartRequested: true, requestedAt: new Date().toISOString() };
+        botControl = { ...botControl, restartRequested: true, requestedAt: new Date().toISOString() };
         saveData('ai_bot_control_v1', botControl);
         alert('Sinyal restart terkirim. Cek tab Log Aktivitas dalam ~30 detik buat konfirmasi hasilnya.');
+    };
+
+    // Sama kayak restart, tapi buat trigger summary Telegram manual (4 pesan terpisah: posisi terbuka, hari ini, minggu ini, all-time).
+    document.getElementById('btn-ai-send-summary').onclick = () => {
+        if (!confirm('Kirim summary posisi & P/L ke Telegram sekarang?')) return;
+        botControl = { ...botControl, summaryRequested: true, summaryRequestedAt: new Date().toISOString() };
+        saveData('ai_bot_control_v1', botControl);
+        alert('Sinyal summary terkirim. Cek Telegram dalam ~30 detik (cuma jalan kalau proses bot lagi hidup).');
     };
 
     // Paksa tutup semua layer yang masih open di harga market sekarang (dipakai buat news guard, pola sama kayak timeout).

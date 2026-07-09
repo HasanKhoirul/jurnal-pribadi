@@ -69,15 +69,19 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       winrateLookbackDays: number,       // default 14
       winrateMinSamples: number,         // default 5
       newsPreMinutes: number,            // default 10
-      newsPostMinutes: number            // default 40
+      newsPostMinutes: number,           // default 40
+      summaryIntervalHours: number       // default 6 - interval otomatis kirim summary Telegram (posisi terbuka, P/L hari/minggu/all-time)
     }
   },
-  botControl: {                // command channel ke bot VPS (BUKAN setting kayak aiSettings) - dipicu tombol "🔄 Restart Bot (VPS)" di web
+  botControl: {                // command channel ke bot VPS (BUKAN setting kayak aiSettings) - dipicu tombol "🔄 Restart Bot (VPS)" / "📊 Kirim Summary" di web
     restartRequested: boolean,  // true = ada permintaan restart yang belum diproses. Cuma efektif kalau proses ai-tick.py lagi HIDUP - kalau bot mati total, sinyal ini nunggu doang sampai dinyalain manual
     requestedAt: string (ISO),
     lastRestartAt: string (ISO) | null,   // diisi bot setelah selesai proses (git pull + restart diri sendiri via os.execv)
-    lastRestartResult: string | null      // "success" | "failed: <pesan git pull>"
-  },
+    lastRestartResult: string | null,     // "success" | "failed: <pesan git pull>"
+    summaryRequested: boolean,   // true = ada permintaan kirim summary Telegram manual yang belum diproses
+    summaryRequestedAt: string (ISO),
+    lastSummaryAt: string (ISO) | null    // dipakai bot buat itung udah lewat summaryIntervalHours apa belum (summary otomatis)
+  },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiTradeData: {
     "YYYY-MM-DD": [
@@ -145,6 +149,9 @@ Nilai di tabel ini cuma **default** — semuanya (kecuali `AI_PIP_SIZE`) bisa di
 | `AI_WINRATE_LOOKBACK_DAYS` | 14 | Window hitung win rate adaptif |
 | `AI_WINRATE_MIN_SAMPLES` | 5 | Minimal sample sebelum filter win rate aktif |
 | `AI_NEWS_PRE_MINUTES` / `AI_NEWS_POST_MINUTES` | 10 / 40 | Window "rawan berita" sebelum/sesudah rilis data high-impact |
+| `AI_SUMMARY_INTERVAL_HOURS` | 6 | Interval otomatis kirim summary Telegram (ai-tick.py only, gak ada di script.js/ai-tick.mjs) |
+
+**Catatan hemat kuota Firestore**: `ai-tick.py` push `aiLivePriceMt5` ke `appData/public` di-throttle (`AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3`, hardcode bukan setting) — cuma ditulis tiap ~30 detik (3x `FAST_LOOP_SECONDS`), bukan tiap tick. Ini **cuma soal tampilan** — eksekusi (cek SL/TP/deep-lock/news) tetap jalan tiap tick (~10 detik) baca harga langsung dari MT5, gak kepengaruh throttle ini. `AI_LIVE_PRICE_MAX_AGE_SECONDS` di script.js dinaikin ke 45 (dari 30) buat kasih buffer terhadap siklus push yang lebih jarang ini.
 
 ## File terkait
 - **[script.js](script.js)** — logic sisi browser (modul "MODUL TRADING AI"), plus semua modul lain (jurnal manual, pengeluaran, olahraga, wealth).
