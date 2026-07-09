@@ -62,7 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 journalData = d.journalData || {}; modalAwal = d.modalAwal || 2500000; sportData = d.sportData || {};
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
                 if (d.aiLiveCandlesMt5 && d.aiLiveCandlesMt5.length) { aiLiveCandlesMt5 = d.aiLiveCandlesMt5; aiLiveCandlesMt5UpdatedAt = d.aiLiveCandlesMt5UpdatedAt || null; }
-                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; }
+                if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; updateLastCandleWithLivePrice(); }
                 rerenderActiveSection();
             }
         }, err => console.error('Gagal ambil data publik dari cloud:', err));
@@ -867,6 +867,20 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // "Napasin" candle terakhir pakai harga tick live (update tiap ~10 detik dari bot, gratis - gak nambah write Firestore
+    // kayak kalau full candle array di-push lebih sering). Cuma jalan kalau chart lagi nampilin candle MT5 (bukan TwelveData historis).
+    function updateLastCandleWithLivePrice() {
+        if (!aiCandleSeries || !lastAiCandles || !lastAiCandles.length || !aiLivePriceMt5) return;
+        if (document.getElementById('ai-view-market').style.display === 'none') return;
+        const ageMinutes = aiLiveCandlesMt5UpdatedAt ? (Date.now() - new Date(aiLiveCandlesMt5UpdatedAt).getTime()) / 60000 : Infinity;
+        if (ageMinutes > AI_MT5_DATA_MAX_AGE_MINUTES) return;
+        const lastCandle = lastAiCandles[lastAiCandles.length - 1];
+        const price = parseFloat(aiLivePriceMt5);
+        const high = Math.max(lastCandle.high, price), low = Math.min(lastCandle.low, price);
+        aiCandleSeries.update({ time: Math.floor(new Date(lastCandle.time).getTime() / 1000), open: lastCandle.open, high, low, close: price });
+        lastAiCandles[lastAiCandles.length - 1] = { ...lastCandle, high, low, close: price };
+    }
+
     function switchAiTab(activeMenuId, activeViewId) {
         ['ai-menu-market', 'ai-menu-calendar', 'ai-menu-dashboard', 'ai-menu-log'].forEach(id => document.getElementById(id).classList.toggle('active', id === activeMenuId));
         ['ai-view-market', 'ai-view-calendar', 'ai-view-dashboard', 'ai-view-log'].forEach(id => document.getElementById(id).style.display = id === activeViewId ? 'block' : 'none');
@@ -987,10 +1001,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const AI_MT5_DATA_MAX_AGE_MINUTES = 10;
     async function fetchAiPriceData() {
+        const tfSelect = document.getElementById('ai-timeframe-select');
         if (aiLiveCandlesMt5 && aiLiveCandlesMt5UpdatedAt) {
             const ageMinutes = (Date.now() - new Date(aiLiveCandlesMt5UpdatedAt).getTime()) / 60000;
-            if (ageMinutes <= AI_MT5_DATA_MAX_AGE_MINUTES) return aiLiveCandlesMt5;
+            if (ageMinutes <= AI_MT5_DATA_MAX_AGE_MINUTES) {
+                // Bot VPS cuma nyediain candle H1 - jujurin dropdown-nya biar gak nunjukin timeframe yang gak sesuai data asli.
+                tfSelect.value = '1h'; tfSelect.disabled = true;
+                tfSelect.title = 'Data MT5 cuma nyediain H1. Timeframe lain otomatis aktif kalau data MT5 basi (>10 menit).';
+                return aiLiveCandlesMt5;
+            }
         }
+        tfSelect.disabled = false; tfSelect.title = ''; tfSelect.value = aiTimeframe;
         const key = getAiSettings().twelvedata;
         if (!key) { alert('Isi dulu API Key TwelveData di ⚙️ Settings.'); return null; }
         try {
