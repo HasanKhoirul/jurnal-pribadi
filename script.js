@@ -768,7 +768,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentAiDateStr = null; let calWidgetLoaded = false;
     let aiChart = null, aiCandleSeries = null, aiPriceLines = [];
     let aiTickInterval = null; let lastAiCandles = null;
-    let aiTimeframe = '5min';
+    let aiTimeframe = '1h'; // default H1 biar out-of-the-box pakai data MT5 real-time gratis (gak butuh API key TwelveData)
     let aiLiveCandlesMt5 = null; let aiLiveCandlesMt5UpdatedAt = null; // candle terkini dari bot VPS/MT5, disinkron lewat appData/public
     let aiLivePriceMt5 = null; let aiLivePriceMt5UpdatedAt = null; // harga tick terkini dari bot VPS/MT5 (update tiap ~10 detik), buat "Harga Sekarang" biar berasa live
     const AI_LIVE_PRICE_MAX_AGE_SECONDS = 30;
@@ -870,6 +870,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // "Napasin" candle terakhir pakai harga tick live (update tiap ~10 detik dari bot, gratis - gak nambah write Firestore
     // kayak kalau full candle array di-push lebih sering). Cuma jalan kalau chart lagi nampilin candle MT5 (bukan TwelveData historis).
     function updateLastCandleWithLivePrice() {
+        if (aiTimeframe !== '1h') return; // efek ini cuma valid buat candle H1 asli dari MT5, bukan hasil TwelveData timeframe lain
         if (!aiCandleSeries || !lastAiCandles || !lastAiCandles.length || !aiLivePriceMt5) return;
         if (document.getElementById('ai-view-market').style.display === 'none') return;
         const ageMinutes = aiLiveCandlesMt5UpdatedAt ? (Date.now() - new Date(aiLiveCandlesMt5UpdatedAt).getTime()) / 60000 : Infinity;
@@ -1002,16 +1003,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const AI_MT5_DATA_MAX_AGE_MINUTES = 10;
     async function fetchAiPriceData() {
         const tfSelect = document.getElementById('ai-timeframe-select');
-        if (aiLiveCandlesMt5 && aiLiveCandlesMt5UpdatedAt) {
+        // MT5 (gratis, real-time) cuma dipakai kalau user emang lagi milih H1 - timeframe lain (M5/M15/dst) selalu lewat TwelveData,
+        // dropdown TETAP bisa diganti bebas kapan pun (gak di-disable kayak sebelumnya).
+        if (aiTimeframe === '1h' && aiLiveCandlesMt5 && aiLiveCandlesMt5UpdatedAt) {
             const ageMinutes = (Date.now() - new Date(aiLiveCandlesMt5UpdatedAt).getTime()) / 60000;
             if (ageMinutes <= AI_MT5_DATA_MAX_AGE_MINUTES) {
-                // Bot VPS cuma nyediain candle H1 - jujurin dropdown-nya biar gak nunjukin timeframe yang gak sesuai data asli.
-                tfSelect.value = '1h'; tfSelect.disabled = true;
-                tfSelect.title = 'Data MT5 cuma nyediain H1. Timeframe lain otomatis aktif kalau data MT5 basi (>10 menit).';
+                tfSelect.title = 'H1 pakai data real-time dari MT5 (gratis). Timeframe lain otomatis pakai TwelveData.';
                 return aiLiveCandlesMt5;
             }
         }
-        tfSelect.disabled = false; tfSelect.title = ''; tfSelect.value = aiTimeframe;
+        tfSelect.title = '';
         const key = getAiSettings().twelvedata;
         if (!key) { alert('Isi dulu API Key TwelveData di ⚙️ Settings.'); return null; }
         try {
