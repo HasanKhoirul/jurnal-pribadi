@@ -50,7 +50,9 @@ body { background-color: #121212; color: #e0e0e0; display: flex; height: 100vh; 
 
 .main-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: var(--space-md); border-bottom: 1px solid #333; padding-bottom: var(--space-md); }
 .action-group-main { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.btn-action { padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: 0.3s; display: inline-block; text-align: center; }
+.btn-action { padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: 1px solid transparent; background: transparent; transition: 0.3s; display: inline-block; text-align: center; }
+.btn-action:hover { background: rgba(255,255,255,0.06); }
+.btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-export { background: transparent; border-color: #00e676; color: #00e676; }
 .btn-export:hover { background: rgba(0, 230, 118, 0.1); }
 .ai-more-menu-wrap { position: relative; display: inline-block; }
