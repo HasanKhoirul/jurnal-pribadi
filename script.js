@@ -1244,6 +1244,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     applyMasterSettings();
 
+    // Dropdown "⚙️ Lainnya" - kumpulin tombol admin/jarang dipakai biar header gak numpuk.
+    document.getElementById('btn-ai-more-menu').onclick = (e) => {
+        e.stopPropagation();
+        document.getElementById('ai-more-menu-dropdown').classList.toggle('open');
+    };
+    document.addEventListener('click', (e) => {
+        const dd = document.getElementById('ai-more-menu-dropdown');
+        if (dd && dd.classList.contains('open') && !dd.contains(e.target) && e.target.id !== 'btn-ai-more-menu') {
+            dd.classList.remove('open');
+        }
+    });
+
     document.getElementById('btn-ai-master-settings').onclick = () => {
         const m = getMasterSettings();
         document.getElementById('ai-master-risk-limit-pct').value = m.riskLimitPct;

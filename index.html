@@ -239,14 +239,19 @@
                         <div class="header-left">
                             <h1 style="color:#9c27b0;">Trading AI (Simulasi)</h1>
                             <div class="action-group-main hide-for-screenshot">
-                                <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
-                                <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-ai-master-settings">🎛️ Master Setting</button>
-                                <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-ai-restart-bot">🔄 Restart Bot (VPS)</button>
-                                <button class="btn-action" style="border-color:#00bcd4; color:#00bcd4;" id="btn-ai-send-summary">📊 Kirim Summary</button>
                                 <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="aiRefreshBtnClick(this, 'calendar')">🔃 Refresh</button>
                                 <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">⚡ Cek Sekarang</button>
-                                <button class="btn-action btn-export" onclick="openExportMenu('ai')">📤 Export</button>
-                                <button id="ai-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                                <div class="ai-more-menu-wrap">
+                                    <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-ai-more-menu">⚙️ Lainnya ▾</button>
+                                    <div id="ai-more-menu-dropdown" class="ai-more-dropdown">
+                                        <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
+                                        <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-ai-master-settings">🎛️ Master Setting</button>
+                                        <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-ai-restart-bot">🔄 Restart Bot (VPS)</button>
+                                        <button class="btn-action" style="border-color:#00bcd4; color:#00bcd4;" id="btn-ai-send-summary">📊 Kirim Summary</button>
+                                        <button class="btn-action btn-export" onclick="openExportMenu('ai')">📤 Export</button>
+                                        <button id="ai-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div class="summary-card" style="border-color:#9c27b0;"><span>P/L Bulan Ini:</span><h2 id="ai-monthly-total" class="netral">Rp 0</h2></div>

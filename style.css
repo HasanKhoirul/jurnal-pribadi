@@ -53,6 +53,10 @@ body { background-color: #121212; color: #e0e0e0; display: flex; height: 100vh; 
 .btn-action { padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: 0.3s; display: inline-block; text-align: center; }
 .btn-export { background: transparent; border-color: #00e676; color: #00e676; }
 .btn-export:hover { background: rgba(0, 230, 118, 0.1); }
+.ai-more-menu-wrap { position: relative; display: inline-block; }
+.ai-more-dropdown { display: none; position: absolute; top: calc(100% + 6px); left: 0; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 10px; flex-direction: column; gap: 8px; min-width: 200px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.ai-more-dropdown.open { display: flex; }
+.ai-more-dropdown .btn-action { width: 100%; text-align: left; }
 .btn-import { background: transparent; border-color: #2196f3; color: #2196f3; }
 .btn-import:hover { background: rgba(33, 150, 243, 0.1); }
 .btn-reset { background: transparent; border-color: #ff1744; color: #ff1744; }
