@@ -48,12 +48,14 @@ AI_MASTER_DEFAULTS = {
     'minSignalWinrate': 35, 'winrateLookbackDays': 14, 'winrateMinSamples': 5,
     'newsPreMinutes': 10, 'newsPostMinutes': 40,
     'pipValueUnit': 'cent', 'pipValuePerLot': 1,
+    'tpMode': 'fixed',
 }
 AI_LOT_SIZE = AI_MASTER_DEFAULTS['lotSize']
 AI_SL_PIPS = AI_MASTER_DEFAULTS['slPips']
 AI_SL_MODE = AI_MASTER_DEFAULTS['slMode']  # 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
 AI_ATR_MULTIPLIER = AI_MASTER_DEFAULTS['atrMultiplier']
 AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS['tpLayerPips']
+AI_TP_MODE = AI_MASTER_DEFAULTS['tpMode']  # 'fixed' | 'adaptive' - kalau 'adaptive', TP & deep-lock Layer 3 proporsional ke slPipsUsed
 AI_PIP_VALUE_UNIT = AI_MASTER_DEFAULTS['pipValueUnit']  # 'cent' | 'usd' - satuan AI_PIP_VALUE_PER_LOT
 AI_PIP_VALUE_PER_LOT = AI_MASTER_DEFAULTS['pipValuePerLot']
 AI_LAYER_STAGGER_PIPS = AI_MASTER_DEFAULTS['layerStaggerPips']
@@ -69,7 +71,7 @@ AI_NEWS_POST_MINUTES = AI_MASTER_DEFAULTS['newsPostMinutes']
 
 
 def apply_ai_settings(master):
-    global AI_LOT_SIZE, AI_SL_PIPS, AI_SL_MODE, AI_ATR_MULTIPLIER, AI_TP_LAYERS_PIPS, AI_LAYER_STAGGER_PIPS, AI_LOCK_PIPS_AFTER_TP1
+    global AI_LOT_SIZE, AI_SL_PIPS, AI_SL_MODE, AI_ATR_MULTIPLIER, AI_TP_LAYERS_PIPS, AI_TP_MODE, AI_LAYER_STAGGER_PIPS, AI_LOCK_PIPS_AFTER_TP1
     global AI_DEEP_LOCK_TRIGGER_PIPS, AI_DEEP_LOCK_PIPS, AI_DEEP_LOCK_TIMEOUT_MINUTES
     global AI_MIN_SIGNAL_WINRATE, AI_WINRATE_LOOKBACK_DAYS, AI_WINRATE_MIN_SAMPLES
     global AI_NEWS_PRE_MINUTES, AI_NEWS_POST_MINUTES
@@ -83,6 +85,7 @@ def apply_ai_settings(master):
     AI_SL_MODE = 'atr' if master.get('slMode') == 'atr' else 'fixed'
     AI_ATR_MULTIPLIER = master.get('atrMultiplier', AI_MASTER_DEFAULTS['atrMultiplier'])
     AI_TP_LAYERS_PIPS = tp_layers
+    AI_TP_MODE = 'adaptive' if master.get('tpMode') == 'adaptive' else 'fixed'
     AI_PIP_VALUE_UNIT = 'usd' if master.get('pipValueUnit') == 'usd' else 'cent'
     AI_PIP_VALUE_PER_LOT = master.get('pipValuePerLot', AI_MASTER_DEFAULTS['pipValuePerLot'])
     AI_LAYER_STAGGER_PIPS = master.get('layerStaggerPips', AI_MASTER_DEFAULTS['layerStaggerPips'])
@@ -362,14 +365,25 @@ def compute_ai_suggestion(candles, trade_data):
         if atr is not None:
             sl_pips_used = min(120, max(30, round((atr / AI_PIP_SIZE) * AI_ATR_MULTIPLIER)))
     sl = entry - dir_sign * pip_to_price(sl_pips_used)
+
+    tp_pips_used = list(AI_TP_LAYERS_PIPS)
+    deep_lock_trigger_used = AI_DEEP_LOCK_TRIGGER_PIPS
+    deep_lock_pips_used = AI_DEEP_LOCK_PIPS
+    if AI_TP_MODE == 'adaptive':
+        tp_pips_used = [round(sl_pips_used * (tp / AI_SL_PIPS)) for tp in AI_TP_LAYERS_PIPS]
+        deep_lock_trigger_used = round(sl_pips_used * (AI_DEEP_LOCK_TRIGGER_PIPS / AI_SL_PIPS))
+        deep_lock_pips_used = round(sl_pips_used * (AI_DEEP_LOCK_PIPS / AI_SL_PIPS))
+
     reason_parts.append(
-        f"Entry {entry:.2f}, SL {sl_pips_used} pips{' (adaptif ATR)' if AI_SL_MODE == 'atr' else ''} ({sl:.2f}), TP berlapis {'/'.join(map(str, AI_TP_LAYERS_PIPS))} pips, lot {AI_LOT_SIZE} x3 layer."
+        f"Entry {entry:.2f}, SL {sl_pips_used} pips{' (adaptif ATR)' if AI_SL_MODE == 'atr' else ''} ({sl:.2f}), "
+        f"TP berlapis {'/'.join(map(str, tp_pips_used))} pips{' (adaptif)' if AI_TP_MODE == 'adaptive' else ''}, lot {AI_LOT_SIZE} x3 layer."
     )
 
     return {
         'arah': arah, 'entry': entry, 'sl': sl, 'dirSign': dir_sign,
         'reasonText': ' '.join(reason_parts), 'tf': AI_TIMEFRAME_LABEL, 'signalType': signal_type,
-        'slPipsUsed': sl_pips_used,
+        'slPipsUsed': sl_pips_used, 'tpPipsUsed': tp_pips_used,
+        'deepLockTriggerPipsUsed': deep_lock_trigger_used, 'deepLockPipsUsed': deep_lock_pips_used,
     }
 
 
@@ -393,9 +407,10 @@ def auto_open_ai_position(ai_trade_data, candles):
     date_str = today_wib_date_str()
     ai_trade_data.setdefault(date_str, [])
     layers = []
-    for i, tp_pips in enumerate(AI_TP_LAYERS_PIPS):
+    tp_pips_used = sug['tpPipsUsed']
+    for i, tp_pips in enumerate(tp_pips_used):
         layer_entry = sug['entry'] - sug['dirSign'] * pip_to_price(i * AI_LAYER_STAGGER_PIPS)
-        layers.append({
+        layer = {
             'tpPips': tp_pips,
             'entry': layer_entry,
             'tp': layer_entry + sug['dirSign'] * pip_to_price(tp_pips),
@@ -404,7 +419,11 @@ def auto_open_ai_position(ai_trade_data, candles):
             'status': 'open' if i == 0 else 'pending',
             'pl': 0,
             'slMoved': False,
-        })
+        }
+        if i == len(tp_pips_used) - 1:
+            layer['deepLockTriggerPips'] = sug['deepLockTriggerPipsUsed']
+            layer['deepLockPips'] = sug['deepLockPipsUsed']
+        layers.append(layer)
     ai_trade_data[date_str].append({
         'arah': sug['arah'], 'tf': sug['tf'], 'entry': sug['entry'], 'sl': layers[0]['sl'],
         'layers': layers, 'alasan': sug['reasonText'], 'signalType': sug['signalType'],
@@ -498,13 +517,16 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
             continue
 
         if idx == len(layers) - 1:
+            # Baca dari layer itu sendiri dulu (dibekukan pas entry, biar konsisten sama kondisi ATR waktu trade dibuka) - fallback ke konstanta global buat trade lama sebelum fitur TP Adaptif ada.
+            trigger = ly.get('deepLockTriggerPips', AI_DEEP_LOCK_TRIGGER_PIPS)
+            lock_pips = ly.get('deepLockPips', AI_DEEP_LOCK_PIPS)
             pips_now = ((px - layer_entry) * dir_sign) / AI_PIP_SIZE
-            if pips_now >= AI_DEEP_LOCK_TRIGGER_PIPS and not ly.get('deepLockAt'):
-                ly['sl'] = layer_entry + dir_sign * pip_to_price(AI_DEEP_LOCK_PIPS)
+            if pips_now >= trigger and not ly.get('deepLockAt'):
+                ly['sl'] = layer_entry + dir_sign * pip_to_price(lock_pips)
                 ly['slMoved'] = True
                 ly['deepLockAt'] = now.isoformat()
                 changed = True
-                notes.append(f"Layer terakhir tembus {AI_DEEP_LOCK_TRIGGER_PIPS} pips, SL dikunci +{AI_DEEP_LOCK_PIPS} pips.")
+                notes.append(f"Layer terakhir tembus {trigger} pips, SL dikunci +{lock_pips} pips.")
             if ly.get('deepLockAt'):
                 elapsed_min = (now - datetime.fromisoformat(ly['deepLockAt'])).total_seconds() / 60
                 if elapsed_min >= AI_DEEP_LOCK_TIMEOUT_MINUTES:

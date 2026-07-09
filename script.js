@@ -780,6 +780,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let AI_SL_MODE = 'fixed'; // 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
     let AI_ATR_MULTIPLIER = 1.5;
     let AI_TP_LAYERS_PIPS = [80, 100, 150];
+    let AI_TP_MODE = 'fixed'; // 'fixed' | 'adaptive' - kalau 'adaptive', TP & deep-lock Layer 3 proporsional ke slPipsUsed (rasio dari tpLayerPips/slPips)
     let AI_PIP_VALUE_UNIT = 'cent'; // 'cent' | 'usd' - satuan AI_PIP_VALUE_PER_LOT
     let AI_PIP_VALUE_PER_LOT = 1; // nilai 1 pip pada lot referensi 0.1, dalam AI_PIP_VALUE_UNIT
     function pipToPrice(pips) { return pips * AI_PIP_SIZE; }
@@ -1149,7 +1150,17 @@ document.addEventListener("DOMContentLoaded", () => {
             if (atr !== null) slPipsUsed = Math.min(120, Math.max(30, Math.round((atr / AI_PIP_SIZE) * AI_ATR_MULTIPLIER)));
         }
         const sl = entry - dirSign * pipToPrice(slPipsUsed);
-        reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${slPipsUsed} pips${AI_SL_MODE === 'atr' ? ' (adaptif ATR)' : ''} (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
+
+        let tpPipsUsed = [...AI_TP_LAYERS_PIPS];
+        let deepLockTriggerPipsUsed = AI_DEEP_LOCK_TRIGGER_PIPS;
+        let deepLockPipsUsed = AI_DEEP_LOCK_PIPS;
+        if (AI_TP_MODE === 'adaptive') {
+            tpPipsUsed = AI_TP_LAYERS_PIPS.map(tp => Math.round(slPipsUsed * (tp / AI_SL_PIPS)));
+            deepLockTriggerPipsUsed = Math.round(slPipsUsed * (AI_DEEP_LOCK_TRIGGER_PIPS / AI_SL_PIPS));
+            deepLockPipsUsed = Math.round(slPipsUsed * (AI_DEEP_LOCK_PIPS / AI_SL_PIPS));
+        }
+
+        reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${slPipsUsed} pips${AI_SL_MODE === 'atr' ? ' (adaptif ATR)' : ''} (${sl.toFixed(2)}), TP berlapis ${tpPipsUsed.join('/')} pips${AI_TP_MODE === 'adaptive' ? ' (adaptif)' : ''}, lot ${AI_LOT_SIZE} x3 layer.`);
 
         let reasonText = reasonParts.join(' ');
         const settings = getAiSettings();
@@ -1157,7 +1168,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const polished = await polishReasonWithLLM(reasonText, settings);
             if (polished) reasonText = polished;
         }
-        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe, signalType, slPipsUsed };
+        return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe, signalType, slPipsUsed, tpPipsUsed, deepLockTriggerPipsUsed, deepLockPipsUsed };
     }
 
     function findOpenAiTrade() {
@@ -1177,9 +1188,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const today = new Date();
         const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
-        const layers = AI_TP_LAYERS_PIPS.map((tpPips, i) => {
+        const layers = sug.tpPipsUsed.map((tpPips, i) => {
             const layerEntry = sug.entry - sug.dirSign * pipToPrice(i * AI_LAYER_STAGGER_PIPS);
-            return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(sug.slPipsUsed), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+            const layer = { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(sug.slPipsUsed), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+            if (i === sug.tpPipsUsed.length - 1) { layer.deepLockTriggerPips = sug.deepLockTriggerPipsUsed; layer.deepLockPips = sug.deepLockPipsUsed; }
+            return layer;
         });
         aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: layers[0].sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
         saveData('ai_trade_data_v1', aiTradeData);
@@ -1201,7 +1214,8 @@ document.addEventListener("DOMContentLoaded", () => {
         minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
         newsPreMinutes: 10, newsPostMinutes: 40,
         riskLimitPct: 10, riskPeriod: 'monthly',
-        pipValueUnit: 'cent', pipValuePerLot: 1
+        pipValueUnit: 'cent', pipValuePerLot: 1,
+        tpMode: 'fixed'
     };
     function getMasterSettings() {
         return Object.assign({}, AI_MASTER_DEFAULTS, (aiSettings && aiSettings.master) || {});
@@ -1212,6 +1226,7 @@ document.addEventListener("DOMContentLoaded", () => {
         AI_SL_MODE = m.slMode === 'atr' ? 'atr' : 'fixed';
         AI_ATR_MULTIPLIER = m.atrMultiplier;
         AI_TP_LAYERS_PIPS = (Array.isArray(m.tpLayerPips) && m.tpLayerPips.length === 3) ? m.tpLayerPips : AI_MASTER_DEFAULTS.tpLayerPips;
+        AI_TP_MODE = m.tpMode === 'adaptive' ? 'adaptive' : 'fixed';
         AI_LOT_SIZE = m.lotSize;
         AI_PIP_VALUE_UNIT = m.pipValueUnit === 'usd' ? 'usd' : 'cent';
         AI_PIP_VALUE_PER_LOT = m.pipValuePerLot;
@@ -1235,6 +1250,7 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-sl-pips').value = m.slPips;
         document.getElementById('ai-master-sl-mode').value = m.slMode;
         document.getElementById('ai-master-atr-multiplier').value = m.atrMultiplier;
+        document.getElementById('ai-master-tp-mode').value = m.tpMode;
         document.getElementById('ai-master-tp1-pips').value = m.tpLayerPips[0];
         document.getElementById('ai-master-tp2-pips').value = m.tpLayerPips[1];
         document.getElementById('ai-master-tp3-pips').value = m.tpLayerPips[2];
@@ -1311,6 +1327,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 slPips: fields.slPips,
                 slMode: document.getElementById('ai-master-sl-mode').value,
                 atrMultiplier: fields.atrMultiplier,
+                tpMode: document.getElementById('ai-master-tp-mode').value,
                 tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
                 pipValueUnit: document.getElementById('ai-master-pip-value-unit').value,
                 pipValuePerLot: fields.pipValuePerLot,
@@ -1416,13 +1433,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 // Khusus layer terakhir: sekali floating tembus 100 pips, kunci SL lebih dalam ke +80 pips & mulai timer 15 menit.
                 if (idx === trade.layers.length - 1) {
+                    // Baca dari layer itu sendiri dulu (dibekukan pas entry, biar konsisten sama kondisi ATR waktu trade dibuka) - fallback ke konstanta global buat trade lama sebelum fitur TP Adaptif ada.
+                    const trigger = ly.deepLockTriggerPips ?? AI_DEEP_LOCK_TRIGGER_PIPS;
+                    const lockPips = ly.deepLockPips ?? AI_DEEP_LOCK_PIPS;
                     const pipsNow = ((c.close - layerEntry) * dirSign) / AI_PIP_SIZE;
-                    if (pipsNow >= AI_DEEP_LOCK_TRIGGER_PIPS && !ly.deepLockAt) {
-                        ly.sl = layerEntry + dirSign * pipToPrice(AI_DEEP_LOCK_PIPS);
+                    if (pipsNow >= trigger && !ly.deepLockAt) {
+                        ly.sl = layerEntry + dirSign * pipToPrice(lockPips);
                         ly.slMoved = true;
                         ly.deepLockAt = c.time;
                         changed = true;
-                        console.log(`🔒 Layer terakhir tembus ${AI_DEEP_LOCK_TRIGGER_PIPS} pips, SL dikunci +${AI_DEEP_LOCK_PIPS} pips, timer ${AI_DEEP_LOCK_TIMEOUT_MINUTES} menit mulai.`);
+                        console.log(`🔒 Layer terakhir tembus ${trigger} pips, SL dikunci +${lockPips} pips, timer ${AI_DEEP_LOCK_TIMEOUT_MINUTES} menit mulai.`);
                     }
                     if (ly.deepLockAt && (new Date(c.time).getTime() - new Date(ly.deepLockAt).getTime()) >= AI_DEEP_LOCK_TIMEOUT_MINUTES * 60000) {
                         const pipsAtClose = ((c.close - layerEntry) * dirSign) / AI_PIP_SIZE;

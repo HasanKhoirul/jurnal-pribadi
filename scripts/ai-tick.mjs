@@ -27,13 +27,15 @@ const AI_MASTER_DEFAULTS = {
     lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
     minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
     newsPreMinutes: 10, newsPostMinutes: 40,
-    pipValueUnit: 'cent', pipValuePerLot: 1
+    pipValueUnit: 'cent', pipValuePerLot: 1,
+    tpMode: 'fixed'
 };
 let AI_LOT_SIZE = AI_MASTER_DEFAULTS.lotSize;
 let AI_SL_PIPS = AI_MASTER_DEFAULTS.slPips;
 let AI_SL_MODE = AI_MASTER_DEFAULTS.slMode; // 'fixed' | 'atr' - kalau 'atr', SL ikut ATR(14) x AI_ATR_MULTIPLIER (clamp 30-120 pips)
 let AI_ATR_MULTIPLIER = AI_MASTER_DEFAULTS.atrMultiplier;
 let AI_TP_LAYERS_PIPS = AI_MASTER_DEFAULTS.tpLayerPips;
+let AI_TP_MODE = AI_MASTER_DEFAULTS.tpMode; // 'fixed' | 'adaptive' - kalau 'adaptive', TP & deep-lock Layer 3 proporsional ke slPipsUsed
 let AI_PIP_VALUE_UNIT = AI_MASTER_DEFAULTS.pipValueUnit; // 'cent' | 'usd' - satuan AI_PIP_VALUE_PER_LOT
 let AI_PIP_VALUE_PER_LOT = AI_MASTER_DEFAULTS.pipValuePerLot;
 
@@ -210,13 +212,23 @@ async function computeAiSuggestion(candles, tradeData) {
         if (atr !== null) slPipsUsed = Math.min(120, Math.max(30, Math.round((atr / AI_PIP_SIZE) * AI_ATR_MULTIPLIER)));
     }
     const sl = entry - dirSign * pipToPrice(slPipsUsed);
-    reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${slPipsUsed} pips${AI_SL_MODE === 'atr' ? ' (adaptif ATR)' : ''} (${sl.toFixed(2)}), TP berlapis ${AI_TP_LAYERS_PIPS.join('/')} pips, lot ${AI_LOT_SIZE} x3 layer.`);
+
+    let tpPipsUsed = [...AI_TP_LAYERS_PIPS];
+    let deepLockTriggerPipsUsed = AI_DEEP_LOCK_TRIGGER_PIPS;
+    let deepLockPipsUsed = AI_DEEP_LOCK_PIPS;
+    if (AI_TP_MODE === 'adaptive') {
+        tpPipsUsed = AI_TP_LAYERS_PIPS.map(tp => Math.round(slPipsUsed * (tp / AI_SL_PIPS)));
+        deepLockTriggerPipsUsed = Math.round(slPipsUsed * (AI_DEEP_LOCK_TRIGGER_PIPS / AI_SL_PIPS));
+        deepLockPipsUsed = Math.round(slPipsUsed * (AI_DEEP_LOCK_PIPS / AI_SL_PIPS));
+    }
+
+    reasonParts.push(`Entry ${entry.toFixed(2)}, SL ${slPipsUsed} pips${AI_SL_MODE === 'atr' ? ' (adaptif ATR)' : ''} (${sl.toFixed(2)}), TP berlapis ${tpPipsUsed.join('/')} pips${AI_TP_MODE === 'adaptive' ? ' (adaptif)' : ''}, lot ${AI_LOT_SIZE} x3 layer.`);
 
     let reasonText = reasonParts.join(' ');
     const polished = await polishReasonWithLLM(reasonText);
     if (polished) reasonText = polished;
 
-    return { arah, entry, sl, dirSign, reasonText, tf: AI_TIMEFRAME, signalType, slPipsUsed };
+    return { arah, entry, sl, dirSign, reasonText, tf: AI_TIMEFRAME, signalType, slPipsUsed, tpPipsUsed, deepLockTriggerPipsUsed, deepLockPipsUsed };
 }
 
 function findOpenAiTrade(aiTradeData) {
@@ -240,9 +252,11 @@ async function autoOpenAiPosition(aiTradeData, candles) {
     if (!sug) { console.log('Gak ada sinyal valid tick ini (confluence gak terpenuhi).'); return false; }
     const dateStr = todayWibDateStr();
     if (!aiTradeData[dateStr]) aiTradeData[dateStr] = [];
-    const layers = AI_TP_LAYERS_PIPS.map((tpPips, i) => {
+    const layers = sug.tpPipsUsed.map((tpPips, i) => {
         const layerEntry = sug.entry - sug.dirSign * pipToPrice(i * AI_LAYER_STAGGER_PIPS);
-        return { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(sug.slPipsUsed), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+        const layer = { tpPips, entry: layerEntry, tp: layerEntry + sug.dirSign * pipToPrice(tpPips), sl: layerEntry - sug.dirSign * pipToPrice(sug.slPipsUsed), lot: AI_LOT_SIZE, status: i === 0 ? 'open' : 'pending', pl: 0, slMoved: false };
+        if (i === sug.tpPipsUsed.length - 1) { layer.deepLockTriggerPips = sug.deepLockTriggerPipsUsed; layer.deepLockPips = sug.deepLockPipsUsed; }
+        return layer;
     });
     aiTradeData[dateStr].push({ arah: sug.arah, tf: sug.tf, entry: sug.entry, sl: layers[0].sl, layers, alasan: sug.reasonText, signalType: sug.signalType, status: 'open', pl: 0, openedAt: new Date().toISOString(), closedAt: null });
     console.log(`✅ Entry baru dibuka: ${sug.arah} @ ${sug.entry.toFixed(2)} (layer 2 & 3 pending di ${layers[1].entry.toFixed(2)} / ${layers[2].entry.toFixed(2)}).`);
@@ -265,6 +279,7 @@ function applyAiSettings(master) {
     AI_SL_MODE = master.slMode === 'atr' ? 'atr' : 'fixed';
     AI_ATR_MULTIPLIER = master.atrMultiplier ?? AI_MASTER_DEFAULTS.atrMultiplier;
     AI_TP_LAYERS_PIPS = tpLayers;
+    AI_TP_MODE = master.tpMode === 'adaptive' ? 'adaptive' : 'fixed';
     AI_PIP_VALUE_UNIT = master.pipValueUnit === 'usd' ? 'usd' : 'cent';
     AI_PIP_VALUE_PER_LOT = master.pipValuePerLot ?? AI_MASTER_DEFAULTS.pipValuePerLot;
     AI_LAYER_STAGGER_PIPS = master.layerStaggerPips ?? AI_MASTER_DEFAULTS.layerStaggerPips;
@@ -351,13 +366,16 @@ function checkAndCloseAiPosition(trade, candles, liveKursIDR) {
             }
             // Khusus layer terakhir: sekali floating tembus 100 pips, kunci SL lebih dalam ke +80 pips & mulai timer 15 menit.
             if (idx === trade.layers.length - 1) {
+                // Baca dari layer itu sendiri dulu (dibekukan pas entry, biar konsisten sama kondisi ATR waktu trade dibuka) - fallback ke konstanta global buat trade lama sebelum fitur TP Adaptif ada.
+                const trigger = ly.deepLockTriggerPips ?? AI_DEEP_LOCK_TRIGGER_PIPS;
+                const lockPips = ly.deepLockPips ?? AI_DEEP_LOCK_PIPS;
                 const pipsNow = ((c.close - layerEntry) * dirSign) / AI_PIP_SIZE;
-                if (pipsNow >= AI_DEEP_LOCK_TRIGGER_PIPS && !ly.deepLockAt) {
-                    ly.sl = layerEntry + dirSign * pipToPrice(AI_DEEP_LOCK_PIPS);
+                if (pipsNow >= trigger && !ly.deepLockAt) {
+                    ly.sl = layerEntry + dirSign * pipToPrice(lockPips);
                     ly.slMoved = true;
                     ly.deepLockAt = c.time;
                     changed = true;
-                    console.log(`🔒 Layer terakhir tembus ${AI_DEEP_LOCK_TRIGGER_PIPS} pips, SL dikunci +${AI_DEEP_LOCK_PIPS} pips, timer ${AI_DEEP_LOCK_TIMEOUT_MINUTES} menit mulai.`);
+                    console.log(`🔒 Layer terakhir tembus ${trigger} pips, SL dikunci +${lockPips} pips, timer ${AI_DEEP_LOCK_TIMEOUT_MINUTES} menit mulai.`);
                 }
                 if (ly.deepLockAt && (new Date(c.time).getTime() - new Date(ly.deepLockAt).getTime()) >= AI_DEEP_LOCK_TIMEOUT_MINUTES * 60000) {
                     const pipsAtClose = ((c.close - layerEntry) * dirSign) / AI_PIP_SIZE;

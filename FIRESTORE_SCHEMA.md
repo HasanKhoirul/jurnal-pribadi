@@ -55,7 +55,8 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       slPips: number,                   // default 50 - dipakai kalau slMode "fixed"
       slMode: "fixed"|"atr",             // default "fixed" - "atr" = SL ikut ATR(14) H1 x atrMultiplier, di-clamp 30-120 pips (clamp hardcode, bukan field)
       atrMultiplier: number,             // default 1.5 - dipakai kalau slMode "atr"
-      tpLayerPips: [number, number, number],  // default [80, 100, 150], index 0/1/2 = layer 1/2/3
+      tpLayerPips: [number, number, number],  // default [80, 100, 150], index 0/1/2 = layer 1/2/3 - dipakai kalau tpMode "fixed"
+      tpMode: "fixed"|"adaptive",        // default "fixed" - "adaptive" = TP & deep-lock Layer 3 proporsional ke slPipsUsed, pakai rasio dari tpLayerPips/slPips (independen dari slMode)
       pipValueUnit: "cent"|"usd",        // default "cent" - satuan pipValuePerLot. Kalibrasi sekarang khusus akun Cent user, GANTI MANUAL (bukan konversi otomatis) kalau pindah jenis akun, ambil angkanya dari spesifikasi kontrak simbol di broker
       pipValuePerLot: number,            // default 1 - nilai 1 pip pada lot referensi 0.1, dalam satuan pipValueUnit (default: 1 Cent per 0.1 lot, sesuai akun Cent)
       lotSize: number,                   // default 0.1
@@ -91,14 +92,16 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
         openedAt: string (ISO), closedAt: string|null,
         layers: [                                     // selalu 3 layer, index 0/1/2
           {
-            tpPips: 80|100|150,                        // jarak TP tetap per index
+            tpPips: number,                             // jarak TP layer ini - fixed (80/100/150) atau hasil hitungan adaptif, tergantung tpMode SAAT TRADE DIBUKA (dibekukan, gak berubah walau tpMode diganti belakangan)
             entry: number,                             // harga entry KHUSUS layer ini (layer0=sinyal, layer1=-10p, layer2=-20p dari sinyal, arah tergantung BUY/SELL)
             tp: number, sl: number,                     // harga TP/SL layer ini (SL bisa berubah karena trailing)
             lot: 0.1,
             status: "pending"|"open"|"tp"|"sl"|"be"|"timeout"|"timeout_lock"|"news_close"|"cancelled",
             pl: number,                                 // P/L (Rp) realized kalau status !== open/pending
             slMoved: boolean,                           // udah kena trailing lock atau belum
-            deepLockAt: string (ISO) | undefined        // cuma ada di layer terakhir (index 2), waktu SL dikunci +80p
+            deepLockAt: string (ISO) | undefined,       // cuma ada di layer terakhir (index 2), waktu SL dikunci
+            deepLockTriggerPips: number | undefined,    // cuma ada di layer terakhir KALAU tpMode "adaptive" pas dibuka - dibekukan, dipakai gantiin AI_DEEP_LOCK_TRIGGER_PIPS global buat trade ini. Kalau gak ada (trade lama/mode fixed), pakai konstanta global
+            deepLockPips: number | undefined            // sama kayak di atas, gantiin AI_DEEP_LOCK_PIPS
           }
         ]
       }
@@ -107,7 +110,7 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
 }
 ```
 
-**Layer 0** = market entry (harga sinyal), TP 80 pips. **Layer 1** = pending order -10 pips, TP 100 pips. **Layer 2** = pending order -20 pips, TP 150 pips (dan satu-satunya yang punya `deepLockAt`).
+**Layer 0** = market entry (harga sinyal), TP default 80 pips. **Layer 1** = pending order -10 pips, TP default 100 pips. **Layer 2** = pending order -20 pips, TP default 150 pips (dan satu-satunya yang punya `deepLockAt`/`deepLockTriggerPips`/`deepLockPips`). Angka TP default itu berubah proporsional kalau `tpMode` "adaptive" pas trade dibuka.
 
 ### Subcollection `appData/{uid}/ai_tick_log/{autoId}` — log aktivitas bot, ditulis tiap tick
 
@@ -131,7 +134,8 @@ Nilai di tabel ini cuma **default** — semuanya (kecuali `AI_PIP_SIZE`) bisa di
 | `AI_SL_PIPS` | 50 | SL awal tiap layer (dipakai kalau `AI_SL_MODE` "fixed") |
 | `AI_SL_MODE` | "fixed" | "fixed" \| "atr" - "atr" hitung SL dari ATR(14) H1 x `AI_ATR_MULTIPLIER`, di-clamp 30-120 pips (clamp hardcode di kode, bukan setting) |
 | `AI_ATR_MULTIPLIER` | 1.5 | Pengali ATR(14) buat SL, dipakai kalau `AI_SL_MODE` "atr" |
-| `AI_TP_LAYERS_PIPS` | [80, 100, 150] | TP per layer index 0/1/2 (selalu fixed, gak ikut ATR) |
+| `AI_TP_LAYERS_PIPS` | [80, 100, 150] | TP per layer index 0/1/2 (dipakai kalau `AI_TP_MODE` "fixed") |
+| `AI_TP_MODE` | "fixed" | "fixed" \| "adaptive" - "adaptive" hitung TP & deep-lock Layer 3 proporsional ke SL adaptif (rasio dari `AI_TP_LAYERS_PIPS`/`AI_SL_PIPS`), independen dari `AI_SL_MODE` |
 | `AI_LAYER_STAGGER_PIPS` | 10 | Jarak pending order antar layer |
 | `AI_LOCK_PIPS_AFTER_TP1` | 10 | Kunci profit layer 1&2 begitu layer 0 TP |
 | `AI_DEEP_LOCK_TRIGGER_PIPS` | 100 | Floating profit layer terakhir buat trigger deep-lock |
