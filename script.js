@@ -1791,14 +1791,91 @@ document.addEventListener("DOMContentLoaded", () => {
         let aiLossPct = closedTrades.length > 0 ? 100 - aiWinPct : 0;
         document.getElementById('ai-win-rate-text').innerHTML = `<span style="font-size:1.5rem;">${aiWinPct}% Win</span><span style="font-size:1.1rem; color:#ff1744;">${aiLossPct}% Loss</span>`;
 
-        const tbody = document.getElementById('ai-dashboard-table-body'); tbody.innerHTML = tableRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
-        tableRows.forEach((e, i) => {
-            const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '-');
-            tbody.innerHTML += `<tr><td>${i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${parseFloat(e.entry).toFixed(2)}</td><td>${parseFloat(e.sl).toFixed(2)}</td><td>${tpDisplay}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`;
-        });
+        aiTableMaster = tableRows;
+        aiTableCurrentPage = 1;
+        renderAiTable();
     }
     document.getElementById('ai-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderAiDashboard(); };
     document.getElementById('ai-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderAiDashboard(); };
+
+    // --- Detail Entry Simulasi: search + sort + pagination (client-side, dari aiTableMaster bulan yang lagi dibrowse) ---
+    let aiTableMaster = [];
+    let aiTableSearch = '';
+    let aiTableSort = { col: 'date', dir: 'desc' };
+    let aiTablePageSize = 30; // number | 'all'
+    let aiTableCurrentPage = 1;
+
+    function renderAiTable() {
+        let rows = [...aiTableMaster];
+        const q = aiTableSearch.trim().toLowerCase();
+        if (q) {
+            rows = rows.filter(e => {
+                const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '');
+                return [e.date, e.arah, e.alasan, tpDisplay].some(v => (v || '').toString().toLowerCase().includes(q));
+            });
+        }
+        const { col, dir } = aiTableSort;
+        rows.sort((a, b) => {
+            let va = a[col], vb = b[col];
+            if (typeof va === 'string' && typeof vb === 'string') return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+            va = parseFloat(va) || 0; vb = parseFloat(vb) || 0;
+            return dir === 'asc' ? va - vb : vb - va;
+        });
+
+        const total = rows.length;
+        const pageSize = aiTablePageSize === 'all' ? Math.max(total, 1) : aiTablePageSize;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (aiTableCurrentPage > totalPages) aiTableCurrentPage = totalPages;
+        const startIdx = (aiTableCurrentPage - 1) * pageSize;
+        const pageRows = rows.slice(startIdx, startIdx + pageSize);
+
+        const tbody = document.getElementById('ai-dashboard-table-body');
+        tbody.innerHTML = pageRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
+        pageRows.forEach((e, i) => {
+            const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '-');
+            tbody.innerHTML += `<tr><td>${startIdx + i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${parseFloat(e.entry).toFixed(2)}</td><td>${parseFloat(e.sl).toFixed(2)}</td><td>${tpDisplay}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`;
+        });
+
+        const pagEl = document.getElementById('ai-table-pagination');
+        pagEl.innerHTML = `<span style="color:#888; font-size:0.85rem;">${total === 0 ? 0 : startIdx + 1}-${Math.min(startIdx + pageSize, total)} dari ${total} entry</span>` +
+            `<div style="display:flex; gap:6px; align-items:center;">
+                <button type="button" class="btn-action" id="ai-table-prev" ${aiTableCurrentPage <= 1 ? 'disabled' : ''} style="padding:4px 12px;">&lt; Prev</button>
+                <span style="color:#ccc; font-size:0.85rem;">Hal ${aiTableCurrentPage}/${totalPages}</span>
+                <button type="button" class="btn-action" id="ai-table-next" ${aiTableCurrentPage >= totalPages ? 'disabled' : ''} style="padding:4px 12px;">Next &gt;</button>
+            </div>`;
+        document.getElementById('ai-table-prev').onclick = () => { aiTableCurrentPage--; renderAiTable(); };
+        document.getElementById('ai-table-next').onclick = () => { aiTableCurrentPage++; renderAiTable(); };
+
+        document.querySelectorAll('#ai-view-dashboard th.ai-sortable').forEach(th => {
+            const oldArrow = th.querySelector('.ai-sort-arrow'); if (oldArrow) oldArrow.remove();
+            if (th.dataset.col === col) {
+                const arrow = document.createElement('span'); arrow.className = 'ai-sort-arrow'; arrow.textContent = dir === 'asc' ? ' ▲' : ' ▼';
+                th.appendChild(arrow);
+            }
+        });
+    }
+
+    document.getElementById('ai-table-search').addEventListener('input', (e) => { aiTableSearch = e.target.value; aiTableCurrentPage = 1; renderAiTable(); });
+    document.getElementById('ai-table-page-size').addEventListener('change', (e) => {
+        const val = e.target.value;
+        document.getElementById('ai-table-page-size-custom').style.display = val === 'custom' ? 'inline-block' : 'none';
+        if (val === 'custom') { const n = parseInt(document.getElementById('ai-table-page-size-custom').value); aiTablePageSize = n > 0 ? n : 30; }
+        else aiTablePageSize = val === 'all' ? 'all' : parseInt(val);
+        aiTableCurrentPage = 1;
+        renderAiTable();
+    });
+    document.getElementById('ai-table-page-size-custom').addEventListener('input', (e) => {
+        const n = parseInt(e.target.value);
+        if (n > 0) { aiTablePageSize = n; aiTableCurrentPage = 1; renderAiTable(); }
+    });
+    document.querySelectorAll('#ai-view-dashboard th.ai-sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const col = th.dataset.col;
+            aiTableSort = aiTableSort.col === col ? { col, dir: aiTableSort.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'desc' };
+            aiTableCurrentPage = 1;
+            renderAiTable();
+        });
+    });
 
     // ==========================================
     // 3. MODUL PENGELUARAN BULANAN

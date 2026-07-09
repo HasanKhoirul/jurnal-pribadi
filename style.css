@@ -152,6 +152,7 @@ body { background-color: #121212; color: #e0e0e0; display: flex; height: 100vh; 
 .data-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 900px; }
 .data-table th, .data-table td { padding: clamp(8px, 1vw, 12px) clamp(8px, 1.2vw, 15px); text-align: left; border-bottom: 1px solid #333; vertical-align: top; white-space: normal; word-break: break-word; line-height: 1.5; }
 .data-table th { background-color: #2a2a2a; color: #aaa; cursor: pointer; white-space: nowrap; }
+.ai-sortable:hover { color: #fff; }
 
 .sport-day { border-top-color: #2196f3; }
 .exp-day { border-top-color: #ff1744; }

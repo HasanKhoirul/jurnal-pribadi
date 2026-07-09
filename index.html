@@ -293,8 +293,25 @@
                             </div>
                         </div>
 
-                        <div class="table-container"><h3 class="chart-title" style="margin-bottom:15px;">Detail Entry Simulasi</h3>
-                        <table class="data-table"><thead><tr><th>No</th><th>Tanggal</th><th>Arah</th><th>Entry</th><th>SL</th><th>TP</th><th>Alasan</th><th style="text-align:right;">P/L (Rp)</th></tr></thead><tbody id="ai-dashboard-table-body"></tbody></table></div>
+                        <div class="table-container">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:15px;">
+                            <h3 class="chart-title" style="margin:0;">Detail Entry Simulasi</h3>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <input type="text" id="ai-table-search" class="form-input" placeholder="🔍 Cari tanggal/arah/alasan..." style="width:220px;">
+                                <select id="ai-table-page-size" class="form-input" style="width:auto;">
+                                    <option value="10">10 / halaman</option>
+                                    <option value="30" selected>30 / halaman</option>
+                                    <option value="50">50 / halaman</option>
+                                    <option value="100">100 / halaman</option>
+                                    <option value="all">Semua</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                                <input type="number" id="ai-table-page-size-custom" class="form-input" placeholder="Jumlah" min="1" style="width:80px; display:none;">
+                            </div>
+                        </div>
+                        <table class="data-table"><thead><tr><th>No</th><th class="ai-sortable" data-col="date">Tanggal</th><th class="ai-sortable" data-col="arah">Arah</th><th class="ai-sortable" data-col="entry">Entry</th><th class="ai-sortable" data-col="sl">SL</th><th>TP</th><th>Alasan</th><th class="ai-sortable" style="text-align:right;" data-col="plVal">P/L (Rp)</th></tr></thead><tbody id="ai-dashboard-table-body"></tbody></table>
+                        <div id="ai-table-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; flex-wrap:wrap; gap:8px;"></div>
+                        </div>
                     </div>
                 </div>
 
