@@ -212,6 +212,13 @@
                         <div class="equity-box" style="border-left-color:#888;"><span class="label">MACD</span><h3 id="ai-trend-summary-macd" class="netral">-</h3></div>
                     </div>
                     <div id="ai-floating-pl" style="margin-bottom:15px;"></div>
+                    <div id="ai-method2-section" style="display:none;">
+                        <div class="equity-dashboard" style="grid-template-columns: repeat(2, 1fr); margin-bottom:15px;">
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Entry Posisi</span><h3 id="ai-live-entry-m2" style="color:#2196f3;">Belum ada posisi</h3></div>
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Floating P/L</span><h3 id="ai-live-total-pl-m2" class="netral">Rp 0</h3></div>
+                        </div>
+                        <div id="ai-floating-pl-m2" style="margin-bottom:15px;"></div>
+                    </div>
                     <div class="chart-card" style="padding:0; overflow:hidden; margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 0 20px; flex-wrap:wrap; gap:10px;">
                             <h3 class="chart-title" style="margin:0; color:#9c27b0;">🥇 XAUUSD (Gold Spot)</h3>
@@ -872,6 +879,10 @@
 
             <h3 class="master-group-title">📊 Summary Telegram</h3>
             <div class="master-row"><label>Interval Otomatis (jam)</label><input type="number" id="ai-master-summary-interval-hours" class="master-input" step="1" min="1"></div>
+
+            <h3 class="master-group-title">🔵 Metode 2 (ICT/SMC Liquidity Sweep)</h3>
+            <div class="master-row"><label>Status</label><select id="ai-master-method-two-enabled" class="master-input wide"><option value="off">Nonaktif</option><option value="on">Aktif</option></select></div>
+            <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Strategi terpisah (signalType &amp; slot posisi sendiri) — sweep HTF (H4) → CHoCH LTF (M15) → entry di Order Block. Cuma dihitung &amp; dieksekusi di bot VPS.</p>
 
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button id="btn-reset-ai-master" class="btn-action" style="flex:1; border-color:#666; color:#aaa;">Reset ke Default</button>

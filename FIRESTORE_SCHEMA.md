@@ -70,7 +70,8 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       winrateMinSamples: number,         // default 5
       newsPreMinutes: number,            // default 10
       newsPostMinutes: number,           // default 40
-      summaryIntervalHours: number       // default 6 - interval otomatis kirim summary Telegram (posisi terbuka, P/L hari/minggu/all-time). Nempel ke jam bulat WIB (00/06/12/18 kalau 6) dari tengah malam, BUKAN "N jam sejak restart terakhir" - gak kegeser walau bot di-restart
+      summaryIntervalHours: number,      // default 6 - interval otomatis kirim summary Telegram (posisi terbuka, P/L hari/minggu/all-time). Nempel ke jam bulat WIB (00/06/12/18 kalau 6) dari tengah malam, BUKAN "N jam sejak restart terakhir" - gak kegeser walau bot di-restart
+      methodTwoEnabled: boolean          // default false - kill-switch Metode 2 (ICT/SMC Liquidity Sweep). Cuma dihitung & dieksekusi di bot VPS (ai-tick.py) - script.js/ai-tick.mjs cuma baca hasilnya, gak compute ulang. Kalau false, ictState gak pernah diproses & slot method2 selalu kosong
     }
   },
   botControl: {                // command channel ke bot VPS (BUKAN setting kayak aiSettings) - dipicu tombol "🔄 Restart Bot (VPS)" / "📊 Kirim Summary" di web
@@ -83,13 +84,17 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     lastSummaryAt: string (ISO) | null    // dipakai bot buat cek udah lewat jadwal terdekat (00/06/12/18 WIB, dst) apa belum (summary otomatis)
   },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary
   aiModalAwal: number,        // modal awal simulasi Trading AI
+  // INVARIANT: maks 1 trade "open" PER GRUP signalType, bukan 1 trade open total lagi.
+  // Grup "method1" = trend_following + rsi_reversal (berbagi 1 slot, kayak sebelumnya).
+  // Grup "method2" = ict_liquidity_sweep (slot sendiri, independen dari method1) - biar 2 metode
+  // bisa dibandingin performanya tanpa saling starve slot. Lihat find_open_ai_trade_for_group (ai-tick.py) / findOpenAiTrade(signalTypes) (script.js).
   aiTradeData: {
     "YYYY-MM-DD": [
       {
-        arah: "BUY"|"SELL", tf: string,           // timeframe candle (mis. "5min", "1h")
+        arah: "BUY"|"SELL", tf: string,           // timeframe candle (mis. "5min", "1h", "M15" khusus method2)
         entry: number,                             // harga sinyal awal = entry layer 0
         sl: number,                                 // SL layer 0 (duplikat layers[0].sl, buat kompatibilitas lama)
-        signalType: "trend_following"|"rsi_reversal",
+        signalType: "trend_following"|"rsi_reversal"|"ict_liquidity_sweep",
         alasan: string,                             // teks reasoning (bisa dipoles LLM)
         status: "open"|"closed",                     // status TRADE keseluruhan
         pl: number,                                   // total P/L (Rp), terisi kalau closed
@@ -110,6 +115,17 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
         ]
       }
     ]
+  },
+  ictState: {                  // state-machine Metode 2 (ICT/SMC Liquidity Sweep), persisten antar-tick & antar-restart bot VPS. CUMA dibaca/ditulis ai-tick.py
+    phase: "idle"|"awaiting_choch"|"ready",  // idle -> (sweep H4 kedeteksi) -> awaiting_choch -> (CHoCH M15 confirmed) -> ready -> (dibuka jadi trade) -> idle lagi
+    direction: "BUY"|"SELL"|null,
+    sweepAt: string (ISO)|null,               // waktu sweep H4 kedeteksi - dipakai buat timeout 24 jam nunggu CHoCH
+    sweepLevel: number|null,                  // harga high/low yang di-sweep, jadi acuan SL (+ buffer 20 pips)
+    sweptHtfCandleTime: string (ISO)|null,    // waktu candle H4 yang men-trigger sweep - dedupe, biar gak re-trigger tiap tick sebelum candle H4 baru
+    readyEntry: number|null,                  // dibekukan pas phase "ready" (midpoint Order Block M15) - dipakai persis pas dibuka, gak dihitung ulang
+    readySl: number|null,
+    readyTpPipsUsed: [number, number, number]|null,
+    readyAlasan: string|null
   }
 }
 ```
@@ -150,10 +166,13 @@ Nilai di tabel ini cuma **default** — semuanya (kecuali `AI_PIP_SIZE`) bisa di
 | `AI_WINRATE_MIN_SAMPLES` | 5 | Minimal sample sebelum filter win rate aktif |
 | `AI_NEWS_PRE_MINUTES` / `AI_NEWS_POST_MINUTES` | 10 / 40 | Window "rawan berita" sebelum/sesudah rilis data high-impact |
 | `AI_SUMMARY_INTERVAL_HOURS` | 6 | Interval otomatis kirim summary Telegram (ai-tick.py only, gak ada di script.js/ai-tick.mjs) |
+| `AI_METHOD_TWO_ENABLED` | false | Kill-switch Metode 2 (ICT). ai-tick.py only - script.js cuma pakainya buat show/hide section dashboard, ai-tick.mjs gak tau soal ini sama sekali |
+
+**Konstanta Metode 2 (ICT) — hardcode di `ai-tick.py`, BUKAN Master Setting** (v1, boleh dipromosikan ke setting kalau kepake): `AI_ICT_HTF_MT5` = H4, `AI_ICT_LTF_MT5` = M15, `AI_ICT_SWING_LOOKBACK` = 2 (candle fractal tiap sisi), `AI_ICT_CHOCH_TIMEOUT_HOURS` = 24, `AI_ICT_DISPLACEMENT_MIN_BODY_RATIO` = 0.7, `AI_ICT_SL_BUFFER_PIPS` = 20.
 
 **Catatan hemat kuota Firestore**: `ai-tick.py` push `aiLivePriceMt5` ke `appData/public` di-throttle (`AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3`, hardcode bukan setting) — cuma ditulis tiap ~30 detik (3x `FAST_LOOP_SECONDS`), bukan tiap tick. Ini **cuma soal tampilan** — eksekusi (cek SL/TP/deep-lock/news) tetap jalan tiap tick (~10 detik) baca harga langsung dari MT5, gak kepengaruh throttle ini. `AI_LIVE_PRICE_MAX_AGE_SECONDS` di script.js dinaikin ke 45 (dari 30) buat kasih buffer terhadap siklus push yang lebih jarang ini.
 
 ## File terkait
 - **[script.js](script.js)** — logic sisi browser (modul "MODUL TRADING AI"), plus semua modul lain (jurnal manual, pengeluaran, olahraga, wealth).
 - **[scripts/ai-tick.mjs](scripts/ai-tick.mjs)** — logic sisi server (Node.js + firebase-admin), dijalankan `.github/workflows/ai-trading-tick.yml` tiap ~15 menit (realistanya bisa 1-2.5 jam karena keterbatasan jadwal GitHub Actions gratis).
-- Kedua file di atas **harus selalu identik logic-nya** — kalau ada perubahan, wajib di-mirror ke keduanya.
+- Kedua file di atas **harus selalu identik logic-nya untuk Metode 1** (trend_following/rsi_reversal) — kalau ada perubahan, wajib di-mirror ke keduanya. **Pengecualian: Metode 2 (ICT/SMC liquidity sweep) CUMA ada di `ai-tick.py`** — gak di-mirror ke `script.js`/`ai-tick.mjs` (keputusan scope sengaja, biar gak ada 3 implementasi state-machine stateful yang harus identik presisi). Kalau VPS mati, Metode 2 otomatis berhenti sementara; Metode 1 tetap jalan lewat fallback GitHub Actions.

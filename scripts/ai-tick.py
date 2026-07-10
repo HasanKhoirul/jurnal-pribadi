@@ -37,6 +37,10 @@ SYMBOL_CANDIDATES = ['XAUUSD', 'XAUUSDm', 'XAUUSDc', 'XAUUSDz', 'XAUUSDr', 'XAUU
 AI_TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
 AI_TIMEFRAME_LABEL = '1h'
 
+# Metode 2 (ICT/SMC Liquidity Sweep) - HTF buat validasi sweep, LTF buat CHoCH + entry. Cuma dipakai kalau AI_METHOD_TWO_ENABLED.
+AI_ICT_HTF_MT5 = mt5.TIMEFRAME_H4
+AI_ICT_LTF_MT5 = mt5.TIMEFRAME_M15
+
 FAST_LOOP_SECONDS = 10
 SLOW_LOOP_SECONDS = 300  # 5 menit
 
@@ -52,6 +56,7 @@ AI_MASTER_DEFAULTS = {
     'pipValueUnit': 'cent', 'pipValuePerLot': 1,
     'tpMode': 'fixed',
     'summaryIntervalHours': 6,
+    'methodTwoEnabled': False,
 }
 AI_LOT_SIZE = AI_MASTER_DEFAULTS['lotSize']
 AI_SL_PIPS = AI_MASTER_DEFAULTS['slPips']
@@ -72,6 +77,7 @@ AI_WINRATE_MIN_SAMPLES = AI_MASTER_DEFAULTS['winrateMinSamples']
 AI_NEWS_PRE_MINUTES = AI_MASTER_DEFAULTS['newsPreMinutes']
 AI_NEWS_POST_MINUTES = AI_MASTER_DEFAULTS['newsPostMinutes']
 AI_SUMMARY_INTERVAL_HOURS = AI_MASTER_DEFAULTS['summaryIntervalHours']
+AI_METHOD_TWO_ENABLED = AI_MASTER_DEFAULTS['methodTwoEnabled']
 
 
 def apply_ai_settings(master):
@@ -81,6 +87,7 @@ def apply_ai_settings(master):
     global AI_NEWS_PRE_MINUTES, AI_NEWS_POST_MINUTES
     global AI_PIP_VALUE_UNIT, AI_PIP_VALUE_PER_LOT
     global AI_SUMMARY_INTERVAL_HOURS
+    global AI_METHOD_TWO_ENABLED
     master = master or {}
     tp_layers = master.get('tpLayerPips')
     if not (isinstance(tp_layers, list) and len(tp_layers) == 3 and all(isinstance(x, (int, float)) for x in tp_layers)):
@@ -104,6 +111,7 @@ def apply_ai_settings(master):
     AI_NEWS_PRE_MINUTES = master.get('newsPreMinutes', AI_MASTER_DEFAULTS['newsPreMinutes'])
     AI_NEWS_POST_MINUTES = master.get('newsPostMinutes', AI_MASTER_DEFAULTS['newsPostMinutes'])
     AI_SUMMARY_INTERVAL_HOURS = master.get('summaryIntervalHours', AI_MASTER_DEFAULTS['summaryIntervalHours'])
+    AI_METHOD_TWO_ENABLED = bool(master.get('methodTwoEnabled', AI_MASTER_DEFAULTS['methodTwoEnabled']))
 
 
 def log(msg):
@@ -275,8 +283,8 @@ def fetch_live_kurs_idr():
         return 16000
 
 
-def fetch_candles(count=100):
-    rates = mt5.copy_rates_from_pos(SYMBOL, AI_TIMEFRAME_MT5, 0, count)
+def fetch_candles(count=100, timeframe=AI_TIMEFRAME_MT5):
+    rates = mt5.copy_rates_from_pos(SYMBOL, timeframe, 0, count)
     if rates is None or len(rates) == 0:
         raise RuntimeError(f"Gagal ambil candle MT5: {mt5.last_error()}")
     return [
@@ -393,10 +401,18 @@ def compute_ai_suggestion(candles, trade_data):
     }
 
 
-def find_open_ai_trade(ai_trade_data):
+# Method 1 (trend_following/rsi_reversal) & Method 2 (ICT) masing2 punya slot posisi terbuka SENDIRI -
+# supaya gak rebutan/starve satu sama lain saat mau dibandingin performanya (lihat memory bank-ide poin 7).
+METHOD_GROUPS = {
+    'method1': {'trend_following', 'rsi_reversal'},
+    'method2': {'ict_liquidity_sweep'},
+}
+
+
+def find_open_ai_trade_for_group(ai_trade_data, signal_types):
     for date_key, trades in ai_trade_data.items():
         for i, t in enumerate(trades):
-            if t.get('status') == 'open':
+            if t.get('status') == 'open' and t.get('signalType') in signal_types:
                 return {'dateKey': date_key, 'index': i, 'trade': t}
     return None
 
@@ -441,8 +457,7 @@ def get_all_time_pl(ai_trade_data):
     return total, count
 
 
-def auto_open_ai_position(ai_trade_data, candles):
-    sug = compute_ai_suggestion(candles, ai_trade_data)
+def auto_open_ai_position(ai_trade_data, sug):
     if not sug:
         return False
     date_str = today_wib_date_str()
@@ -483,6 +498,195 @@ def auto_open_ai_position(ai_trade_data, candles):
         f"📝 <i>{sug['reasonText']}</i>"
     )
     return True
+
+
+# ---------- Metode 2: ICT/SMC Liquidity Sweep ----------
+# State-machine 3 langkah, persisten lewat Firestore field `ictState` (survive restart & antar-tick):
+#   idle -> (sweep H4 kedeteksi) -> awaiting_choch -> (CHoCH M15 confirmed) -> ready -> (dibuka) -> idle
+# Asumsi/default yang gak eksplisit disebut di materi sumber (didokumentasikan di plan, boleh di-tuning kalau kepake):
+# swing fractal K=2 candle, timeout CHoCH 24 jam, entry = OB midpoint (bukan FVG), SL buffer 20 pips.
+AI_ICT_SWING_LOOKBACK = 2
+AI_ICT_CHOCH_TIMEOUT_HOURS = 24
+AI_ICT_DISPLACEMENT_MIN_BODY_RATIO = 0.7
+AI_ICT_SL_BUFFER_PIPS = 20
+
+ICT_STATE_DEFAULT = {
+    'phase': 'idle', 'direction': None, 'sweepAt': None, 'sweepLevel': None,
+    'sweptHtfCandleTime': None, 'readyEntry': None, 'readySl': None,
+    'readyTpPipsUsed': None, 'readyAlasan': None,
+}
+
+
+def _find_swings(candles, lookback=AI_ICT_SWING_LOOKBACK):
+    # Fractal sederhana: candle dianggap swing high/low kalau high/low-nya paling ekstrem dibanding
+    # `lookback` candle sebelum & sesudahnya. Return list terurut naik berdasar index (item terakhir = terbaru).
+    highs, lows = [], []
+    n = len(candles)
+    for i in range(lookback, n - lookback):
+        window = candles[i - lookback:i + lookback + 1]
+        if candles[i]['high'] == max(c['high'] for c in window):
+            highs.append((i, candles[i]['high']))
+        if candles[i]['low'] == min(c['low'] for c in window):
+            lows.append((i, candles[i]['low']))
+    return highs, lows
+
+
+def _body_to_wick_ratio(candle):
+    total_range = candle['high'] - candle['low']
+    if total_range <= 0:
+        return 0.0
+    return abs(candle['close'] - candle['open']) / total_range
+
+
+def detect_htf_sweep(htf_candles):
+    # Cek candle H4 terakhir yang closed: nembus swing high/low sebelumnya TAPI close balik masuk range
+    # lagi (rejection wick) - signature standar "liquidity sweep".
+    if len(htf_candles) < AI_ICT_SWING_LOOKBACK * 2 + 3:
+        return None
+    prior, last = htf_candles[:-1], htf_candles[-1]
+    highs, lows = _find_swings(prior, AI_ICT_SWING_LOOKBACK)
+    if highs:
+        swing_high = highs[-1][1]
+        if last['high'] > swing_high and last['close'] < swing_high:
+            return {'direction': 'SELL', 'sweepLevel': last['high'], 'candleTime': last['time']}
+    if lows:
+        swing_low = lows[-1][1]
+        if last['low'] < swing_low and last['close'] > swing_low:
+            return {'direction': 'BUY', 'sweepLevel': last['low'], 'candleTime': last['time']}
+    return None
+
+
+def detect_ltf_choch(ltf_candles, ict_state):
+    # Cari swing M15 yang terbentuk SETELAH sweep, lalu tunggu candle yang closenya nembus swing itu
+    # (Change of Character) DAN memenuhi filter displacement (body-to-wick >=70%, divalidasi 2 sumber materi).
+    sweep_at = ict_state.get('sweepAt')
+    if not sweep_at:
+        return None
+    sweep_dt = datetime.fromisoformat(sweep_at)
+    post_sweep = [c for c in ltf_candles if datetime.fromisoformat(c['time']) >= sweep_dt]
+    if len(post_sweep) < AI_ICT_SWING_LOOKBACK * 2 + 3:
+        return None
+
+    direction = ict_state.get('direction')
+    highs, lows = _find_swings(post_sweep, AI_ICT_SWING_LOOKBACK)
+
+    if direction == 'SELL' and lows:
+        idx, level = lows[-1]
+        for c in post_sweep[idx + 1:]:
+            if c['close'] < level:
+                if _body_to_wick_ratio(c) >= AI_ICT_DISPLACEMENT_MIN_BODY_RATIO:
+                    return {'chochCandle': c, 'chochLevel': level}
+                return None  # structure break tanpa displacement cukup - bukan CHoCH valid, tunggu sweep baru
+    elif direction == 'BUY' and highs:
+        idx, level = highs[-1]
+        for c in post_sweep[idx + 1:]:
+            if c['close'] > level:
+                if _body_to_wick_ratio(c) >= AI_ICT_DISPLACEMENT_MIN_BODY_RATIO:
+                    return {'chochCandle': c, 'chochLevel': level}
+                return None
+    return None
+
+
+def build_ict_ready_suggestion(ltf_candles, choch, ict_state):
+    direction = ict_state['direction']
+    dir_sign = 1 if direction == 'BUY' else -1
+    choch_candle = choch['chochCandle']
+    choch_idx = next((i for i, c in enumerate(ltf_candles) if c['time'] == choch_candle['time']), None)
+    if not choch_idx:
+        return None
+
+    # Order Block = candle M15 terakhir berlawanan warna sebelum leg displacement yang bikin CHoCH.
+    ob_candle = None
+    for i in range(choch_idx - 1, -1, -1):
+        c = ltf_candles[i]
+        is_down_close = c['close'] < c['open']
+        if direction == 'SELL' and not is_down_close:
+            ob_candle = c
+            break
+        if direction == 'BUY' and is_down_close:
+            ob_candle = c
+            break
+    if ob_candle is None:
+        return None
+
+    entry = (ob_candle['high'] + ob_candle['low']) / 2
+    sl = ict_state['sweepLevel'] - dir_sign * pip_to_price(AI_ICT_SL_BUFFER_PIPS)
+    sl_pips_used = abs((entry - sl) / AI_PIP_SIZE)
+    if sl_pips_used <= 0:
+        return None
+
+    tp_pips_used = (
+        [round(sl_pips_used * (tp / AI_SL_PIPS)) for tp in AI_TP_LAYERS_PIPS]
+        if AI_SL_PIPS > 0 else list(AI_TP_LAYERS_PIPS)
+    )
+    reason = (
+        f"[Metode 2 - ICT] Sweep {direction} @ {ict_state['sweepLevel']:.2f}, CHoCH M15 confirmed, "
+        f"entry OB midpoint {entry:.2f}, SL {sl_pips_used:.0f} pips."
+    )
+    return {
+        'arah': direction, 'entry': entry, 'sl': sl, 'dirSign': dir_sign,
+        'reasonText': reason, 'tf': 'M15', 'signalType': 'ict_liquidity_sweep',
+        'slPipsUsed': round(sl_pips_used), 'tpPipsUsed': tp_pips_used,
+        'deepLockTriggerPipsUsed': AI_DEEP_LOCK_TRIGGER_PIPS, 'deepLockPipsUsed': AI_DEEP_LOCK_PIPS,
+    }
+
+
+def run_ict_state_machine(ict_state, ai_trade_data):
+    # Return (new_ict_state, ready_sug_or_None). Dipanggil tiap slow tick kalau AI_METHOD_TWO_ENABLED &
+    # slot method2 kosong. Progres state machine (deteksi sweep/CHoCH) tetap jalan lepas dari kondisi
+    # market/news - itu cuma analisa struktur harga historis, bukan aksi eksekusi.
+    state = dict(ICT_STATE_DEFAULT, **(ict_state or {}))
+    try:
+        if state['phase'] == 'idle':
+            htf_candles = fetch_candles(60, AI_ICT_HTF_MT5)
+            sweep = detect_htf_sweep(htf_candles)
+            if sweep and sweep['candleTime'] != state.get('sweptHtfCandleTime'):
+                state.update({
+                    'phase': 'awaiting_choch', 'direction': sweep['direction'],
+                    'sweepLevel': sweep['sweepLevel'], 'sweepAt': datetime.now(timezone.utc).isoformat(),
+                    'sweptHtfCandleTime': sweep['candleTime'],
+                })
+                log_ai_tick('ict_sweep', f"Metode 2: sweep {sweep['direction']} @ {sweep['sweepLevel']:.2f} kedeteksi (H4), nunggu CHoCH M15.")
+            return state, None
+
+        if state['phase'] == 'awaiting_choch':
+            sweep_at = datetime.fromisoformat(state['sweepAt'])
+            if datetime.now(timezone.utc) - sweep_at > timedelta(hours=AI_ICT_CHOCH_TIMEOUT_HOURS):
+                log_ai_tick('ict_timeout', f"Metode 2: sweep {state['direction']} @ {state['sweepLevel']:.2f} basi, gak ada CHoCH dlm {AI_ICT_CHOCH_TIMEOUT_HOURS} jam, reset.")
+                return dict(ICT_STATE_DEFAULT), None
+
+            ltf_candles = fetch_candles(120, AI_ICT_LTF_MT5)
+            choch = detect_ltf_choch(ltf_candles, state)
+            if not choch:
+                return state, None
+            sug = build_ict_ready_suggestion(ltf_candles, choch, state)
+            if not sug:
+                return dict(ICT_STATE_DEFAULT), None
+            state.update({
+                'phase': 'ready', 'readyEntry': sug['entry'], 'readySl': sug['sl'],
+                'readyTpPipsUsed': sug['tpPipsUsed'], 'readyAlasan': sug['reasonText'],
+            })
+            log_ai_tick('ict_ready', sug['reasonText'])
+            return state, None
+
+        if state['phase'] == 'ready':
+            wr = get_recent_signal_winrate(ai_trade_data, 'ict_liquidity_sweep')
+            if wr is not None and wr < AI_MIN_SIGNAL_WINRATE:
+                return state, None  # winrate lg rendah, tahan buka - state 'ready' tetap disimpan, dicoba lagi tick berikutnya
+            direction = state['direction']
+            sug = {
+                'arah': direction, 'entry': state['readyEntry'], 'sl': state['readySl'],
+                'dirSign': 1 if direction == 'BUY' else -1,
+                'reasonText': state['readyAlasan'], 'tf': 'M15', 'signalType': 'ict_liquidity_sweep',
+                'slPipsUsed': round(abs((state['readyEntry'] - state['readySl']) / AI_PIP_SIZE)),
+                'tpPipsUsed': state['readyTpPipsUsed'],
+                'deepLockTriggerPipsUsed': AI_DEEP_LOCK_TRIGGER_PIPS, 'deepLockPipsUsed': AI_DEEP_LOCK_PIPS,
+            }
+            return state, sug
+    except Exception as e:
+        log(f"Metode 2 (ICT) state machine error, reset ke idle: {e}")
+        return dict(ICT_STATE_DEFAULT), None
+    return state, None
 
 
 def cancel_pending_siblings(trade):
@@ -708,25 +912,28 @@ def handle_restart_request():
 # Datanya (ai_trade_data) udah kebaca doc_ref.get() tiap tick buat keperluan lain - ngirim summary ini
 # gak nambah read Firestore sama sekali, cuma format teks + kirim ke Telegram (gratis).
 def send_periodic_summary(ai_trade_data, tick):
-    open_info = find_open_ai_trade(ai_trade_data)
-    if open_info:
-        trade = open_info['trade']
-        dir_sign = 1 if trade['arah'] == 'BUY' else -1
-        px = exit_price_for(trade['arah'], tick.bid, tick.ask)
-        live_kurs = get_cached_kurs(datetime.now(timezone.utc))
-        total_floating = 0.0
-        for ly in trade.get('layers', []):
-            if ly['status'] != 'open':
-                continue
-            pips = ((px - ly['entry']) * dir_sign) / AI_PIP_SIZE
-            total_floating += usc_to_rupiah(calc_layer_pl_usc(pips), live_kurs)
-        send_telegram(
-            f"📍 <b>Posisi Terbuka</b>\n\n"
-            f"{trade['arah']} @ {trade['entry']:.2f}\n"
-            f"Floating P/L: <b>{format_rupiah(total_floating)}</b>"
-        )
-    else:
-        send_telegram("📍 <b>Posisi Terbuka</b>\n\nGak ada posisi open saat ini.")
+    for group_name, group_label in (('method1', ''), ('method2', ' — Metode 2 (ICT)')):
+        if group_name == 'method2' and not AI_METHOD_TWO_ENABLED:
+            continue  # metode 2 lg off - gak usah kirim pesan "gak ada posisi" yg gak relevan
+        open_info = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS[group_name])
+        if open_info:
+            trade = open_info['trade']
+            dir_sign = 1 if trade['arah'] == 'BUY' else -1
+            px = exit_price_for(trade['arah'], tick.bid, tick.ask)
+            live_kurs = get_cached_kurs(datetime.now(timezone.utc))
+            total_floating = 0.0
+            for ly in trade.get('layers', []):
+                if ly['status'] != 'open':
+                    continue
+                pips = ((px - ly['entry']) * dir_sign) / AI_PIP_SIZE
+                total_floating += usc_to_rupiah(calc_layer_pl_usc(pips), live_kurs)
+            send_telegram(
+                f"📍 <b>Posisi Terbuka{group_label}</b>\n\n"
+                f"{trade['arah']} @ {trade['entry']:.2f}\n"
+                f"Floating P/L: <b>{format_rupiah(total_floating)}</b>"
+            )
+        else:
+            send_telegram(f"📍 <b>Posisi Terbuka{group_label}</b>\n\nGak ada posisi open saat ini.")
 
     today_pl, today_n = get_today_pl(ai_trade_data)
     send_telegram(f"📅 <b>P/L Hari Ini</b>\n\n{format_rupiah(today_pl)} dari {today_n} entry closed.")
@@ -839,33 +1046,42 @@ def run_fast_tick():
 
     maybe_send_summary(ai_trade_data, bot_control, tick, now)
 
-    open_info = find_open_ai_trade(ai_trade_data)
-    if not open_info:
-        return
-
     live_kurs = get_cached_kurs(now)
     news_info = get_cached_news(now)
 
-    if news_info:
-        changed = force_close_all_layers_at_market(open_info['trade'], tick.bid, tick.ask, live_kurs, 'news_close', now)
-        if changed:
-            doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
-            msg = f"Posisi ditutup paksa: berita high-impact \"{news_info['title']}\"."
-            log(msg)
-            log_ai_tick('news_close', msg)
-            send_telegram(f"📰 <b>Posisi Ditutup (Berita)</b>\n\n{msg}")
-        return
+    # Method 1 & Method 2 masing2 punya slot sendiri (lihat METHOD_GROUPS) - diproses independen
+    # supaya 1 metode gak nge-block cek SL/TP/deep-lock metode satunya.
+    any_changed = False
+    for group_name, signal_types in METHOD_GROUPS.items():
+        open_info = find_open_ai_trade_for_group(ai_trade_data, signal_types)
+        if not open_info:
+            continue
+        label = 'Metode 2 (ICT) ' if group_name == 'method2' else ''
+        trade = open_info['trade']
 
-    result = check_and_close_position_tick(open_info['trade'], tick.bid, tick.ask, live_kurs, now)
-    if result['changed']:
+        if news_info:
+            changed = force_close_all_layers_at_market(trade, tick.bid, tick.ask, live_kurs, 'news_close', now)
+            if changed:
+                any_changed = True
+                msg = f"Posisi {label}ditutup paksa: berita high-impact \"{news_info['title']}\"."
+                log(msg)
+                log_ai_tick('news_close', msg)
+                send_telegram(f"📰 <b>Posisi Ditutup (Berita)</b>\n\n{msg}")
+            continue
+
+        result = check_and_close_position_tick(trade, tick.bid, tick.ask, live_kurs, now)
+        if result['changed']:
+            any_changed = True
+            outcome = 'position_closed' if result['allResolved'] else 'position_updated'
+            detail = ' '.join(result['notes']) or ('Trade selesai.' if result['allResolved'] else 'Ada layer yang resolve/lock.')
+            log(label + detail)
+            log_ai_tick(outcome, detail)
+            header = '🔒 <b>Trade Selesai</b>' if result['allResolved'] else '📊 <b>Update Posisi</b>'
+            notes_html = label + ('\n'.join(result['notes']) or detail)
+            send_telegram(f"{header}\n\n{notes_html}")
+
+    if any_changed:
         doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
-        outcome = 'position_closed' if result['allResolved'] else 'position_updated'
-        detail = ' '.join(result['notes']) or ('Trade selesai.' if result['allResolved'] else 'Ada layer yang resolve/lock.')
-        log(detail)
-        log_ai_tick(outcome, detail)
-        header = '🔒 <b>Trade Selesai</b>' if result['allResolved'] else '📊 <b>Update Posisi</b>'
-        notes_html = '\n'.join(result['notes']) or detail
-        send_telegram(f"{header}\n\n{notes_html}")
 
 
 def run_slow_tick():
@@ -884,32 +1100,57 @@ def run_slow_tick():
     data = snap.to_dict() if snap.exists else {}
     ai_trade_data = data.get('aiTradeData', {})
     ai_modal_awal = data.get('aiModalAwal', 2500000)
-
-    open_info = find_open_ai_trade(ai_trade_data)
     news_info = get_cached_news(now)
-
-    if open_info:
-        log("Posisi masih open, belum ada perubahan (dicek ulang tiap fast loop).")
-        log_ai_tick('waiting', 'Posisi masih open, belum ada perubahan.')
-        return
 
     if not is_market_open(now):
         log("Market tutup (weekend), skip.")
         log_ai_tick('market_closed', 'Weekend, market tutup.')
         return
 
-    if news_info:
-        msg = f"Jam rawan berita high-impact \"{news_info['title']}\", entry baru ditahan."
+    # ---------- Method 1 (trend_following / rsi_reversal) - slot & logic sama seperti sebelumnya ----------
+    open_m1 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method1'])
+    if open_m1:
+        log("Metode 1: posisi masih open, belum ada perubahan (dicek ulang tiap fast loop).")
+        log_ai_tick('waiting', 'Metode 1: posisi masih open, belum ada perubahan.')
+    elif news_info:
+        msg = f"Jam rawan berita high-impact \"{news_info['title']}\", entry Metode 1 ditahan."
         log(msg)
         log_ai_tick('news_block', msg)
+    else:
+        sug1 = compute_ai_suggestion(candles, ai_trade_data)
+        opened1 = auto_open_ai_position(ai_trade_data, sug1)
+        if opened1:
+            doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
+            log_ai_tick('entry_opened', 'Entry Metode 1 berhasil dibuka.')
+        else:
+            log_ai_tick('no_signal', last_signal_skip_reason or 'Gak ada sinyal Metode 1 valid tick ini.')
+
+    # ---------- Method 2 (ICT/SMC liquidity sweep) - slot terpisah, independen dari Method 1 ----------
+    if not AI_METHOD_TWO_ENABLED:
+        return
+    open_m2 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method2'])
+    if open_m2:
+        log_ai_tick('waiting_m2', 'Metode 2: posisi masih open, belum ada perubahan.')
         return
 
-    opened = auto_open_ai_position(ai_trade_data, candles)
-    if opened:
-        doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
-        log_ai_tick('entry_opened', 'Entry baru berhasil dibuka.')
-    else:
-        log_ai_tick('no_signal', last_signal_skip_reason or 'Gak ada sinyal valid tick ini.')
+    ict_state = data.get('ictState') or dict(ICT_STATE_DEFAULT)
+    new_state, ready_sug = run_ict_state_machine(ict_state, ai_trade_data)
+    if new_state != ict_state:
+        doc_ref.set({'ictState': new_state}, merge=True)
+
+    if not ready_sug:
+        return
+    if news_info:
+        log_ai_tick('news_block_m2', f"Sinyal Metode 2 ready tapi jam rawan berita, entry ditahan.")
+        return
+
+    opened2 = auto_open_ai_position(ai_trade_data, ready_sug)
+    if opened2:
+        doc_ref.set(
+            {'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)},
+            merge=True,
+        )
+        log_ai_tick('entry_opened_m2', 'Entry Metode 2 (ICT) berhasil dibuka.')
 
 
 def main():

@@ -101,7 +101,7 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (document.getElementById('ai-menu-calendar').classList.contains('active')) renderAiCalendar();
             else if (document.getElementById('ai-menu-log').classList.contains('active')) renderAiLog();
             else if (document.getElementById('ai-menu-market').classList.contains('active') && lastAiCandles) {
-                const openInfo = findOpenAiTrade();
+                const openInfo = findOpenAiTrade(AI_METHOD_GROUPS.method1);
                 updateLiveStatsBoxes(openInfo, lastAiCandles);
                 if (openInfo) updateFloatingPl(openInfo, lastAiCandles);
             }
@@ -863,7 +863,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 window.addEventListener('resize', () => { if (aiChart) aiChart.applyOptions({ width: container.clientWidth }); });
             }
             aiCandleSeries.setData(candles.map(c => ({ time: Math.floor(new Date(c.time).getTime() / 1000), open: c.open, high: c.high, low: c.low, close: c.close })));
-            const openInfo = findOpenAiTrade();
+            const openInfo = findOpenAiTrade(AI_METHOD_GROUPS.method1);
             if (openInfo) updateTradeLines(openInfo.trade); else clearAiPriceLines();
             updateTrendSummary();
         });
@@ -1171,10 +1171,18 @@ document.addEventListener("DOMContentLoaded", () => {
         return { arah, entry, sl, dirSign, reasonText, tf: aiTimeframe, signalType, slPipsUsed, tpPipsUsed, deepLockTriggerPipsUsed, deepLockPipsUsed };
     }
 
-    function findOpenAiTrade() {
+    // Method 1 (trend_following/rsi_reversal) & Method 2 (ICT) masing2 punya slot posisi terbuka sendiri -
+    // dashboard butuh nunjukin keduanya independen, jadi findOpenAiTrade sekarang bisa difilter per grup.
+    const AI_METHOD_GROUPS = {
+        method1: new Set(['trend_following', 'rsi_reversal']),
+        method2: new Set(['ict_liquidity_sweep']),
+    };
+    function findOpenAiTrade(signalTypes) {
         for (const d in aiTradeData) {
             const list = aiTradeData[d];
-            for (let i = 0; i < list.length; i++) { if (list[i].status === 'open') return { dateKey: d, index: i, trade: list[i] }; }
+            for (let i = 0; i < list.length; i++) {
+                if (list[i].status === 'open' && (!signalTypes || signalTypes.has(list[i].signalType))) return { dateKey: d, index: i, trade: list[i] };
+            }
         }
         return null;
     }
@@ -1216,8 +1224,11 @@ document.addEventListener("DOMContentLoaded", () => {
         riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
         tpMode: 'fixed',
-        summaryIntervalHours: 6
+        summaryIntervalHours: 6,
+        methodTwoEnabled: false
     };
+    // Metode 2 (ICT) cuma dihitung & dieksekusi di bot VPS (ai-tick.py) - flag ini di browser cuma buat show/hide section dashboard-nya.
+    let AI_METHOD_TWO_ENABLED = false;
     function getMasterSettings() {
         return Object.assign({}, AI_MASTER_DEFAULTS, (aiSettings && aiSettings.master) || {});
     }
@@ -1241,6 +1252,9 @@ document.addEventListener("DOMContentLoaded", () => {
         AI_WINRATE_MIN_SAMPLES = m.winrateMinSamples;
         AI_NEWS_PRE_MINUTES = m.newsPreMinutes;
         AI_NEWS_POST_MINUTES = m.newsPostMinutes;
+        AI_METHOD_TWO_ENABLED = !!m.methodTwoEnabled;
+        const m2Section = document.getElementById('ai-method2-section');
+        if (m2Section) m2Section.style.display = AI_METHOD_TWO_ENABLED ? '' : 'none';
     }
     applyMasterSettings();
 
@@ -1281,6 +1295,7 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-news-pre-minutes').value = m.newsPreMinutes;
         document.getElementById('ai-master-news-post-minutes').value = m.newsPostMinutes;
         document.getElementById('ai-master-summary-interval-hours').value = m.summaryIntervalHours;
+        document.getElementById('ai-master-method-two-enabled').value = m.methodTwoEnabled ? 'on' : 'off';
         document.getElementById('ai-master-modal').style.display = 'flex';
         updateAiMasterPreview();
     };
@@ -1357,7 +1372,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 winrateMinSamples: fields.winrateMinSamples,
                 newsPreMinutes: fields.newsPreMinutes,
                 newsPostMinutes: fields.newsPostMinutes,
-                summaryIntervalHours: fields.summaryIntervalHours
+                summaryIntervalHours: fields.summaryIntervalHours,
+                methodTwoEnabled: document.getElementById('ai-master-method-two-enabled').value === 'on'
             }
         });
         saveData('ai_settings_v1', aiSettings);
@@ -1537,7 +1553,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
 
         const newsInfo = await fetchActiveHighImpactNews();
-        const openInfo = findOpenAiTrade();
+        const openInfo = findOpenAiTrade(AI_METHOD_GROUPS.method1);
         updateLiveStatsBoxes(openInfo, candles);
 
         if (openInfo && newsInfo) {
@@ -1569,7 +1585,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const opened = await autoOpenAiPosition(candles);
             if (opened) logAiTick('entry_opened', 'Entry baru berhasil dibuka.');
             else logAiTick('no_signal', lastSignalSkipReason || 'Gak ada sinyal valid tick ini.');
-            const newOpenInfo = findOpenAiTrade();
+            const newOpenInfo = findOpenAiTrade(AI_METHOD_GROUPS.method1);
             updateLiveStatsBoxes(newOpenInfo, candles);
             if (!newOpenInfo) {
                 document.getElementById('ai-floating-pl').innerHTML = `<div class="insight-box insight-warning">🔍 Belum ada sinyal valid tick ini (nunggu konfirmasi trend/RSI/MACD). Mohon tunggu, bot bakal coba lagi tick berikutnya.</div>`;
@@ -1648,6 +1664,36 @@ document.addEventListener("DOMContentLoaded", () => {
         totalEl.className = totalFloating >= 0 ? 'profit-text' : 'loss-text';
     }
 
+    // Section terpisah buat Metode 2 (ICT) - data-nya ditulis bot VPS ke aiTradeData, di sini cuma DIBACA & ditampilin (gak compute ulang sinyal).
+    function updateMethodTwoBox(openInfo, candles) {
+        const entryEl = document.getElementById('ai-live-entry-m2');
+        const totalEl = document.getElementById('ai-live-total-pl-m2');
+        const detailEl = document.getElementById('ai-floating-pl-m2');
+        if (!entryEl || !totalEl) return;
+        if (!openInfo || !openInfo.trade.layers) {
+            entryEl.innerText = 'Belum ada posisi'; entryEl.className = 'netral';
+            totalEl.innerText = 'Rp 0'; totalEl.className = 'netral';
+            if (detailEl) detailEl.innerHTML = '';
+            return;
+        }
+        const trade = openInfo.trade;
+        entryEl.innerText = `${trade.arah} @ ${parseFloat(trade.entry).toFixed(2)}`;
+        entryEl.className = trade.arah === 'BUY' ? 'profit-text' : 'loss-text';
+        const lastClose = candles[candles.length - 1].close;
+        const dirSign = trade.arah === 'BUY' ? 1 : -1;
+        let totalFloating = 0;
+        trade.layers.forEach(ly => {
+            if (ly.status === 'pending') return;
+            if (ly.status !== 'open') { totalFloating += ly.pl; return; }
+            const layerEntry = ly.entry !== undefined ? ly.entry : trade.entry;
+            const pipsMoved = ((lastClose - layerEntry) * dirSign) / AI_PIP_SIZE;
+            totalFloating += uscToRupiah(calcLayerPlUsc(pipsMoved));
+        });
+        totalEl.innerText = `${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}`;
+        totalEl.className = totalFloating >= 0 ? 'profit-text' : 'loss-text';
+        if (detailEl) detailEl.innerHTML = `<div class="insight-box ${totalFloating >= 0 ? 'insight-success' : 'insight-danger'}" style="font-size:0.8rem;">${trade.alasan || ''}</div>`;
+    }
+
     // --- Tick "display" — dipanggil otomatis selagi tab browser kebuka. Cuma update chart & floating P/L, TIDAK buka/tutup posisi (biar gak race sama bot server). ---
     async function aiDisplayTick() {
         const candles = await fetchAiPriceData();
@@ -1655,10 +1701,12 @@ document.addEventListener("DOMContentLoaded", () => {
         lastAiCandles = candles;
         if (document.getElementById('ai-view-market').style.display !== 'none') renderLightweightChart(candles);
 
-        const openInfo = findOpenAiTrade();
+        const openInfo = findOpenAiTrade(AI_METHOD_GROUPS.method1);
         updateLiveStatsBoxes(openInfo, candles);
         // Kalau gak ada posisi open, biarkan pesan status terakhir (dari tombol "Cek Sekarang") tetap kelihatan — jangan dikosongin di sini, biar gak ketiban race sama tick manual.
         if (openInfo) updateFloatingPl(openInfo, candles);
+
+        if (AI_METHOD_TWO_ENABLED) updateMethodTwoBox(findOpenAiTrade(AI_METHOD_GROUPS.method2), candles);
     }
 
     function startAiAutoTick() {
