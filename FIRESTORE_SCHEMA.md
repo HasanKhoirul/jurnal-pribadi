@@ -70,7 +70,7 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       winrateMinSamples: number,         // default 5
       newsPreMinutes: number,            // default 10
       newsPostMinutes: number,           // default 40
-      summaryIntervalHours: number       // default 6 - interval otomatis kirim summary Telegram (posisi terbuka, P/L hari/minggu/all-time)
+      summaryIntervalHours: number       // default 6 - interval otomatis kirim summary Telegram (posisi terbuka, P/L hari/minggu/all-time). Nempel ke jam bulat WIB (00/06/12/18 kalau 6) dari tengah malam, BUKAN "N jam sejak restart terakhir" - gak kegeser walau bot di-restart
     }
   },
   botControl: {                // command channel ke bot VPS (BUKAN setting kayak aiSettings) - dipicu tombol "🔄 Restart Bot (VPS)" / "📊 Kirim Summary" di web
@@ -80,7 +80,7 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     lastRestartResult: string | null,     // "success" | "failed: <pesan git pull>"
     summaryRequested: boolean,   // true = ada permintaan kirim summary Telegram manual yang belum diproses
     summaryRequestedAt: string (ISO),
-    lastSummaryAt: string (ISO) | null    // dipakai bot buat itung udah lewat summaryIntervalHours apa belum (summary otomatis)
+    lastSummaryAt: string (ISO) | null    // dipakai bot buat cek udah lewat jadwal terdekat (00/06/12/18 WIB, dst) apa belum (summary otomatis)
   },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiTradeData: {

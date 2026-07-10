@@ -743,6 +743,16 @@ def send_periodic_summary(ai_trade_data, tick):
 _summary_in_flight = False
 
 
+# Jadwal nempel ke jam bulat WIB (00/06/12/18 kalau interval=6), BUKAN "N jam sejak restart/kiriman
+# terakhir" - biar gak geser2 tiap kali bot di-restart.
+def _latest_scheduled_summary_utc(now_utc, interval_hours):
+    interval_hours = int(interval_hours) if interval_hours and interval_hours > 0 else 6
+    now_wib = now_utc + timedelta(hours=7)
+    slot_hour = now_wib.hour - (now_wib.hour % interval_hours)
+    slot_wib = now_wib.replace(hour=slot_hour, minute=0, second=0, microsecond=0)
+    return slot_wib - timedelta(hours=7)
+
+
 def maybe_send_summary(ai_trade_data, bot_control, tick, now):
     global _summary_in_flight
     if _summary_in_flight:
@@ -753,8 +763,10 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now):
     due = True
     if last_at_str and not manual:
         try:
-            elapsed_hours = (now - datetime.fromisoformat(last_at_str)).total_seconds() / 3600
-            due = elapsed_hours >= AI_SUMMARY_INTERVAL_HOURS
+            last_at = datetime.fromisoformat(last_at_str)
+            if last_at.tzinfo is None:
+                last_at = last_at.replace(tzinfo=timezone.utc)
+            due = last_at < _latest_scheduled_summary_utc(now, AI_SUMMARY_INTERVAL_HOURS)
         except Exception:
             due = True
     if not (manual or due):
