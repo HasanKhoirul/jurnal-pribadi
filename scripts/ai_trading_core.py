@@ -20,6 +20,7 @@ class Config:
     def __init__(self):
         self.SYMBOL = None          # nama simbol MT5 yang udah di-resolve host, wajib diisi sebelum fetch_candles()
         self.SYMBOL_LABEL = 'XAUUSD'  # buat teks pesan Telegram
+        self.PRICE_DECIMALS = 2     # jumlah desimal buat nampilin harga di teks/Telegram - beda per instrumen (Gold=2, JPY pair=3, forex non-JPY=5)
         self.TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
         self.TIMEFRAME_LABEL = '1h'
         self.ICT_HTF_MT5 = mt5.TIMEFRAME_H4
@@ -31,6 +32,10 @@ class Config:
         self.AI_SL_PIPS = 50
         self.AI_SL_MODE = 'fixed'
         self.AI_ATR_MULTIPLIER = 1.5
+        # Batas clamp SL adaptif ATR (pips) - BUKAN dari Master Setting, di-set host per-instrumen sekali di
+        # awal (beda skala Gold vs currency, ATR pip-count Gold jauh lebih gede dari forex major biasa).
+        self.ATR_SL_MIN_PIPS = 30
+        self.ATR_SL_MAX_PIPS = 120
         self.AI_TP_LAYERS_PIPS = [80, 100, 150]
         self.AI_TP_MODE = 'fixed'
         self.AI_PIP_VALUE_UNIT = 'cent'
@@ -240,6 +245,12 @@ def usc_to_rupiah(usc, kurs):
     return usd * kurs
 
 
+# Ganti semua `f"{harga:.2f}"` hardcode (yang cuma pas buat Gold) - jumlah desimal ikut cfg.PRICE_DECIMALS,
+# beda per instrumen (Gold=2, JPY pair=3, forex non-JPY=5) biar entry/SL/TP di teks & Telegram gak kepotong.
+def fmt_price(value):
+    return f"{value:.{cfg.PRICE_DECIMALS}f}"
+
+
 # ---------- Win-rate adaptif & sinyal Metode 1 ----------
 def get_recent_signal_winrate(trade_data, signal_type):
     cutoff = datetime.now(timezone.utc) - timedelta(days=cfg.AI_WINRATE_LOOKBACK_DAYS)
@@ -271,8 +282,8 @@ def compute_ai_suggestion(candles, trade_data):
 
     trend = 'uptrend' if ma20 > ma50 else 'downtrend'
     reason_parts = [
-        f"Harga saat ini {last_close:.2f}.",
-        f"MA20 ({ma20:.2f}) {'di atas' if ma20 > ma50 else 'di bawah'} MA50 ({ma50:.2f}) -> {trend}.",
+        f"Harga saat ini {fmt_price(last_close)}.",
+        f"MA20 ({fmt_price(ma20)}) {'di atas' if ma20 > ma50 else 'di bawah'} MA50 ({fmt_price(ma50)}) -> {trend}.",
         f"RSI(14) = {rsi:.1f} ({'overbought' if rsi >= 70 else 'oversold' if rsi <= 30 else 'netral'}).",
     ]
     if rsi >= 70:
@@ -299,7 +310,7 @@ def compute_ai_suggestion(candles, trade_data):
     macd = calc_macd(closes)
     if macd:
         macd_bullish = macd['macd'] > macd['signal']
-        reason_parts.append(f"MACD {'bullish' if macd_bullish else 'bearish'} ({macd['macd']:.2f} vs signal {macd['signal']:.2f}).")
+        reason_parts.append(f"MACD {'bullish' if macd_bullish else 'bearish'} ({fmt_price(macd['macd'])} vs signal {fmt_price(macd['signal'])}).")
         if (arah == 'BUY' and not macd_bullish) or (arah == 'SELL' and macd_bullish):
             cfg.last_signal_skip_reason = (
                 f"MACD gak konfirmasi arah {arah} (trend/RSI nunjuk {arah}, tapi MACD {'bullish' if macd_bullish else 'bearish'})."
@@ -308,7 +319,7 @@ def compute_ai_suggestion(candles, trade_data):
 
     bb = calc_bollinger(closes, 20, 2)
     if bb:
-        reason_parts.append(f"Bollinger Band: harga {last_close:.2f} (upper {bb['upper']:.2f}, lower {bb['lower']:.2f}).")
+        reason_parts.append(f"Bollinger Band: harga {fmt_price(last_close)} (upper {fmt_price(bb['upper'])}, lower {fmt_price(bb['lower'])}).")
 
     dir_sign = 1 if arah == 'BUY' else -1
     entry = last_close
@@ -316,7 +327,7 @@ def compute_ai_suggestion(candles, trade_data):
     if cfg.AI_SL_MODE == 'atr':
         atr = calc_atr(candles, 14)
         if atr is not None:
-            sl_pips_used = min(120, max(30, round((atr / cfg.AI_PIP_SIZE) * cfg.AI_ATR_MULTIPLIER)))
+            sl_pips_used = min(cfg.ATR_SL_MAX_PIPS, max(cfg.ATR_SL_MIN_PIPS, round((atr / cfg.AI_PIP_SIZE) * cfg.AI_ATR_MULTIPLIER)))
     sl = entry - dir_sign * pip_to_price(sl_pips_used)
 
     tp_pips_used = list(cfg.AI_TP_LAYERS_PIPS)
@@ -328,7 +339,7 @@ def compute_ai_suggestion(candles, trade_data):
         deep_lock_pips_used = round(sl_pips_used * (cfg.AI_DEEP_LOCK_PIPS / cfg.AI_SL_PIPS))
 
     reason_parts.append(
-        f"Entry {entry:.2f}, SL {sl_pips_used} pips{' (adaptif ATR)' if cfg.AI_SL_MODE == 'atr' else ''} ({sl:.2f}), "
+        f"Entry {fmt_price(entry)}, SL {sl_pips_used} pips{' (adaptif ATR)' if cfg.AI_SL_MODE == 'atr' else ''} ({fmt_price(sl)}), "
         f"TP berlapis {'/'.join(map(str, tp_pips_used))} pips{' (adaptif)' if cfg.AI_TP_MODE == 'adaptive' else ''}, lot {cfg.AI_LOT_SIZE} x3 layer."
     )
 
@@ -425,15 +436,15 @@ def auto_open_ai_position(ai_trade_data, sug):
         'status': 'open', 'pl': 0,
         'openedAt': datetime.now(timezone.utc).isoformat(), 'closedAt': None,
     })
-    cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {sug['entry']:.2f} "
-               f"(layer2/3 pending di {layers[1]['entry']:.2f} / {layers[2]['entry']:.2f}).")
+    cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {fmt_price(sug['entry'])} "
+               f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}).")
     cfg.send_telegram_fn(
         f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL}</b>\n\n"
-        f"<b>Entry:</b> <code>{sug['entry']:.2f}</code>\n"
-        f"<b>SL:</b> <code>{layers[0]['sl']:.2f}</code> ({sug['slPipsUsed']} pips)\n\n"
-        f"<b>TP1:</b> <code>{layers[0]['tp']:.2f}</code>\n"
-        f"<b>TP2:</b> <code>{layers[1]['tp']:.2f}</code>\n"
-        f"<b>TP3:</b> <code>{layers[2]['tp']:.2f}</code>\n\n"
+        f"<b>Entry:</b> <code>{fmt_price(sug['entry'])}</code>\n"
+        f"<b>SL:</b> <code>{fmt_price(layers[0]['sl'])}</code> ({sug['slPipsUsed']} pips)\n\n"
+        f"<b>TP1:</b> <code>{fmt_price(layers[0]['tp'])}</code>\n"
+        f"<b>TP2:</b> <code>{fmt_price(layers[1]['tp'])}</code>\n"
+        f"<b>TP3:</b> <code>{fmt_price(layers[2]['tp'])}</code>\n\n"
         f"📝 <i>{sug['reasonText']}</i>"
     )
     return True
@@ -524,7 +535,7 @@ def build_ict_ready_suggestion(ltf_candles, choch, ict_state):
     dir_sign = 1 if direction == 'BUY' else -1
     choch_candle = choch['chochCandle']
     choch_idx = next((i for i, c in enumerate(ltf_candles) if c['time'] == choch_candle['time']), None)
-    if not choch_idx:
+    if choch_idx is None:
         return None
 
     # Order Block = candle M15 terakhir berlawanan warna sebelum leg displacement yang bikin CHoCH.
@@ -552,8 +563,8 @@ def build_ict_ready_suggestion(ltf_candles, choch, ict_state):
         if cfg.AI_SL_PIPS > 0 else list(cfg.AI_TP_LAYERS_PIPS)
     )
     reason = (
-        f"[Metode 2 - ICT] Sweep {direction} @ {ict_state['sweepLevel']:.2f}, CHoCH M15 confirmed, "
-        f"entry OB midpoint {entry:.2f}, SL {sl_pips_used:.0f} pips."
+        f"[Metode 2 - ICT] Sweep {direction} @ {fmt_price(ict_state['sweepLevel'])}, CHoCH M15 confirmed, "
+        f"entry OB midpoint {fmt_price(entry)}, SL {sl_pips_used:.0f} pips."
     )
     return {
         'arah': direction, 'entry': entry, 'sl': sl, 'dirSign': dir_sign,
@@ -578,13 +589,13 @@ def run_ict_state_machine(ict_state, ai_trade_data):
                     'sweepLevel': sweep['sweepLevel'], 'sweepAt': datetime.now(timezone.utc).isoformat(),
                     'sweptHtfCandleTime': sweep['candleTime'],
                 })
-                cfg.log_ai_tick_fn('ict_sweep', f"Metode 2: sweep {sweep['direction']} @ {sweep['sweepLevel']:.2f} kedeteksi (H4), nunggu CHoCH M15.")
+                cfg.log_ai_tick_fn('ict_sweep', f"Metode 2: sweep {sweep['direction']} @ {fmt_price(sweep['sweepLevel'])} kedeteksi (H4), nunggu CHoCH M15.")
             return state, None
 
         if state['phase'] == 'awaiting_choch':
             sweep_at = datetime.fromisoformat(state['sweepAt'])
             if datetime.now(timezone.utc) - sweep_at > timedelta(hours=cfg.AI_ICT_CHOCH_TIMEOUT_HOURS):
-                cfg.log_ai_tick_fn('ict_timeout', f"Metode 2: sweep {state['direction']} @ {state['sweepLevel']:.2f} basi, gak ada CHoCH dlm {cfg.AI_ICT_CHOCH_TIMEOUT_HOURS} jam, reset.")
+                cfg.log_ai_tick_fn('ict_timeout', f"Metode 2: sweep {state['direction']} @ {fmt_price(state['sweepLevel'])} basi, gak ada CHoCH dlm {cfg.AI_ICT_CHOCH_TIMEOUT_HOURS} jam, reset.")
                 return dict(ICT_STATE_DEFAULT), None
 
             ltf_candles = fetch_candles(120, cfg.ICT_LTF_MT5)
@@ -615,7 +626,15 @@ def run_ict_state_machine(ict_state, ai_trade_data):
                 'deepLockTriggerPipsUsed': cfg.AI_DEEP_LOCK_TRIGGER_PIPS, 'deepLockPipsUsed': cfg.AI_DEEP_LOCK_PIPS,
             }
             return state, sug
+    except RuntimeError as e:
+        # fetch_candles() lempar RuntimeError spesifik buat kegagalan MT5 (misal disconnect sesaat) -
+        # itu transient, JANGAN reset progres sweep/CHoCH yang udah kesimpan - skip tick ini, coba lagi
+        # tick berikutnya dengan state yang sama persis.
+        cfg.log_fn(f"Metode 2 (ICT) gagal ambil candle MT5 (transient), state dipertahankan: {e}")
+        return state, None
     except Exception as e:
+        # Error lain di luar dugaan (bukan soal koneksi MT5) - state-nya sendiri berpotensi udah gak
+        # konsisten, lebih aman reset ke idle daripada lanjutin dengan data yang gak jelas benar/enggak.
         cfg.log_fn(f"Metode 2 (ICT) state machine error, reset ke idle: {e}")
         return dict(ICT_STATE_DEFAULT), None
     return state, None
@@ -660,7 +679,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
             if filled:
                 ly['status'] = 'open'
                 changed = True
-                notes.append(f"Layer {idx + 1} pending kefill di {ly['entry']:.2f}.")
+                notes.append(f"Layer {idx + 1} pending kefill di {fmt_price(ly['entry'])}.")
 
         if ly['status'] != 'open':
             continue

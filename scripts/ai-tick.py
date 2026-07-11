@@ -25,7 +25,7 @@ from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
 from ai_trading_core import (
-    cfg, AI_MASTER_DEFAULTS, apply_master_settings,
+    cfg, AI_MASTER_DEFAULTS, apply_master_settings, fmt_price,
     fetch_candles, get_today_pl, get_current_week_pl, get_all_time_pl, format_rupiah,
     find_open_ai_trade_for_group, METHOD_GROUPS, compute_ai_suggestion, auto_open_ai_position,
     check_and_close_position_tick, force_close_all_layers_at_market, run_ict_state_machine,
@@ -121,6 +121,9 @@ def log_ai_tick(outcome, detail=''):
 # ---------- Wiring cfg buat ai_trading_core.py (harus sebelum fungsi core manapun dipanggil) ----------
 cfg.SYMBOL = SYMBOL
 cfg.SYMBOL_LABEL = 'XAUUSD'
+cfg.PRICE_DECIMALS = 2  # eksplisit (sama kayak default Config) - Gold ditampilin 2 desimal
+cfg.ATR_SL_MIN_PIPS = 30
+cfg.ATR_SL_MAX_PIPS = 120
 cfg.TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
 cfg.TIMEFRAME_LABEL = '1h'
 cfg.ICT_HTF_MT5 = mt5.TIMEFRAME_H4
@@ -207,7 +210,7 @@ def send_periodic_summary(ai_trade_data, tick):
                 total_floating += usc_to_rupiah(calc_layer_pl_usc(pips), live_kurs)
             send_telegram(
                 f"📍 <b>Posisi Terbuka{group_label}</b>\n\n"
-                f"{trade['arah']} @ {trade['entry']:.2f}\n"
+                f"{trade['arah']} @ {fmt_price(trade['entry'])}\n"
                 f"Floating P/L: <b>{format_rupiah(total_floating)}</b>"
             )
         else:

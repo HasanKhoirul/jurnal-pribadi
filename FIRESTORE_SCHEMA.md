@@ -156,9 +156,9 @@ Ditulis/dibaca oleh `scripts/ai-tick-currency.py <PAIR>` (1 proses per pair, par
 ```
 {
   time: string (ISO),
-  outcome: "entry_opened"|"position_updated"|"position_closed"|"news_close"|"waiting"|"no_signal"|"market_closed"|"news_block"|"error"|"manual_reset",
+  outcome: "entry_opened"|"entry_opened_m2"|"position_updated"|"position_closed"|"news_close"|"news_block"|"news_block_m2"|"waiting"|"waiting_m2"|"no_signal"|"market_closed"|"error"|"manual_reset"|"restart"|"summary"|"ict_sweep"|"ict_ready"|"ict_timeout",
   detail: string,           // penjelasan spesifik (alasan skip, judul berita, dst.)
-  source: "browser"|"server"
+  source: "browser"|"server"|"server_<PAIR>"   // server_<PAIR> (misal "server_USDJPY") ditulis ai-tick-currency.py - subcollection ini SATU buat semua instrumen (Gold + 5 pair), difilter di JS by source (bukan query .where(), butuh composite index yang gak ada)
 }
 ```
 

@@ -1632,8 +1632,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function renderAiLog() {
         if (!auth.currentUser) return Promise.resolve();
-        return db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').orderBy('time', 'desc').limit(200).get().then(snap => {
-            const logs = snap.docs.map(d => d.data());
+        // 5 bot Currency nulis ke subcollection ai_tick_log yang SAMA (source "server_<PAIR>") - ambil lebih
+        // banyak dulu (500) baru filter Gold-only (source persis "browser"/"server"), biar 200 entry Gold
+        // yang ditampilin gak ke-dilusi/ke-geser sama volume 5 pair lain.
+        return db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log').orderBy('time', 'desc').limit(500).get().then(snap => {
+            const logs = snap.docs.map(d => d.data()).filter(l => l.source === 'browser' || l.source === 'server').slice(0, 200);
             aiLastLogs = logs;
             let success = 0, fail = 0, nihil = 0;
             logs.forEach(l => { const cat = categorizeAiLog(l.outcome); if (cat === 'success') success++; else if (cat === 'fail') fail++; else nihil++; });
@@ -2311,14 +2314,16 @@ document.addEventListener("DOMContentLoaded", () => {
         Object.values(tradeData).forEach(list => { const r = sumClosedPl(list); total += r.total; count += r.count; });
         return { total, count };
     }
-    function curWinRate(tradeData, signalType) {
-        const cutoff = Date.now() - 14 * 86400000;
+    // lookbackDays/minSamples ikutin Master Setting pair yang lagi aktif (bukan hardcode) - biar angka yang
+    // ditampilin cocok sama ambang yang beneran dipakai filter sinyal bot, gak nyesatin kalau user ubah setting.
+    function curWinRate(tradeData, signalType, lookbackDays, minSamples) {
+        const cutoff = Date.now() - lookbackDays * 86400000;
         let total = 0, win = 0;
         for (const d in tradeData) {
             if (new Date(d).getTime() < cutoff) continue;
             tradeData[d].forEach(t => { if (t.status !== 'closed' || t.signalType !== signalType) return; total++; if (parseFloat(t.pl || 0) >= 0) win++; });
         }
-        return total >= 5 ? (win / total) * 100 : null;
+        return total >= minSamples ? (win / total) * 100 : null;
     }
 
     function updateCurPositionBox(entryElId, plElId, openInfo) {
@@ -2346,14 +2351,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const openM1 = findOpenTradeIn(tradeData, AI_METHOD_GROUPS.method1);
         updateCurPositionBox('cur-live-entry', 'cur-live-total-pl', openM1);
         // Gak ada posisi open buat nentuin signalType pasti - default tampilin winrate trend_following (kasus paling umum).
-        const wr1 = curWinRate(tradeData, openM1 ? openM1.trade.signalType : 'trend_following');
+        const wr1 = curWinRate(tradeData, openM1 ? openM1.trade.signalType : 'trend_following', m.winrateLookbackDays, m.winrateMinSamples);
         document.getElementById('cur-winrate-m1').innerText = wr1 === null ? 'Belum cukup data' : `${wr1.toFixed(0)}%`;
+        document.getElementById('cur-winrate-m1-days').innerText = m.winrateLookbackDays;
 
         if (m.methodTwoEnabled) {
             const openM2 = findOpenTradeIn(tradeData, AI_METHOD_GROUPS.method2);
             updateCurPositionBox('cur-live-entry-m2', 'cur-live-total-pl-m2', openM2);
-            const wr2 = curWinRate(tradeData, 'ict_liquidity_sweep');
+            const wr2 = curWinRate(tradeData, 'ict_liquidity_sweep', m.winrateLookbackDays, m.winrateMinSamples);
             document.getElementById('cur-winrate-m2').innerText = wr2 === null ? 'Belum cukup data' : `${wr2.toFixed(0)}%`;
+            document.getElementById('cur-winrate-m2-days').innerText = m.winrateLookbackDays;
         }
 
         const today = curTodayPl(tradeData), week = curWeekPl(tradeData), all = curAllPl(tradeData);
@@ -2385,9 +2392,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Sengaja gak pakai .where('source',...) digabung .orderBy('time',...) di query - kombinasi itu
         // butuh composite index Firestore yang belum ke-setup, query-nya bakal gagal diam-diam. Pola sama
         // kayak renderAiLog() punya Gold: ambil dulu (single-field orderBy, gak butuh index tambahan),
-        // filter source-nya belakangan di JS.
+        // filter source-nya belakangan di JS. Limit digedein (900, bukan 300) - 6 bot (Gold+5 currency)
+        // nulis ke subcollection yang SAMA, jadi jatah 1 pair bisa abis duluan kalau limit-nya kekecilan.
         db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
-            .orderBy('time', 'desc').limit(300).get()
+            .orderBy('time', 'desc').limit(900).get()
             .then(snap => {
                 const logs = snap.docs.map(d => d.data()).filter(l => l.source === `server_${pairKey}`).slice(0, 100);
                 el.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas.</p>';
