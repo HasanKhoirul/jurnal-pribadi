@@ -29,6 +29,10 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
   aiLivePriceMt5_<PAIR>: number,
   aiLivePriceMt5UpdatedAt_<PAIR>: string (ISO),
   aiLiveCandlesMt5UpdatedAt_<PAIR>: string (ISO),
+  newsCalendarCache: {          // cache kalender berita high-impact BARENG - cuma ai-tick.py (Gold) yang nembak API luar
+    result: { title: string, time: string } | null,   // null = gak ada berita high-impact aktif
+    checkedAt: string (ISO)
+  },  // ai-tick-currency.py (5 proses) baca dari sini duluan, fallback fetch sendiri kalau cache basi/gak ada (misal Gold lg mati) - hemat 6x jadi 1x request ke API gratis publik, ngurangin resiko ke-throttle/blokir
   sportData: {
     "YYYY-MM-DD": [
       { time: string, type: string, target: string, achieved: string, totalDur: number,

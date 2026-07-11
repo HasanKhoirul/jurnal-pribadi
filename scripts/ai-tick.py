@@ -282,6 +282,12 @@ def get_cached_news(now):
     if _news_cache['checked_at'] is None or (now - _news_cache['checked_at']) >= timedelta(seconds=SLOW_LOOP_SECONDS):
         _news_cache['result'] = fetch_active_high_impact_news()
         _news_cache['checked_at'] = now
+        # Simpen ke appData/public biar 5 proses Currency baca dari sini doang, gak ikut nembak API luar
+        # sendiri2 (6 proses x tiap ~5 menit ke API gratis kena throttle/blokir).
+        try:
+            public_doc_ref.set({'newsCalendarCache': {'result': _news_cache['result'], 'checkedAt': now.isoformat()}}, merge=True)
+        except Exception as e:
+            log(f"Gagal simpen cache berita bareng: {e}")
     return _news_cache['result']
 
 

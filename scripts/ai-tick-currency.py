@@ -300,9 +300,25 @@ _news_cache = {'checked_at': None, 'result': None}
 
 
 def get_cached_news(now):
-    if _news_cache['checked_at'] is None or (now - _news_cache['checked_at']) >= timedelta(seconds=SLOW_LOOP_SECONDS):
-        _news_cache['result'] = fetch_active_high_impact_news()
-        _news_cache['checked_at'] = now
+    if _news_cache['checked_at'] is not None and (now - _news_cache['checked_at']) < timedelta(seconds=SLOW_LOOP_SECONDS):
+        return _news_cache['result']
+    # Baca cache bareng yang ditulis Gold (ai-tick.py) dulu - hemat request ke API luar, 5 proses currency
+    # gak perlu nembak sendiri2 (itu yang bikin sering ke-throttle/blokir pas semua jalan bareng).
+    try:
+        pub_snap = public_doc_ref.get()
+        pub_data = pub_snap.to_dict() if pub_snap.exists else {}
+        shared = pub_data.get('newsCalendarCache')
+        if shared and shared.get('checkedAt'):
+            shared_checked_at = datetime.fromisoformat(shared['checkedAt'])
+            if (now - shared_checked_at) < timedelta(seconds=SLOW_LOOP_SECONDS * 2):
+                _news_cache['result'] = shared.get('result')
+                _news_cache['checked_at'] = now
+                return _news_cache['result']
+    except Exception as e:
+        log(f"Gagal baca cache berita bareng, fallback fetch langsung: {e}")
+    # Cache bareng gak ada/basi (misal proses Gold lagi mati) - fallback fetch langsung kayak biasa.
+    _news_cache['result'] = fetch_active_high_impact_news()
+    _news_cache['checked_at'] = now
     return _news_cache['result']
 
 
