@@ -1,14 +1,14 @@
-# Bot Trading AI - versi VPS, jalan terus-menerus (bukan sekali-tick kayak ai-tick.mjs di GitHub Actions).
-# Logic sinyal & manajemen posisi identik dengan ai-tick.mjs/script.js - bedanya sumber harga dari MT5
-# lokal (bukan TwelveData), dan strateginya dipecah 2 loop:
-#   - fast loop (tiap FAST_LOOP_SECONDS): cek SL/TP/pending-fill dari tick harga real-time, presisi tinggi
-#   - slow loop (tiap SLOW_LOOP_SECONDS): hitung ulang indikator dari candle & cari sinyal entry baru
-# Field & struktur data di Firestore (aiTradeData, layers, dst.) dijaga sama persis dengan versi JS,
-# biar web app (script.js) tetap bisa baca/render tanpa perubahan.
+# Bot Trading AI Currency - versi VPS, parameterized per pair, dijalankan 1x per pair sbg proses OS terpisah:
+#   py -3.10 ai-tick-currency.py USDJPY
+#   py -3.10 ai-tick-currency.py GBPUSD
+#   ...dst, 1 terminal per pair.
 #
-# Logic yang symbol-agnostic (indikator, Metode 1, Metode 2 ICT, manajemen posisi) tinggal di
-# ai_trading_core.py, dipakai bareng sama scripts/ai-tick-currency.py (Currency). File ini isinya
-# cuma yang Gold-spesifik: kredensial, resolve simbol MT5, Firestore doc_ref, Telegram, orchestration loop.
+# Struktur & logic identik ai-tick.py (Gold) - reuse penuh dari ai_trading_core.py, cuma beda:
+#   - symbol/pip size di-resolve dari CURRENCY_INSTRUMENTS sesuai argumen command line
+#   - baca/tulis Firestore nempel di currencyInstruments.<PAIR>.* (BUKAN root aiTradeData/aiSettings/dst
+#     yang dipakai Gold), biar data 2 instrumen gak ketimpa satu sama lain
+#   - live price/candle dipush ke appData/public pakai field name ber-suffix _<PAIR>, biar gak collide
+#     sama punya Gold (aiLiveCandlesMt5/aiLivePriceMt5)
 
 import os
 import sys
@@ -35,22 +35,36 @@ from ai_trading_core import (
 
 load_dotenv()
 
+# Daftar pair currency yang didukung + config-nya. Symbol candidates ini TENTATIF - cek nama PERSIS
+# di MT5 Market Watch VPS (klik kanan -> Symbols) sebelum jalanin, update di sini kalau beda.
+CURRENCY_INSTRUMENTS = {
+    'USDJPY': {'pipSize': 0.01, 'symbolCandidates': ['USDJPY', 'USDJPYm', 'USDJPYc']},
+    'GBPUSD': {'pipSize': 0.0001, 'symbolCandidates': ['GBPUSD', 'GBPUSDm', 'GBPUSDc']},
+    'AUDUSD': {'pipSize': 0.0001, 'symbolCandidates': ['AUDUSD', 'AUDUSDm', 'AUDUSDc']},
+    'EURUSD': {'pipSize': 0.0001, 'symbolCandidates': ['EURUSD', 'EURUSDm', 'EURUSDc']},
+    'USDCAD': {'pipSize': 0.0001, 'symbolCandidates': ['USDCAD', 'USDCADm', 'USDCADc']},
+}
+
+if len(sys.argv) < 2 or sys.argv[1] not in CURRENCY_INSTRUMENTS:
+    print(f"Pakai: py -3.10 ai-tick-currency.py <PAIR>. Pair tersedia: {', '.join(CURRENCY_INSTRUMENTS)}")
+    sys.exit(1)
+
+PAIR = sys.argv[1]
+PAIR_CFG = CURRENCY_INSTRUMENTS[PAIR]
+FIELD_PREFIX = 'currencyInstruments'  # doc_ref.set({FIELD_PREFIX: {PAIR: {...}}}, merge=True) buat semua tulis
+
 FIREBASE_SERVICE_ACCOUNT_PATH = os.environ['FIREBASE_SERVICE_ACCOUNT_PATH']
 AI_TARGET_UID = os.environ['AI_TARGET_UID']
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')  # kosong dulu, layer confidence nyusul
 MT5_LOGIN = int(os.environ['MT5_LOGIN'])
 MT5_PASSWORD = os.environ['MT5_PASSWORD']
 MT5_SERVER = os.environ['MT5_SERVER']
-MT5_TERMINAL_PATH = os.environ.get('MT5_TERMINAL_PATH', '')  # opsional, path ke terminal64.exe kalau initialize() gagal nemu otomatis
-
-SYMBOL_CANDIDATES = ['XAUUSD', 'XAUUSDm', 'XAUUSDc', 'XAUUSDz', 'XAUUSDr', 'XAUUSD.', 'GOLD', 'GOLDm']
+MT5_TERMINAL_PATH = os.environ.get('MT5_TERMINAL_PATH', '')
 
 FAST_LOOP_SECONDS = 10
 SLOW_LOOP_SECONDS = 300  # 5 menit
 
-# Field Master Setting yang gak dipakai ai_trading_core.py (khusus fitur summary Telegram, tetap di file host).
 AI_SUMMARY_INTERVAL_HOURS = AI_MASTER_DEFAULTS['summaryIntervalHours']
 
 
@@ -61,20 +75,21 @@ def apply_ai_settings(master):
 
 
 def log(msg):
-    print(f"[{datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
+    print(f"[{datetime.now(timezone.utc).isoformat()}] [{PAIR}] {msg}", flush=True)
 
 
 # ---------- Setup MT5 ----------
 def resolve_symbol():
-    for name in SYMBOL_CANDIDATES:
+    for name in PAIR_CFG['symbolCandidates']:
         info = mt5.symbol_info(name)
         if info is not None:
             if not info.visible:
                 mt5.symbol_select(name, True)
             return name
     raise RuntimeError(
-        "Gak ketemu simbol XAUUSD di Market Watch. Cek nama persis simbolnya di MT5 "
-        "(klik kanan Market Watch -> Symbols, cari 'XAU'), lalu tambahin ke SYMBOL_CANDIDATES."
+        f"Gak ketemu simbol {PAIR} di Market Watch. Cek nama persis simbolnya di MT5 "
+        f"(klik kanan Market Watch -> Symbols, cari '{PAIR}'), lalu tambahin ke "
+        f"CURRENCY_INSTRUMENTS['{PAIR}']['symbolCandidates'] di file ini."
     )
 
 
@@ -92,6 +107,17 @@ firebase_admin.initialize_app(cred)
 db = firestore.client()
 doc_ref = db.collection('appData').document(AI_TARGET_UID)
 public_doc_ref = db.collection('appData').document('public')
+
+
+def instrument_fields(fields):
+    # Bungkus field yg mau ditulis biar nempel ke currencyInstruments.<PAIR>.* doang, gak nyentuh
+    # data Gold atau pair currency lain. merge=True Firestore ngelakuin deep-merge nested dict,
+    # jadi sibling field (pair lain, atau field lain di dalam PAIR ini) aman gak ke-wipe.
+    return {FIELD_PREFIX: {PAIR: fields}}
+
+
+def get_instrument_data(doc_data):
+    return ((doc_data.get(FIELD_PREFIX) or {}).get(PAIR)) or {}
 
 
 # ---------- Telegram ----------
@@ -112,7 +138,7 @@ def log_ai_tick(outcome, detail=''):
             'time': datetime.now(timezone.utc).isoformat(),
             'outcome': outcome,
             'detail': detail,
-            'source': 'server',
+            'source': f'server_{PAIR}',
         })
     except Exception as e:
         log(f"Gagal simpan log tick: {e}")
@@ -120,7 +146,8 @@ def log_ai_tick(outcome, detail=''):
 
 # ---------- Wiring cfg buat ai_trading_core.py (harus sebelum fungsi core manapun dipanggil) ----------
 cfg.SYMBOL = SYMBOL
-cfg.SYMBOL_LABEL = 'XAUUSD'
+cfg.SYMBOL_LABEL = PAIR
+cfg.AI_PIP_SIZE = PAIR_CFG['pipSize']  # beda dari Gold (0.1) - apply_master_settings() gak pernah nyentuh field ini
 cfg.TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
 cfg.TIMEFRAME_LABEL = '1h'
 cfg.ICT_HTF_MT5 = mt5.TIMEFRAME_H4
@@ -133,8 +160,8 @@ cfg.log_ai_tick_fn = log_ai_tick
 def push_live_candles_to_public(candles):
     try:
         public_doc_ref.set({
-            'aiLiveCandlesMt5': candles,
-            'aiLiveCandlesMt5UpdatedAt': datetime.now(timezone.utc).isoformat(),
+            f'aiLiveCandlesMt5_{PAIR}': candles,
+            f'aiLiveCandlesMt5UpdatedAt_{PAIR}': datetime.now(timezone.utc).isoformat(),
         }, merge=True)
     except Exception as e:
         log(f"Gagal push candle ke appData/public: {e}")
@@ -143,19 +170,18 @@ def push_live_candles_to_public(candles):
 def push_live_price_to_public(tick):
     try:
         public_doc_ref.set({
-            'aiLivePriceMt5': (tick.bid + tick.ask) / 2,
-            'aiLivePriceMt5UpdatedAt': datetime.now(timezone.utc).isoformat(),
+            f'aiLivePriceMt5_{PAIR}': (tick.bid + tick.ask) / 2,
+            f'aiLivePriceMt5UpdatedAt_{PAIR}': datetime.now(timezone.utc).isoformat(),
         }, merge=True)
     except Exception as e:
         log(f"Gagal push live price ke appData/public: {e}")
 
 
-# Dipicu tombol "Restart Bot (VPS)" di web (nulis botControl.restartRequested lewat Firestore).
-# git pull + restart diri sendiri pakai kode baru - kalau pull gagal, bot TETAP jalan pakai kode lama (gak mati total).
+# Dipicu tombol restart per-pair di web (nulis currencyInstruments.<PAIR>.botControl.restartRequested).
 def handle_restart_request():
     now = datetime.now(timezone.utc)
     log("Restart diminta dari web, ambil kode terbaru...")
-    send_telegram("🔄 Restart diminta dari web, ambil kode terbaru...")
+    send_telegram(f"🔄 [{PAIR}] Restart diminta dari web, ambil kode terbaru...")
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
@@ -167,32 +193,29 @@ def handle_restart_request():
         result_msg = f'failed: {e}'
 
     try:
-        doc_ref.set({'botControl': {
+        doc_ref.set(instrument_fields({'botControl': {
             'restartRequested': False,
             'lastRestartAt': now.isoformat(),
             'lastRestartResult': result_msg,
-        }}, merge=True)
+        }}), merge=True)
     except Exception as e:
         log(f"Gagal update status botControl: {e}")
     log_ai_tick('restart' if success else 'error', result_msg)
 
     if success:
         log("Update berhasil, restart proses...")
-        send_telegram("✅ Update berhasil, bot restart pakai kode terbaru...")
+        send_telegram(f"✅ [{PAIR}] Update berhasil, bot restart pakai kode terbaru...")
         mt5.shutdown()
         os.execv(sys.executable, [sys.executable] + sys.argv)
     else:
         log(f"Restart gagal: {result_msg}. Bot lanjut jalan pakai kode lama.")
-        send_telegram(f"⚠️ Restart gagal: {result_msg}. Bot lanjut jalan pakai kode lama.")
+        send_telegram(f"⚠️ [{PAIR}] Restart gagal: {result_msg}. Bot lanjut jalan pakai kode lama.")
 
 
-# Dipicu tombol "Kirim Summary Sekarang" di web ATAU otomatis tiap AI_SUMMARY_INTERVAL_HOURS jam.
-# Datanya (ai_trade_data) udah kebaca doc_ref.get() tiap tick buat keperluan lain - ngirim summary ini
-# gak nambah read Firestore sama sekali, cuma format teks + kirim ke Telegram (gratis).
 def send_periodic_summary(ai_trade_data, tick):
     for group_name, group_label in (('method1', ''), ('method2', ' — Metode 2 (ICT)')):
         if group_name == 'method2' and not cfg.AI_METHOD_TWO_ENABLED:
-            continue  # metode 2 lg off - gak usah kirim pesan "gak ada posisi" yg gak relevan
+            continue
         open_info = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS[group_name])
         if open_info:
             trade = open_info['trade']
@@ -206,30 +229,26 @@ def send_periodic_summary(ai_trade_data, tick):
                 pips = ((px - ly['entry']) * dir_sign) / cfg.AI_PIP_SIZE
                 total_floating += usc_to_rupiah(calc_layer_pl_usc(pips), live_kurs)
             send_telegram(
-                f"📍 <b>Posisi Terbuka{group_label}</b>\n\n"
-                f"{trade['arah']} @ {trade['entry']:.2f}\n"
+                f"📍 <b>Posisi Terbuka {PAIR}{group_label}</b>\n\n"
+                f"{trade['arah']} @ {trade['entry']:.5f}\n"
                 f"Floating P/L: <b>{format_rupiah(total_floating)}</b>"
             )
         else:
-            send_telegram(f"📍 <b>Posisi Terbuka{group_label}</b>\n\nGak ada posisi open saat ini.")
+            send_telegram(f"📍 <b>Posisi Terbuka {PAIR}{group_label}</b>\n\nGak ada posisi open saat ini.")
 
     today_pl, today_n = get_today_pl(ai_trade_data)
-    send_telegram(f"📅 <b>P/L Hari Ini</b>\n\n{format_rupiah(today_pl)} dari {today_n} entry closed.")
+    send_telegram(f"📅 <b>P/L Hari Ini ({PAIR})</b>\n\n{format_rupiah(today_pl)} dari {today_n} entry closed.")
 
     week_pl, week_n = get_current_week_pl(ai_trade_data)
-    send_telegram(f"🗓️ <b>P/L Minggu Ini</b>\n\n{format_rupiah(week_pl)} dari {week_n} entry closed.")
+    send_telegram(f"🗓️ <b>P/L Minggu Ini ({PAIR})</b>\n\n{format_rupiah(week_pl)} dari {week_n} entry closed.")
 
     all_pl, all_n = get_all_time_pl(ai_trade_data)
-    send_telegram(f"📊 <b>P/L Keseluruhan</b>\n\n{format_rupiah(all_pl)} dari {all_n} entry closed.")
+    send_telegram(f"📊 <b>P/L Keseluruhan ({PAIR})</b>\n\n{format_rupiah(all_pl)} dari {all_n} entry closed.")
 
 
-# Kirim summary di thread terpisah - 4x send_telegram() berurutan (masing2 bisa timeout 10 detik)
-# gak boleh nge-block fast loop yang harus tetap tiap-tick cek SL/TP/deep-lock.
 _summary_in_flight = False
 
 
-# Jadwal nempel ke jam bulat WIB (00/06/12/18 kalau interval=6), BUKAN "N jam sejak restart/kiriman
-# terakhir" - biar gak geser2 tiap kali bot di-restart.
 def _latest_scheduled_summary_utc(now_utc, interval_hours):
     interval_hours = int(interval_hours) if interval_hours and interval_hours > 0 else 6
     now_wib = now_utc + timedelta(hours=7)
@@ -241,7 +260,7 @@ def _latest_scheduled_summary_utc(now_utc, interval_hours):
 def maybe_send_summary(ai_trade_data, bot_control, tick, now):
     global _summary_in_flight
     if _summary_in_flight:
-        return  # masih ada kiriman summary sebelumnya yang belum kelar, jangan numpuk
+        return
 
     manual = bool(bot_control.get('summaryRequested'))
     last_at_str = bot_control.get('lastSummaryAt')
@@ -258,13 +277,13 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now):
         return
 
     _summary_in_flight = True
-    trade_data_snapshot = copy.deepcopy(ai_trade_data)  # putus dari ai_trade_data asli - fast loop terus mutasi itu setelah ini return
+    trade_data_snapshot = copy.deepcopy(ai_trade_data)
 
     def _worker():
         global _summary_in_flight
         try:
             send_periodic_summary(trade_data_snapshot, tick)
-            doc_ref.set({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}, merge=True)
+            doc_ref.set(instrument_fields({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}), merge=True)
             log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
         except Exception as e:
             log(f"Gagal kirim/update status summary: {e}")
@@ -274,7 +293,6 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now):
     threading.Thread(target=_worker, daemon=True).start()
 
 
-# ---------- State di memori, direfresh tiap loop dari Firestore ----------
 _news_cache = {'checked_at': None, 'result': None}
 
 
@@ -295,7 +313,7 @@ def get_cached_kurs(now):
     return _kurs_cache['result']
 
 
-AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3  # push tampilan tiap ~30 detik (3 x FAST_LOOP_SECONDS) - eksekusi (SL/TP/dst) TETAP tiap tick, baca harga langsung dari MT5, gak kepengaruh throttle ini
+AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3
 _fast_tick_count = 0
 
 
@@ -312,12 +330,13 @@ def run_fast_tick():
         push_live_price_to_public(tick)
 
     snap = doc_ref.get()
-    data = snap.to_dict() if snap.exists else {}
-    ai_trade_data = data.get('aiTradeData', {})
-    ai_modal_awal = data.get('aiModalAwal', 2500000)
-    apply_ai_settings((data.get('aiSettings') or {}).get('master'))
+    doc_data = snap.to_dict() if snap.exists else {}
+    inst = get_instrument_data(doc_data)
+    ai_trade_data = inst.get('aiTradeData', {})
+    ai_modal_awal = inst.get('aiModalAwal', 2500000)
+    apply_ai_settings((inst.get('aiSettings') or {}).get('master'))
 
-    bot_control = data.get('botControl') or {}
+    bot_control = inst.get('botControl') or {}
     if bot_control.get('restartRequested'):
         handle_restart_request()
         return
@@ -327,8 +346,6 @@ def run_fast_tick():
     live_kurs = get_cached_kurs(now)
     news_info = get_cached_news(now)
 
-    # Method 1 & Method 2 masing2 punya slot sendiri (lihat METHOD_GROUPS) - diproses independen
-    # supaya 1 metode gak nge-block cek SL/TP/deep-lock metode satunya.
     any_changed = False
     for group_name, signal_types in METHOD_GROUPS.items():
         open_info = find_open_ai_trade_for_group(ai_trade_data, signal_types)
@@ -341,7 +358,7 @@ def run_fast_tick():
             changed = force_close_all_layers_at_market(trade, tick.bid, tick.ask, live_kurs, 'news_close', now)
             if changed:
                 any_changed = True
-                msg = f"Posisi {label}ditutup paksa: berita high-impact \"{news_info['title']}\"."
+                msg = f"Posisi {PAIR} {label}ditutup paksa: berita high-impact \"{news_info['title']}\"."
                 log(msg)
                 log_ai_tick('news_close', msg)
                 send_telegram(f"📰 <b>Posisi Ditutup (Berita)</b>\n\n{msg}")
@@ -355,11 +372,11 @@ def run_fast_tick():
             log(label + detail)
             log_ai_tick(outcome, detail)
             header = '🔒 <b>Trade Selesai</b>' if result['allResolved'] else '📊 <b>Update Posisi</b>'
-            notes_html = label + ('\n'.join(result['notes']) or detail)
+            notes_html = f"[{PAIR}] " + label + ('\n'.join(result['notes']) or detail)
             send_telegram(f"{header}\n\n{notes_html}")
 
     if any_changed:
-        doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
+        doc_ref.set(instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}), merge=True)
 
 
 def run_slow_tick():
@@ -371,13 +388,14 @@ def run_slow_tick():
     except Exception as e:
         log(f"Gagal ambil data candle: {e}")
         log_ai_tick('error', f"Gagal ambil data candle: {e}")
-        send_telegram(f"⚠️ <b>Bot Error</b>\n\nGagal ambil data candle: {e}")
+        send_telegram(f"⚠️ <b>Bot Error ({PAIR})</b>\n\nGagal ambil data candle: {e}")
         return
 
     snap = doc_ref.get()
-    data = snap.to_dict() if snap.exists else {}
-    ai_trade_data = data.get('aiTradeData', {})
-    ai_modal_awal = data.get('aiModalAwal', 2500000)
+    doc_data = snap.to_dict() if snap.exists else {}
+    inst = get_instrument_data(doc_data)
+    ai_trade_data = inst.get('aiTradeData', {})
+    ai_modal_awal = inst.get('aiModalAwal', 2500000)
     news_info = get_cached_news(now)
 
     if not is_market_open(now):
@@ -385,7 +403,7 @@ def run_slow_tick():
         log_ai_tick('market_closed', 'Weekend, market tutup.')
         return
 
-    # ---------- Method 1 (trend_following / rsi_reversal) - slot & logic sama seperti sebelumnya ----------
+    # ---------- Method 1 (trend_following / rsi_reversal) ----------
     open_m1 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method1'])
     if open_m1:
         log("Metode 1: posisi masih open, belum ada perubahan (dicek ulang tiap fast loop).")
@@ -398,12 +416,12 @@ def run_slow_tick():
         sug1 = compute_ai_suggestion(candles, ai_trade_data)
         opened1 = auto_open_ai_position(ai_trade_data, sug1)
         if opened1:
-            doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
+            doc_ref.set(instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}), merge=True)
             log_ai_tick('entry_opened', 'Entry Metode 1 berhasil dibuka.')
         else:
             log_ai_tick('no_signal', cfg.last_signal_skip_reason or 'Gak ada sinyal Metode 1 valid tick ini.')
 
-    # ---------- Method 2 (ICT/SMC liquidity sweep) - slot terpisah, independen dari Method 1 ----------
+    # ---------- Method 2 (ICT/SMC liquidity sweep) ----------
     if not cfg.AI_METHOD_TWO_ENABLED:
         return
     open_m2 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method2'])
@@ -411,28 +429,28 @@ def run_slow_tick():
         log_ai_tick('waiting_m2', 'Metode 2: posisi masih open, belum ada perubahan.')
         return
 
-    ict_state = data.get('ictState') or dict(ICT_STATE_DEFAULT)
+    ict_state = inst.get('ictState') or dict(ICT_STATE_DEFAULT)
     new_state, ready_sug = run_ict_state_machine(ict_state, ai_trade_data)
     if new_state != ict_state:
-        doc_ref.set({'ictState': new_state}, merge=True)
+        doc_ref.set(instrument_fields({'ictState': new_state}), merge=True)
 
     if not ready_sug:
         return
     if news_info:
-        log_ai_tick('news_block_m2', f"Sinyal Metode 2 ready tapi jam rawan berita, entry ditahan.")
+        log_ai_tick('news_block_m2', "Sinyal Metode 2 ready tapi jam rawan berita, entry ditahan.")
         return
 
     opened2 = auto_open_ai_position(ai_trade_data, ready_sug)
     if opened2:
         doc_ref.set(
-            {'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)},
+            instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)}),
             merge=True,
         )
         log_ai_tick('entry_opened_m2', 'Entry Metode 2 (ICT) berhasil dibuka.')
 
 
 def main():
-    log("Bot Trading AI (VPS/MT5) mulai jalan...")
+    log(f"Bot Trading AI Currency ({PAIR}, VPS/MT5) mulai jalan...")
     last_slow_run = None
     while True:
         try:

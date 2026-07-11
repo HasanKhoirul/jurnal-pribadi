@@ -77,6 +77,7 @@
             <li class="menu-item active" data-target="view-home">🏠 Pusat Kendali</li>
             <li class="menu-item" data-target="view-trading">📊 Jurnal XAUUSD</li>
             <li class="menu-item" data-target="view-ai-trading">🤖 Trading AI</li>
+            <li class="menu-item" data-target="view-ai-currency">💴 Trading AI Currency</li>
             <li class="menu-item" data-target="view-expenses">🛒 Pengeluaran Bulanan</li>
             <li class="menu-item" data-target="view-sports">🏃‍♂️ Jurnal Olahraga</li>
             <li class="menu-item" data-target="view-wealth">💰 History Kekayaan</li>
@@ -344,6 +345,71 @@
                         <button class="ai-log-filter-chip" style="border-color:#ff1744; color:#ff1744;" onclick="toggleAiLogFilter('fail', this)">❌ Gagal</button>
                     </div>
                     <div id="ai-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-ai-currency" class="content-section" style="padding-top: 10px;">
+            <div id="cur-locked-ui" class="locked-overlay" style="display:none;">
+                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
+                <h2 style="color: #ffd700;">Privasi Bos!</h2>
+                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Trading AI Currency.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+            </div>
+
+            <div id="cur-content-ui">
+                <header class="main-header">
+                    <div class="header-left">
+                        <h1 style="color:#00bcd4;">💴 Trading AI Currency (Simulasi)</h1>
+                        <div class="action-group-main hide-for-screenshot" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                            <select id="cur-pair-select" class="form-input" style="width:auto; height:36px;"></select>
+                            <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" id="btn-cur-refresh">🔃 Refresh</button>
+                            <div class="ai-more-menu-wrap">
+                                <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-cur-more-menu">⚙️ Lainnya ▾</button>
+                                <div id="cur-more-menu-dropdown" class="ai-more-dropdown">
+                                    <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-cur-master-settings">🎛️ Master Setting</button>
+                                    <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-cur-restart-bot">🔄 Restart Bot (VPS)</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+                <p style="color:#777; font-size:0.8rem; margin:-8px 0 15px;">Tiap pair jalan sbg proses VPS terpisah dari Gold & pair lain — pilih pair di dropdown buat lihat data masing-masing. Data dihitung & dieksekusi 100% di VPS (`ai-tick-currency.py`), section ini cuma nampilin.</p>
+
+                <div class="xau-nav hide-for-screenshot">
+                    <button id="cur-menu-market" class="xau-tab active" style="border-color:#00bcd4; color:#00bcd4;">📈 Live Status</button>
+                    <button id="cur-menu-calendar" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📅 Riwayat</button>
+                    <button id="cur-menu-log" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📜 Log Aktivitas</button>
+                </div>
+
+                <div id="cur-view-market" class="dashboard-container">
+                    <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr);">
+                        <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Metode 1 — Entry Posisi</span><h3 id="cur-live-entry" style="color:#9c27b0;">Belum ada posisi</h3></div>
+                        <div class="equity-box" style="border-left-color:#00e676;"><span class="label">Metode 1 — Floating P/L</span><h3 id="cur-live-total-pl" class="netral">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#888;"><span class="label">Win Rate Metode 1 (14 hari)</span><h3 id="cur-winrate-m1" class="netral">-</h3></div>
+                    </div>
+                    <div id="cur-method2-section" style="display:none;">
+                        <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Entry Posisi</span><h3 id="cur-live-entry-m2" style="color:#2196f3;">Belum ada posisi</h3></div>
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Floating P/L</span><h3 id="cur-live-total-pl-m2" class="netral">Rp 0</h3></div>
+                            <div class="equity-box" style="border-left-color:#888;"><span class="label">Win Rate Metode 2 (14 hari)</span><h3 id="cur-winrate-m2" class="netral">-</h3></div>
+                        </div>
+                    </div>
+                    <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Hari Ini</span><h3 id="cur-pl-today" class="netral">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Minggu Ini</span><h3 id="cur-pl-week" class="netral">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Keseluruhan</span><h3 id="cur-pl-all" class="netral">Rp 0</h3></div>
+                    </div>
+                </div>
+
+                <div id="cur-view-calendar" class="dashboard-container" style="display:none;">
+                    <h1 style="color:#00bcd4; margin-bottom:15px;">📅 Riwayat Entry</h1>
+                    <div id="cur-history-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
+                </div>
+
+                <div id="cur-view-log" class="dashboard-container" style="display:none;">
+                    <h1 style="color:#00bcd4; margin-bottom:15px;">📜 Log Aktivitas Bot</h1>
+                    <div id="cur-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
                 </div>
             </div>
         </section>
@@ -887,6 +953,64 @@
             <div style="display:flex; gap:10px; margin-top:20px;">
                 <button id="btn-reset-ai-master" class="btn-action" style="flex:1; border-color:#666; color:#aaa;">Reset ke Default</button>
                 <button id="btn-save-ai-master" class="save-btn" style="flex:1; background:#ff9800;">Simpan</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="cur-master-modal" class="modal">
+        <div class="modal-content" style="width: 680px; max-height: 85vh; overflow-y: auto;">
+            <span class="close-btn" onclick="document.getElementById('cur-master-modal').style.display='none'">&times;</span>
+            <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting — <span id="cur-master-pair-label">USDJPY</span></h2>
+            <p style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Parameter khusus pair yang lagi dipilih di dropdown — independen dari Gold maupun pair currency lain. Dipakai bot VPS otomatis tiap tick, gak perlu restart.</p>
+
+            <h3 class="master-group-title">🎯 SL & TP</h3>
+            <div class="master-row"><label>SL (pips)</label><input type="number" id="cur-master-sl-pips" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Mode SL</label><select id="cur-master-sl-mode" class="master-input wide"><option value="fixed">Fixed (pips tetap)</option><option value="atr">Adaptif (ikut volatilitas ATR)</option></select></div>
+            <div class="master-row"><label>Multiplier ATR (kalau mode Adaptif)</label><input type="number" id="cur-master-atr-multiplier" class="master-input" step="0.1" min="0.5"></div>
+            <div class="master-row"><label>Mode TP</label><select id="cur-master-tp-mode" class="master-input wide"><option value="fixed">Fixed (pips tetap)</option><option value="adaptive">Adaptif (proporsional ke SL)</option></select></div>
+            <div class="master-row">
+                <label>TP Layer 1 / 2 / 3 (pips)</label>
+                <div style="display:flex; gap:6px;">
+                    <input type="number" id="cur-master-tp1-pips" class="master-input small" step="1" min="1">
+                    <input type="number" id="cur-master-tp2-pips" class="master-input small" step="1" min="1">
+                    <input type="number" id="cur-master-tp3-pips" class="master-input small" step="1" min="1">
+                </div>
+            </div>
+            <div class="master-row"><label>Lot per Layer</label><input type="number" id="cur-master-lot-size" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Satuan Nilai Kontrak</label><select id="cur-master-pip-value-unit" class="master-input wide"><option value="cent">Cent (akun Cent)</option><option value="usd">USD (akun Standard)</option></select></div>
+            <div class="master-row"><label>Nilai per Pip (per 0.1 lot, satuan di atas)</label><input type="number" id="cur-master-pip-value-per-lot" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Jarak Antar Layer (pips)</label><input type="number" id="cur-master-layer-stagger-pips" class="master-input" step="1" min="1"></div>
+
+            <h3 class="master-group-title">🔒 Lock & Deep-Lock</h3>
+            <div class="master-row"><label>Kunci Profit Layer 2&amp;3 Setelah Layer 1 TP (pips)</label><input type="number" id="cur-master-lock-pips-after-tp1" class="master-input" step="1" min="0"></div>
+            <div class="master-row"><label>Ambang Deep-Lock (pips floating profit Layer 3)</label><input type="number" id="cur-master-deep-lock-trigger-pips" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Deep-Lock SL Layer 3 ke (pips)</label><input type="number" id="cur-master-deep-lock-pips" class="master-input" step="1" min="0"></div>
+            <div class="master-row"><label>Timeout Setelah Deep-Lock (menit)</label><input type="number" id="cur-master-deep-lock-timeout-minutes" class="master-input" step="1" min="1"></div>
+
+            <h3 class="master-group-title">📈 Filter Sinyal</h3>
+            <div class="master-row"><label>Ambang Minimum Win Rate (%)</label><input type="number" id="cur-master-min-signal-winrate" class="master-input" step="1" min="0" max="100"></div>
+            <div class="master-row"><label>Lookback Win Rate (hari)</label><input type="number" id="cur-master-winrate-lookback-days" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Minimal Sample Sebelum Filter Aktif</label><input type="number" id="cur-master-winrate-min-samples" class="master-input" step="1" min="1"></div>
+
+            <h3 class="master-group-title">📰 Jeda Berita High-Impact</h3>
+            <div class="master-row">
+                <label>Sebelum / Sesudah Rilis (menit)</label>
+                <div style="display:flex; gap:6px;">
+                    <input type="number" id="cur-master-news-pre-minutes" class="master-input small" step="1" min="0">
+                    <input type="number" id="cur-master-news-post-minutes" class="master-input small" step="1" min="0">
+                </div>
+            </div>
+
+            <h3 class="master-group-title">📊 Summary Telegram</h3>
+            <div class="master-row"><label>Interval Otomatis (jam)</label><input type="number" id="cur-master-summary-interval-hours" class="master-input" step="1" min="1"></div>
+
+            <h3 class="master-group-title">🔵 Metode 2 (ICT/SMC Liquidity Sweep)</h3>
+            <div class="master-row"><label>Status</label><select id="cur-master-method-two-enabled" class="master-input wide"><option value="off">Nonaktif</option><option value="on">Aktif</option></select></div>
+            <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Independen dari toggle Metode 2 di Gold maupun pair currency lain.</p>
+
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button id="btn-reset-cur-master" class="btn-action" style="flex:1; border-color:#666; color:#aaa;">Reset ke Default</button>
+                <button id="btn-save-cur-master" class="save-btn" style="flex:1; background:#ff9800;">Simpan</button>
             </div>
         </div>
     </div>

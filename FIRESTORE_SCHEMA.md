@@ -21,10 +21,14 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     ]
   },
   modalAwal: number,      // modal awal Jurnal XAUUSD manual
-  aiLiveCandlesMt5: [ { time: string(ISO), open: number, high: number, low: number, close: number } ],  // candle H1 terkini dari bot VPS/MT5, dipush ulang tiap slow-loop (~5 menit)
-  aiLivePriceMt5: number,  // harga tick (mid bid/ask) terkini dari bot VPS/MT5, dipush tiap fast-loop (~10 detik), buat "Harga Sekarang" biar berasa live
+  aiLiveCandlesMt5: [ { time: string(ISO), open: number, high: number, low: number, close: number } ],  // candle H1 terkini dari bot VPS/MT5 (Gold), dipush ulang tiap slow-loop (~5 menit)
+  aiLivePriceMt5: number,  // harga tick (mid bid/ask) terkini dari bot VPS/MT5 (Gold), dipush tiap fast-loop (~10 detik), buat "Harga Sekarang" biar berasa live
   aiLivePriceMt5UpdatedAt: string (ISO),
   aiLiveCandlesMt5UpdatedAt: string (ISO),  // dipakai script.js buat cek data ini basi (>10 menit) atau enggak, fallback ke TwelveData kalau basi
+  aiLiveCandlesMt5_<PAIR>: [...sama shape aiLiveCandlesMt5...],  // versi Currency, 1 set per pair (misal aiLiveCandlesMt5_USDJPY) - field name di-suffix biar gak collide sama punya Gold
+  aiLivePriceMt5_<PAIR>: number,
+  aiLivePriceMt5UpdatedAt_<PAIR>: string (ISO),
+  aiLiveCandlesMt5UpdatedAt_<PAIR>: string (ISO),
   sportData: {
     "YYYY-MM-DD": [
       { time: string, type: string, target: string, achieved: string, totalDur: number,
@@ -126,9 +130,20 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     readySl: number|null,
     readyTpPipsUsed: [number, number, number]|null,
     readyAlasan: string|null
+  },
+  currencyInstruments: {       // modul Currency (multi-instrumen) - Gold TETAP di field root di atas, gak dipindah kesini
+    "<PAIR>": {                  // key = nama pair, misal "USDJPY", "GBPUSD", "AUDUSD", "EURUSD", "USDCAD"
+      aiTradeData: {...sama persis shape aiTradeData Gold di atas...},
+      aiModalAwal: number,        // modal simulasi TERPISAH per pair, gak digabung sama Gold atau pair lain
+      aiSettings: { master: {...sama shape aiSettings.master Gold, termasuk methodTwoEnabled...} },  // SL/TP/lot per pair independen
+      botControl: {...sama shape botControl Gold...},   // proses OS terpisah per pair, butuh restart-signal sendiri
+      ictState: {...sama shape ictState Gold...}
+    }
   }
 }
 ```
+
+Ditulis/dibaca oleh `scripts/ai-tick-currency.py <PAIR>` (1 proses per pair, parameterized - lihat komentar di file itu), pakai helper `instrument_fields()`/`get_instrument_data()` biar nempel ke `currencyInstruments.<PAIR>.*` doang. Logic symbol-agnostic (indikator, Metode 1, Metode 2 ICT, manajemen posisi) di-share dari `scripts/ai_trading_core.py` — dipakai bareng sama `ai-tick.py` (Gold), bukan duplikat kode. `AI_PIP_SIZE` per pair beda dari Gold (0.01 buat JPY, 0.0001 buat non-JPY) — lihat `CURRENCY_INSTRUMENTS` dict di `ai-tick-currency.py`.
 
 **Layer 0** = market entry (harga sinyal), TP default 80 pips. **Layer 1** = pending order -10 pips, TP default 100 pips. **Layer 2** = pending order -20 pips, TP default 150 pips (dan satu-satunya yang punya `deepLockAt`/`deepLockTriggerPips`/`deepLockPips`). Angka TP default itu berubah proporsional kalau `tpMode` "adaptive" pas trade dibuka.
 
@@ -175,4 +190,6 @@ Nilai di tabel ini cuma **default** — semuanya (kecuali `AI_PIP_SIZE`) bisa di
 ## File terkait
 - **[script.js](script.js)** — logic sisi browser (modul "MODUL TRADING AI"), plus semua modul lain (jurnal manual, pengeluaran, olahraga, wealth).
 - **[scripts/ai-tick.mjs](scripts/ai-tick.mjs)** — logic sisi server (Node.js + firebase-admin), dijalankan `.github/workflows/ai-trading-tick.yml` tiap ~15 menit (realistanya bisa 1-2.5 jam karena keterbatasan jadwal GitHub Actions gratis).
-- Kedua file di atas **harus selalu identik logic-nya untuk Metode 1** (trend_following/rsi_reversal) — kalau ada perubahan, wajib di-mirror ke keduanya. **Pengecualian: Metode 2 (ICT/SMC liquidity sweep) CUMA ada di `ai-tick.py`** — gak di-mirror ke `script.js`/`ai-tick.mjs` (keputusan scope sengaja, biar gak ada 3 implementasi state-machine stateful yang harus identik presisi). Kalau VPS mati, Metode 2 otomatis berhenti sementara; Metode 1 tetap jalan lewat fallback GitHub Actions.
+- Ketiga file di atas **harus selalu identik logic-nya untuk Metode 1** (trend_following/rsi_reversal) — kalau ada perubahan, wajib di-mirror ke keduanya (script.js & ai-tick.mjs). **Pengecualian: Metode 2 (ICT/SMC liquidity sweep) & modul Currency CUMA ada di sisi Python (VPS)** — gak di-mirror ke `script.js`/`ai-tick.mjs` (keputusan scope sengaja, biar gak ada banyak implementasi state-machine stateful yang harus identik presisi di banyak bahasa/proses). Kalau VPS mati, Metode 2 & Currency otomatis berhenti sementara; Metode 1 Gold tetap jalan lewat fallback GitHub Actions.
+- **[scripts/ai_trading_core.py](scripts/ai_trading_core.py)** — logic symbol-agnostic (indikator, Metode 1, Metode 2 ICT, manajemen posisi), di-import bareng oleh `ai-tick.py` (Gold) & `ai-tick-currency.py` (Currency) — SATU sumber kebenaran, bugfix cukup 1x edit + restart semua proses yang makai.
+- **[scripts/ai-tick-currency.py](scripts/ai-tick-currency.py)** — runner parameterized modul Currency, 1 proses per pair (`py -3.10 ai-tick-currency.py <PAIR>`), baca/tulis ke `currencyInstruments.<PAIR>.*`.

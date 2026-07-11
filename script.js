@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const defaultAiSettings = { twelvedata: localStorage.getItem('ai_key_twelvedata') || '', llmProvider: localStorage.getItem('ai_llm_provider') || 'none', llmKey: localStorage.getItem('ai_key_llm') || '' };
     let aiSettings = JSON.parse(localStorage.getItem('ai_settings_v1')) || defaultAiSettings;
     let botControl = JSON.parse(localStorage.getItem('ai_bot_control_v1')) || {};
+    let currencyInstruments = {};  // modul Currency (multi-instrumen) - VPS-only compute, cloud-driven doang, gak di-cache localStorage
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
@@ -51,7 +52,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function pushPrivateToCloud() {
         if (!auth.currentUser) return Promise.resolve();
-        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal, aiSettings, botControl })
+        // PENTING: .set() ini TANPA merge (biar fitur "Reset Data" yang nge-kosongin aiTradeData={} tetap
+        // beneran ke-kosongin di server, bukan cuma "gak ada yg di-merge") - jadi currencyInstruments WAJIB
+        // ikut disertain di sini pakai nilai terakhir yang udah ke-sync dari listener, biar gak ke-wipe
+        // tiap kali Gold nyimpen data (auto-open posisi, checkAndClose, Master Setting, dst).
+        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal, aiSettings, botControl, currencyInstruments })
             .catch(err => { console.error('Gagal sync data privat ke cloud:', err); throw err; });
     }
 
@@ -77,6 +82,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 aiTradeData = d.aiTradeData || {}; aiModalAwal = d.aiModalAwal || 2500000;
                 aiSettings = d.aiSettings || defaultAiSettings;
                 botControl = d.botControl || {};
+                currencyInstruments = d.currencyInstruments || {};  // modul Currency - VPS-only compute, di sini cuma dibaca (gak ada localStorage cache, murni cloud-driven)
                 localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 localStorage.setItem('ai_settings_v1', JSON.stringify(aiSettings));
@@ -106,6 +112,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (openInfo) updateFloatingPl(openInfo, lastAiCandles);
             }
         }
+        else if (targetId === 'view-ai-currency' && isLoggedIn) renderCurrencyDashboard();
     }
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -242,6 +249,7 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (targetId === 'view-sports') renderSportCalendar();
             else if (targetId === 'view-wealth') renderWealthDashboard();
             else if (targetId === 'view-ai-trading' && isLoggedIn) { loadEconomicCalendarWidget(); startAiAutoTick(); }
+            else if (targetId === 'view-ai-currency' && isLoggedIn) { renderCurrencyDashboard(); }
             if (targetId !== 'view-ai-trading') stopAiAutoTick();
         });
     });
@@ -2248,6 +2256,258 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('wealth-form').onsubmit = (e) => { e.preventDefault(); showConfirm("Yakin mau simpan perubahan data kekayaan ini?", () => { let idx = parseInt(document.getElementById('wealth-edit-index').value); let newData = { type: document.getElementById('wealth-type').value, date: document.getElementById('wealth-date').value, amount: document.getElementById('wealth-amount').value, note: document.getElementById('wealth-notes').value }; if (idx > -1) { newData.id = wealthData.items[idx].id; wealthData.items[idx] = newData; } else { newData.id = Date.now(); wealthData.items.push(newData); } saveData('wealth_data_v1', wealthData); document.getElementById('wealth-modal').style.display = 'none'; renderWealthDashboard(); }); };
     window.deleteWealthItem = (idx) => { showConfirm("Yakin hapus data historis ini? Perhitungan tabungan akan berubah loh!", () => { wealthData.items.splice(idx, 1); saveData('wealth_data_v1', wealthData); renderWealthDashboard(); }); };
     document.getElementById('btn-save-rt').onclick = () => { let rt = parseFloat(document.getElementById('wealth-rt-amount').value); if(!isNaN(rt)) { showConfirm("Yakin update Uang Real Time ini?", () => { wealthData.realMoney = rt; saveData('wealth_data_v1', wealthData); document.getElementById('wealth-modal-rt').style.display = 'none'; renderWealthDashboard(); }); } };
+
+    // ==========================================
+    // MODUL TRADING AI CURRENCY (multi-instrumen) - VPS-only compute (ai-tick-currency.py),
+    // browser di sini CUMA baca & tampilin, kecuali 2 aksi eksplisit: simpan Master Setting & restart bot.
+    // ==========================================
+    const CURRENCY_PAIRS = ['USDJPY', 'GBPUSD', 'AUDUSD', 'EURUSD', 'USDCAD'];
+    const CURRENCY_MASTER_DEFAULTS = {
+        slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
+        lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
+        minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
+        newsPreMinutes: 10, newsPostMinutes: 40,
+        pipValueUnit: 'cent', pipValuePerLot: 1,
+        tpMode: 'fixed', summaryIntervalHours: 6, methodTwoEnabled: false
+    };
+
+    (function populateCurPairSelect() {
+        const sel = document.getElementById('cur-pair-select');
+        if (sel) sel.innerHTML = CURRENCY_PAIRS.map(p => `<option value="${p}">${p}</option>`).join('');
+    })();
+
+    function getCurInstrument(pairKey) { return currencyInstruments[pairKey] || {}; }
+    function getCurMasterSettings(pairKey) {
+        const inst = getCurInstrument(pairKey);
+        return Object.assign({}, CURRENCY_MASTER_DEFAULTS, ((inst.aiSettings || {}).master) || {});
+    }
+    // Sama kayak findOpenAiTrade(signalTypes) tapi nerima tradeData sbg parameter (bukan baca aiTradeData global punya Gold).
+    function findOpenTradeIn(tradeData, signalTypes) {
+        for (const d in tradeData) {
+            const list = tradeData[d];
+            for (let i = 0; i < list.length; i++) {
+                if (list[i].status === 'open' && (!signalTypes || signalTypes.has(list[i].signalType))) return { dateKey: d, index: i, trade: list[i] };
+            }
+        }
+        return null;
+    }
+    function sumClosedPl(trades) {
+        const closed = trades.filter(t => t.status === 'closed');
+        return { total: closed.reduce((s, t) => s + parseFloat(t.pl || 0), 0), count: closed.length };
+    }
+    function curTodayPl(tradeData) {
+        const d = new Date(); const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return sumClosedPl(tradeData[dateStr] || []);
+    }
+    function curWeekPl(tradeData) {
+        const d = new Date(); const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        const mondayStr = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+        let total = 0, count = 0;
+        Object.keys(tradeData).forEach(dateStr => { if (dateStr < mondayStr) return; const r = sumClosedPl(tradeData[dateStr]); total += r.total; count += r.count; });
+        return { total, count };
+    }
+    function curAllPl(tradeData) {
+        let total = 0, count = 0;
+        Object.values(tradeData).forEach(list => { const r = sumClosedPl(list); total += r.total; count += r.count; });
+        return { total, count };
+    }
+    function curWinRate(tradeData, signalType) {
+        const cutoff = Date.now() - 14 * 86400000;
+        let total = 0, win = 0;
+        for (const d in tradeData) {
+            if (new Date(d).getTime() < cutoff) continue;
+            tradeData[d].forEach(t => { if (t.status !== 'closed' || t.signalType !== signalType) return; total++; if (parseFloat(t.pl || 0) >= 0) win++; });
+        }
+        return total >= 5 ? (win / total) * 100 : null;
+    }
+
+    function updateCurPositionBox(entryElId, plElId, openInfo) {
+        const entryEl = document.getElementById(entryElId); const plEl = document.getElementById(plElId);
+        if (!entryEl || !plEl) return;
+        if (!openInfo) { entryEl.innerText = 'Belum ada posisi'; entryEl.className = 'netral'; plEl.innerText = '-'; plEl.className = 'netral'; return; }
+        const trade = openInfo.trade;
+        entryEl.innerText = `${trade.arah} @ ${parseFloat(trade.entry).toFixed(5)}`;
+        entryEl.className = trade.arah === 'BUY' ? 'profit-text' : 'loss-text';
+        plEl.innerText = 'Sedang open — cek Telegram utk floating P/L live';
+        plEl.className = 'netral';
+    }
+
+    window.renderCurrencyDashboard = function() {
+        if (!isLoggedIn) return;
+        const sel = document.getElementById('cur-pair-select');
+        if (!sel) return;
+        const pairKey = sel.value || CURRENCY_PAIRS[0];
+        const inst = getCurInstrument(pairKey);
+        const tradeData = inst.aiTradeData || {};
+        const m = getCurMasterSettings(pairKey);
+
+        document.getElementById('cur-method2-section').style.display = m.methodTwoEnabled ? '' : 'none';
+
+        const openM1 = findOpenTradeIn(tradeData, AI_METHOD_GROUPS.method1);
+        updateCurPositionBox('cur-live-entry', 'cur-live-total-pl', openM1);
+        // Gak ada posisi open buat nentuin signalType pasti - default tampilin winrate trend_following (kasus paling umum).
+        const wr1 = curWinRate(tradeData, openM1 ? openM1.trade.signalType : 'trend_following');
+        document.getElementById('cur-winrate-m1').innerText = wr1 === null ? 'Belum cukup data' : `${wr1.toFixed(0)}%`;
+
+        if (m.methodTwoEnabled) {
+            const openM2 = findOpenTradeIn(tradeData, AI_METHOD_GROUPS.method2);
+            updateCurPositionBox('cur-live-entry-m2', 'cur-live-total-pl-m2', openM2);
+            const wr2 = curWinRate(tradeData, 'ict_liquidity_sweep');
+            document.getElementById('cur-winrate-m2').innerText = wr2 === null ? 'Belum cukup data' : `${wr2.toFixed(0)}%`;
+        }
+
+        const today = curTodayPl(tradeData), week = curWeekPl(tradeData), all = curAllPl(tradeData);
+        const setPl = (id, r) => { const el = document.getElementById(id); el.innerText = `${r.total >= 0 ? '+' : ''}${formatRupiah(r.total)} (${r.count})`; el.className = r.total >= 0 ? 'profit-text' : 'loss-text'; };
+        setPl('cur-pl-today', today); setPl('cur-pl-week', week); setPl('cur-pl-all', all);
+
+        renderCurrencyHistory(tradeData);
+        renderCurrencyLog(pairKey);
+    };
+
+    function renderCurrencyHistory(tradeData) {
+        const el = document.getElementById('cur-history-list');
+        if (!el) return;
+        const dates = Object.keys(tradeData).sort().reverse();
+        if (!dates.length) { el.innerHTML = '<p style="color:#888;">Belum ada entry.</p>'; return; }
+        el.innerHTML = '';
+        dates.forEach(dateStr => {
+            tradeData[dateStr].forEach(t => {
+                const plClass = t.status === 'closed' ? (t.pl >= 0 ? 'profit-text' : 'loss-text') : 'netral';
+                const plText = t.status === 'closed' ? `${t.pl >= 0 ? '+' : ''}${formatRupiah(t.pl)}` : 'Open';
+                el.innerHTML += `<div class="history-item"><div><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(5)}</strong> <span style="color:#888; font-size:0.75rem;">[${t.signalType}]</span><br><span style="color:#aaa; font-size:0.8rem;">${dateStr} — ${t.status}</span></div><div class="${plClass}" style="font-weight:bold;">${plText}</div></div>`;
+            });
+        });
+    }
+
+    function renderCurrencyLog(pairKey) {
+        const el = document.getElementById('cur-log-list');
+        if (!el || !auth.currentUser) return;
+        db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
+            .where('source', '==', `server_${pairKey}`).orderBy('time', 'desc').limit(100).get()
+            .then(snap => {
+                const logs = snap.docs.map(d => d.data());
+                el.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas.</p>';
+                logs.forEach(l => {
+                    const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+                    el.innerHTML += `<div class="history-item"><div><strong>${l.outcome}</strong><br><span style="color:#aaa; font-size:0.8rem;">${waktu} — ${l.detail}</span></div></div>`;
+                });
+            }).catch(err => console.error('Gagal ambil log Currency:', err));
+    }
+
+    document.getElementById('cur-pair-select').addEventListener('change', renderCurrencyDashboard);
+    document.getElementById('btn-cur-refresh').addEventListener('click', renderCurrencyDashboard);
+
+    function switchCurTab(activeMenuId, activeViewId) {
+        ['cur-menu-market', 'cur-menu-calendar', 'cur-menu-log'].forEach(id => document.getElementById(id).classList.toggle('active', id === activeMenuId));
+        ['cur-view-market', 'cur-view-calendar', 'cur-view-log'].forEach(id => document.getElementById(id).style.display = id === activeViewId ? 'block' : 'none');
+    }
+    document.getElementById('cur-menu-market').addEventListener('click', () => { switchCurTab('cur-menu-market', 'cur-view-market'); renderCurrencyDashboard(); });
+    document.getElementById('cur-menu-calendar').addEventListener('click', () => { switchCurTab('cur-menu-calendar', 'cur-view-calendar'); renderCurrencyDashboard(); });
+    document.getElementById('cur-menu-log').addEventListener('click', () => { switchCurTab('cur-menu-log', 'cur-view-log'); renderCurrencyDashboard(); });
+
+    document.getElementById('btn-cur-more-menu').addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.getElementById('cur-more-menu-dropdown').classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+        const dd = document.getElementById('cur-more-menu-dropdown');
+        if (dd && dd.classList.contains('open') && !dd.contains(e.target) && e.target.id !== 'btn-cur-more-menu') dd.classList.remove('open');
+    });
+
+    document.getElementById('btn-cur-master-settings').onclick = () => {
+        const pairKey = document.getElementById('cur-pair-select').value;
+        const m = getCurMasterSettings(pairKey);
+        document.getElementById('cur-master-pair-label').innerText = pairKey;
+        document.getElementById('cur-master-sl-pips').value = m.slPips;
+        document.getElementById('cur-master-sl-mode').value = m.slMode;
+        document.getElementById('cur-master-atr-multiplier').value = m.atrMultiplier;
+        document.getElementById('cur-master-tp-mode').value = m.tpMode;
+        document.getElementById('cur-master-tp1-pips').value = m.tpLayerPips[0];
+        document.getElementById('cur-master-tp2-pips').value = m.tpLayerPips[1];
+        document.getElementById('cur-master-tp3-pips').value = m.tpLayerPips[2];
+        document.getElementById('cur-master-pip-value-unit').value = m.pipValueUnit;
+        document.getElementById('cur-master-pip-value-per-lot').value = m.pipValuePerLot;
+        document.getElementById('cur-master-lot-size').value = m.lotSize;
+        document.getElementById('cur-master-layer-stagger-pips').value = m.layerStaggerPips;
+        document.getElementById('cur-master-lock-pips-after-tp1').value = m.lockPipsAfterTp1;
+        document.getElementById('cur-master-deep-lock-trigger-pips').value = m.deepLockTriggerPips;
+        document.getElementById('cur-master-deep-lock-pips').value = m.deepLockPips;
+        document.getElementById('cur-master-deep-lock-timeout-minutes').value = m.deepLockTimeoutMinutes;
+        document.getElementById('cur-master-min-signal-winrate').value = m.minSignalWinrate;
+        document.getElementById('cur-master-winrate-lookback-days').value = m.winrateLookbackDays;
+        document.getElementById('cur-master-winrate-min-samples').value = m.winrateMinSamples;
+        document.getElementById('cur-master-news-pre-minutes').value = m.newsPreMinutes;
+        document.getElementById('cur-master-news-post-minutes').value = m.newsPostMinutes;
+        document.getElementById('cur-master-summary-interval-hours').value = m.summaryIntervalHours;
+        document.getElementById('cur-master-method-two-enabled').value = m.methodTwoEnabled ? 'on' : 'off';
+        document.getElementById('cur-master-modal').style.display = 'flex';
+    };
+
+    document.getElementById('btn-reset-cur-master').onclick = () => {
+        const pairKey = document.getElementById('cur-pair-select').value;
+        if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud.'); return; }
+        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiSettings: { master: Object.assign({}, CURRENCY_MASTER_DEFAULTS) } } } }, { merge: true })
+            .then(() => { alert(`Master Setting ${pairKey} dikembalikan ke default.`); document.getElementById('cur-master-modal').style.display = 'none'; })
+            .catch(err => alert('Gagal reset: ' + err.message));
+    };
+
+    document.getElementById('btn-save-cur-master').onclick = () => {
+        const pairKey = document.getElementById('cur-pair-select').value;
+        const readNum = (id) => parseFloat(document.getElementById(id).value);
+        const fields = {
+            slPips: readNum('cur-master-sl-pips'),
+            atrMultiplier: readNum('cur-master-atr-multiplier'),
+            tp1: readNum('cur-master-tp1-pips'), tp2: readNum('cur-master-tp2-pips'), tp3: readNum('cur-master-tp3-pips'),
+            pipValuePerLot: readNum('cur-master-pip-value-per-lot'),
+            lotSize: readNum('cur-master-lot-size'),
+            layerStaggerPips: readNum('cur-master-layer-stagger-pips'),
+            lockPipsAfterTp1: readNum('cur-master-lock-pips-after-tp1'),
+            deepLockTriggerPips: readNum('cur-master-deep-lock-trigger-pips'),
+            deepLockPips: readNum('cur-master-deep-lock-pips'),
+            deepLockTimeoutMinutes: readNum('cur-master-deep-lock-timeout-minutes'),
+            minSignalWinrate: readNum('cur-master-min-signal-winrate'),
+            winrateLookbackDays: readNum('cur-master-winrate-lookback-days'),
+            winrateMinSamples: readNum('cur-master-winrate-min-samples'),
+            newsPreMinutes: readNum('cur-master-news-pre-minutes'),
+            newsPostMinutes: readNum('cur-master-news-post-minutes'),
+            summaryIntervalHours: readNum('cur-master-summary-interval-hours')
+        };
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0;
+        if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
+        if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud & kepakai bot VPS.'); return; }
+        const master = {
+            slPips: fields.slPips, slMode: document.getElementById('cur-master-sl-mode').value,
+            atrMultiplier: fields.atrMultiplier, tpMode: document.getElementById('cur-master-tp-mode').value,
+            tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
+            pipValueUnit: document.getElementById('cur-master-pip-value-unit').value, pipValuePerLot: fields.pipValuePerLot,
+            lotSize: fields.lotSize, layerStaggerPips: fields.layerStaggerPips,
+            lockPipsAfterTp1: fields.lockPipsAfterTp1, deepLockTriggerPips: fields.deepLockTriggerPips,
+            deepLockPips: fields.deepLockPips, deepLockTimeoutMinutes: fields.deepLockTimeoutMinutes,
+            minSignalWinrate: fields.minSignalWinrate, winrateLookbackDays: fields.winrateLookbackDays,
+            winrateMinSamples: fields.winrateMinSamples, newsPreMinutes: fields.newsPreMinutes,
+            newsPostMinutes: fields.newsPostMinutes, summaryIntervalHours: fields.summaryIntervalHours,
+            methodTwoEnabled: document.getElementById('cur-master-method-two-enabled').value === 'on'
+        };
+        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiSettings: { master } } } }, { merge: true })
+            .then(() => {
+                document.getElementById('cur-master-modal').style.display = 'none';
+                alert(`Master Setting ${pairKey} tersimpan & disinkronkan — otomatis kepakai bot VPS pair ini dalam ~10 detik.`);
+            })
+            .catch(err => alert('Gagal simpan: ' + err.message));
+    };
+
+    // Sama pola kayak restart Gold - pakai spread (...existingBotControl) biar field lain (summaryRequested dkk) gak ke-wipe.
+    document.getElementById('btn-cur-restart-bot').onclick = () => {
+        const pairKey = document.getElementById('cur-pair-select').value;
+        if (!confirm(`Restart bot VPS pair ${pairKey} sekarang? Bot bakal ambil kode terbaru & jalan ulang otomatis dalam ~10 detik (cuma jalan kalau prosesnya lagi hidup).`)) return;
+        if (!auth.currentUser) { alert('Login dulu.'); return; }
+        const existingBotControl = getCurInstrument(pairKey).botControl || {};
+        db.collection('appData').doc(auth.currentUser.uid).set({
+            currencyInstruments: { [pairKey]: { botControl: { ...existingBotControl, restartRequested: true, requestedAt: new Date().toISOString() } } }
+        }, { merge: true })
+            .then(() => alert(`Sinyal restart ${pairKey} terkirim. Cek tab Log Aktivitas dalam ~30 detik.`))
+            .catch(err => alert('Gagal kirim sinyal restart: ' + err.message));
+    };
 
     renderXAUCalendar();
 });
