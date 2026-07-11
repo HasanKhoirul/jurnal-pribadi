@@ -55,8 +55,11 @@ FIELD_PREFIX = 'currencyInstruments'  # doc_ref.set({FIELD_PREFIX: {PAIR: {...}}
 
 FIREBASE_SERVICE_ACCOUNT_PATH = os.environ['FIREBASE_SERVICE_ACCOUNT_PATH']
 AI_TARGET_UID = os.environ['AI_TARGET_UID']
-TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
-TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+# Bot/chat Telegram TERPISAH dari Gold (biar notifikasi 5 pair gak numpuk campur di 1 chat) - fallback ke
+# punya Gold kalau TELEGRAM_BOT_TOKEN_CURRENCY/TELEGRAM_CHAT_ID_CURRENCY belum diisi di .env, biar proses
+# gak crash duluan sebelum sempat diisi.
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN_CURRENCY') or os.environ['TELEGRAM_BOT_TOKEN']
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID_CURRENCY') or os.environ['TELEGRAM_CHAT_ID']
 MT5_LOGIN = int(os.environ['MT5_LOGIN'])
 MT5_PASSWORD = os.environ['MT5_PASSWORD']
 MT5_SERVER = os.environ['MT5_SERVER']
