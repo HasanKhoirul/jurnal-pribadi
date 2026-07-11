@@ -2382,10 +2382,14 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderCurrencyLog(pairKey) {
         const el = document.getElementById('cur-log-list');
         if (!el || !auth.currentUser) return;
+        // Sengaja gak pakai .where('source',...) digabung .orderBy('time',...) di query - kombinasi itu
+        // butuh composite index Firestore yang belum ke-setup, query-nya bakal gagal diam-diam. Pola sama
+        // kayak renderAiLog() punya Gold: ambil dulu (single-field orderBy, gak butuh index tambahan),
+        // filter source-nya belakangan di JS.
         db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
-            .where('source', '==', `server_${pairKey}`).orderBy('time', 'desc').limit(100).get()
+            .orderBy('time', 'desc').limit(300).get()
             .then(snap => {
-                const logs = snap.docs.map(d => d.data());
+                const logs = snap.docs.map(d => d.data()).filter(l => l.source === `server_${pairKey}`).slice(0, 100);
                 el.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas.</p>';
                 logs.forEach(l => {
                     const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
