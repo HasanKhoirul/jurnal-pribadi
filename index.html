@@ -363,14 +363,6 @@
                         <h1 style="color:#00bcd4;">💴 Trading AI Currency (Simulasi)</h1>
                         <div class="action-group-main hide-for-screenshot" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                             <select id="cur-pair-select" class="form-input" style="width:auto; height:36px;"></select>
-                            <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" id="btn-cur-refresh">🔃 Refresh</button>
-                            <div class="ai-more-menu-wrap">
-                                <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-cur-more-menu">⚙️ Lainnya ▾</button>
-                                <div id="cur-more-menu-dropdown" class="ai-more-dropdown">
-                                    <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-cur-master-settings">🎛️ Master Setting</button>
-                                    <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-cur-restart-bot">🔄 Restart Bot (VPS)</button>
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </header>
@@ -379,6 +371,7 @@
                 <div class="xau-nav hide-for-screenshot">
                     <button id="cur-menu-market" class="xau-tab active" style="border-color:#00bcd4; color:#00bcd4;">📈 Live Status</button>
                     <button id="cur-menu-calendar" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📅 Riwayat</button>
+                    <button id="cur-menu-dashboard" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📊 Dashboard Evaluasi</button>
                     <button id="cur-menu-log" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📜 Log Aktivitas</button>
                 </div>
 
@@ -396,19 +389,120 @@
                         </div>
                     </div>
                     <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Harga Sekarang</span><h3 id="cur-live-price" class="netral">-</h3></div>
                         <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Hari Ini</span><h3 id="cur-pl-today" class="netral">Rp 0</h3></div>
                         <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Minggu Ini</span><h3 id="cur-pl-week" class="netral">Rp 0</h3></div>
+                    </div>
+                    <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
+                        <div class="equity-box" style="border-left-color:#888;"><span class="label">Trend (MA20/MA50)</span><h3 id="cur-trend-summary-trend" class="netral">-</h3></div>
+                        <div class="equity-box" style="border-left-color:#888;"><span class="label">RSI (14)</span><h3 id="cur-trend-summary-rsi" class="netral">-</h3></div>
+                        <div class="equity-box" style="border-left-color:#888;"><span class="label">MACD</span><h3 id="cur-trend-summary-macd" class="netral">-</h3></div>
+                    </div>
+                    <div class="equity-dashboard" style="grid-template-columns: 1fr; margin-top:15px;">
                         <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Keseluruhan</span><h3 id="cur-pl-all" class="netral">Rp 0</h3></div>
+                    </div>
+                    <div class="chart-card" style="padding:0; overflow:hidden; margin-top:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 0 20px; flex-wrap:wrap; gap:10px;">
+                            <h3 class="chart-title" style="margin:0; color:#00bcd4;"><span id="cur-chart-pair-label">USDJPY</span> <span style="font-size:0.7em; color:#888;">(H1, real-time MT5)</span></h3>
+                            <button type="button" id="btn-cur-refresh-market" class="btn-action" style="border-color:#2196f3; color:#2196f3;">🔃 Refresh</button>
+                        </div>
+                        <div id="cur-chart-container" style="height:500px; width:100%;"></div>
                     </div>
                 </div>
 
                 <div id="cur-view-calendar" class="dashboard-container" style="display:none;">
-                    <h1 style="color:#00bcd4; margin-bottom:15px;">📅 Riwayat Entry</h1>
-                    <div id="cur-history-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
+                    <header class="main-header">
+                        <div class="header-left">
+                            <h1 style="color:#00bcd4;">📅 Riwayat — <span id="cur-cal-pair-label">USDJPY</span></h1>
+                            <div class="action-group-main hide-for-screenshot">
+                                <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" id="btn-cur-refresh-calendar">🔃 Refresh</button>
+                                <div class="ai-more-menu-wrap">
+                                    <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-cur-more-menu">⚙️ Lainnya ▾</button>
+                                    <div id="cur-more-menu-dropdown" class="ai-more-dropdown">
+                                        <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-cur-master-settings">🎛️ Master Setting</button>
+                                        <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-cur-restart-bot">🔄 Restart Bot (VPS)</button>
+                                        <button class="btn-action" style="border-color:#00bcd4; color:#00bcd4;" id="btn-cur-send-summary">📊 Kirim Summary</button>
+                                        <button class="btn-action btn-export" id="btn-cur-export">📤 Export</button>
+                                        <button id="btn-cur-clear-data" class="btn-action btn-reset">🗑️ Reset Data</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="summary-card" style="border-color:#00bcd4;"><span>P/L Bulan Ini:</span><h2 id="cur-monthly-total" class="netral">Rp 0</h2></div>
+                    </header>
+
+                    <div class="equity-dashboard" id="cur-equity-panel">
+                        <div class="equity-box" id="cur-modal-box" style="cursor: pointer; transition: 0.2s; border-left-color:#00bcd4;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1e1e1e'"><span class="label">Modal Simulasi (Klik ubah) ✏️</span><h4 id="cur-base-equity">Rp 2.500.000</h4></div>
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Equity Awal</span><h3 id="cur-start-equity">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Equity Terakhir</span><h3 id="cur-current-equity">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Pertumbuhan</span><h3 id="cur-equity-growth" class="netral">0.00%</h3></div>
+                    </div>
+
+                    <div class="month-navigation"><button id="cur-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="cur-month-year-display">Bulan Tahun</h2><button id="cur-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #00bcd4;">Total Mg</div></div>
+                    <div class="calendar-grid" id="cur-calendar"></div>
+                </div>
+
+                <div id="cur-view-dashboard" class="dashboard-container" style="display:none;">
+                    <div class="month-navigation" style="margin-bottom:20px;"><button id="cur-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="cur-dash-month-year-display" style="color:#00bcd4;">Bulan Tahun</h2><button id="cur-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <button class="btn-action hide-for-screenshot" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" id="btn-cur-refresh-dashboard">🔃 Refresh</button>
+                    <div id="cur-empty-state" class="empty-state-dash"></div>
+                    <div id="cur-dash-content">
+                        <div id="cur-risk-insight" style="margin-bottom:15px;"></div>
+                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📋 Evaluasi & Perbaikan Mingguan</h3><div id="cur-eval-text" style="margin-top:10px; color:#ccc; font-size:0.9rem; line-height:1.7;"></div></div>
+                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">🎯 Statistik per Jenis Sinyal (Bulan Ini)</h3><div id="cur-signal-stats-grid" class="weekly-report-grid" style="margin-top:10px;"></div></div>
+
+                        <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📊 Raport Per Minggu</h3><div id="cur-weekly-breakdown-grid" class="weekly-report-grid"></div></div>
+
+                        <div class="highlight-grid">
+                            <div class="highlight-box win-bg"><span class="label">🌟 Biggest Win</span><h3 id="cur-highest-win-pl" class="profit-text">Rp 0</h3><p id="cur-highest-win-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="cur-highest-loss-pl" class="loss-text">Rp 0</h3><p id="cur-highest-loss-desc" class="desc-text">-</p></div>
+                        </div>
+
+                        <div class="chart-grid">
+                            <div class="chart-card" style="display: flex; flex-direction: column;">
+                                <h3 class="chart-title">Grafik P/L Harian</h3>
+                                <div style="flex-grow: 1; position: relative; min-height: 250px;">
+                                    <canvas id="cur-plChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card" style="text-align: center;">
+                                <h3 class="chart-title">Win Rate</h3>
+                                <div style="position: relative; width: 100%; max-width: 250px; margin: 0 auto;">
+                                    <canvas id="cur-winRateChart"></canvas>
+                                    <div id="cur-win-rate-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; color: #fff; display: flex; flex-direction: column; gap: 5px;">
+                                        <span style="font-size: 1.5rem;">0% Win</span>
+                                        <span style="font-size: 1.1rem; color: #ff1744;">0% Loss</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="table-container">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:15px;">
+                            <h3 class="chart-title" style="margin:0;">Detail Entry Simulasi</h3>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <input type="text" id="cur-table-search" class="form-input" placeholder="🔍 Cari tanggal/arah/alasan..." style="width:220px;">
+                                <select id="cur-table-page-size" class="form-input" style="width:auto;">
+                                    <option value="10">10 / halaman</option>
+                                    <option value="30" selected>30 / halaman</option>
+                                    <option value="50">50 / halaman</option>
+                                    <option value="100">100 / halaman</option>
+                                    <option value="all">Semua</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                                <input type="number" id="cur-table-page-size-custom" class="form-input" placeholder="Jumlah" min="1" style="width:80px; display:none;">
+                            </div>
+                        </div>
+                        <table class="data-table"><thead><tr><th>No</th><th class="cur-sortable" data-col="date">Tanggal</th><th class="cur-sortable" data-col="arah">Arah</th><th class="cur-sortable" data-col="entry">Entry</th><th class="cur-sortable" data-col="sl">SL</th><th>TP</th><th>Alasan</th><th class="cur-sortable" style="text-align:right;" data-col="plVal">P/L (Rp)</th></tr></thead><tbody id="cur-dashboard-table-body"></tbody></table>
+                        <div id="cur-table-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; flex-wrap:wrap; gap:8px;"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="cur-view-log" class="dashboard-container" style="display:none;">
                     <h1 style="color:#00bcd4; margin-bottom:15px;">📜 Log Aktivitas Bot</h1>
+                    <button class="btn-action" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" id="btn-cur-refresh-log">🔃 Refresh</button>
                     <div id="cur-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
                 </div>
             </div>
@@ -963,6 +1057,10 @@
             <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting — <span id="cur-master-pair-label">USDJPY</span></h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Parameter khusus pair yang lagi dipilih di dropdown — independen dari Gold maupun pair currency lain. Dipakai bot VPS otomatis tiap tick, gak perlu restart.</p>
 
+            <h3 class="master-group-title">📊 Risk Insight (tampilan doang, gak ngeblok bot)</h3>
+            <div class="master-row"><label>Limit Risk (%)</label><input type="number" id="cur-master-risk-limit-pct" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Periode Risk</label><select id="cur-master-risk-period" class="master-input wide"><option value="monthly">Bulanan</option><option value="weekly">Mingguan (minggu berjalan)</option></select></div>
+
             <h3 class="master-group-title">🎯 SL & TP</h3>
             <div class="master-row"><label>SL (pips)</label><input type="number" id="cur-master-sl-pips" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Mode SL</label><select id="cur-master-sl-mode" class="master-input wide"><option value="fixed">Fixed (pips tetap)</option><option value="atr">Adaptif (ikut volatilitas ATR)</option></select></div>
@@ -979,6 +1077,8 @@
             <div class="master-row"><label>Lot per Layer</label><input type="number" id="cur-master-lot-size" class="master-input" step="0.01" min="0.01"></div>
             <div class="master-row"><label>Satuan Nilai Kontrak</label><select id="cur-master-pip-value-unit" class="master-input wide"><option value="cent">Cent (akun Cent)</option><option value="usd">USD (akun Standard)</option></select></div>
             <div class="master-row"><label>Nilai per Pip (per 0.1 lot, satuan di atas)</label><input type="number" id="cur-master-pip-value-per-lot" class="master-input" step="0.01" min="0.01"></div>
+            <div id="cur-master-pl-preview" style="background:#0d0d0d; border:1px solid #333; border-radius:6px; padding:10px 14px; margin:4px 0 12px; font-size:0.85rem; line-height:1.6; color:#ccc;"></div>
+            <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Preview pakai angka SL manual di atas — kalau Mode SL Adaptif aktif, SL asli tiap sinyal bisa beda.</p>
             <div class="master-row"><label>Jarak Antar Layer (pips)</label><input type="number" id="cur-master-layer-stagger-pips" class="master-input" step="1" min="1"></div>
 
             <h3 class="master-group-title">🔒 Lock & Deep-Lock</h3>
@@ -1012,6 +1112,26 @@
                 <button id="btn-reset-cur-master" class="btn-action" style="flex:1; border-color:#666; color:#aaa;">Reset ke Default</button>
                 <button id="btn-save-cur-master" class="save-btn" style="flex:1; background:#ff9800;">Simpan</button>
             </div>
+        </div>
+    </div>
+
+    <div id="cur-entry-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-cur-modal">&times;</span>
+            <h2 id="cur-modal-date-title">Entry Simulasi Tanggal</h2>
+            <p style="color:#888; font-size:0.8rem; margin-bottom:10px;">Riwayat ini view-only (dijalankan otomatis oleh bot), gak bisa diedit/dihapus dari sini biar aman dari salah tap di HP.</p>
+            <div id="cur-today-history" class="today-history"></div>
+        </div>
+    </div>
+
+    <div id="cur-reset-modal" class="modal">
+        <div class="modal-content" style="width: 450px;">
+            <span class="close-btn" id="close-cur-reset-modal">&times;</span>
+            <h2 style="color:#ff1744; margin-bottom: 5px;">🗑️ Reset Data — <span id="cur-reset-pair-label">USDJPY</span></h2>
+            <p style="color:#aaa; font-size:0.85rem; margin-bottom:15px;">Semua histori simulasi pair ini bakal kehapus permanen (pair lain & Gold gak kesenggol). Wajib isi alasan reset dulu — bakal tercatat di tab Log Aktivitas.</p>
+            <div class="form-group"><label>Alasan Reset</label><textarea id="cur-reset-reason" class="form-input" rows="3" placeholder="Contoh: mulai ulang setelah upgrade layer bertingkat"></textarea></div>
+            <p id="cur-reset-reason-error" style="color:#ff1744; font-size:0.8rem; display:none; margin-top:5px;">Alasan wajib diisi.</p>
+            <button id="btn-confirm-cur-reset" class="save-btn" style="background:#ff1744; margin-top:15px;">Konfirmasi Reset</button>
         </div>
     </div>
 

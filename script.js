@@ -26,6 +26,9 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiSettings = JSON.parse(localStorage.getItem('ai_settings_v1')) || defaultAiSettings;
     let botControl = JSON.parse(localStorage.getItem('ai_bot_control_v1')) || {};
     let currencyInstruments = {};  // modul Currency (multi-instrumen) - VPS-only compute, cloud-driven doang, gak di-cache localStorage
+    // Candle/harga live per pair (dari appData/public, field di-suffix nama pair) - dipakai chart & trend summary tab Currency.
+    let currencyLiveCandles = {}; let currencyLiveCandlesUpdatedAt = {};
+    let currencyLivePrice = {}; let currencyLivePriceUpdatedAt = {};
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
@@ -68,6 +71,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 localStorage.setItem('xauusd_data_v3', JSON.stringify(journalData)); localStorage.setItem('xauusd_modal', modalAwal); localStorage.setItem('sport_data_v1', JSON.stringify(sportData));
                 if (d.aiLiveCandlesMt5 && d.aiLiveCandlesMt5.length) { aiLiveCandlesMt5 = d.aiLiveCandlesMt5; aiLiveCandlesMt5UpdatedAt = d.aiLiveCandlesMt5UpdatedAt || null; }
                 if (d.aiLivePriceMt5) { aiLivePriceMt5 = d.aiLivePriceMt5; aiLivePriceMt5UpdatedAt = d.aiLivePriceMt5UpdatedAt || null; updateLivePriceBox(); updateLastCandleWithLivePrice(); updateTrendSummary(); }
+                // Data 5 pair currency numpang di dokumen public yang SAMA (zero extra Firestore read) - field-nya
+                // di-suffix nama pair oleh ai-tick-currency.py (aiLiveCandlesMt5_USDJPY dst).
+                CURRENCY_PAIRS.forEach(p => {
+                    if (d[`aiLiveCandlesMt5_${p}`] && d[`aiLiveCandlesMt5_${p}`].length) {
+                        currencyLiveCandles[p] = d[`aiLiveCandlesMt5_${p}`];
+                        currencyLiveCandlesUpdatedAt[p] = d[`aiLiveCandlesMt5UpdatedAt_${p}`] || null;
+                    }
+                    if (d[`aiLivePriceMt5_${p}`] != null) {
+                        currencyLivePrice[p] = d[`aiLivePriceMt5_${p}`];
+                        currencyLivePriceUpdatedAt[p] = d[`aiLivePriceMt5UpdatedAt_${p}`] || null;
+                    }
+                });
                 rerenderActiveSection();
             }
         }, err => console.error('Gagal ambil data publik dari cloud:', err));
@@ -279,8 +294,10 @@ document.addEventListener("DOMContentLoaded", () => {
     // MODULE EXPORT CSV SUPER LENGKAP
     // ==========================================
     let currentExportType = '';
+    let currentExportPairKey = '';
     window.openExportMenu = function(type) {
         currentExportType = type;
+        if (type === 'cur') currentExportPairKey = currentCurPair();
         document.getElementById('export-modal').style.display = 'flex';
     };
 
@@ -356,12 +373,32 @@ document.addEventListener("DOMContentLoaded", () => {
                     csvContent += row.join(",") + "\n";
                 }
             });
+        } else if (currentExportType === 'cur') {
+            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 Status,L3 PL,Alasan,Status Trade,Total P/L (Rp)\n";
+            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(5), parseFloat(ly.sl).toFixed(5), parseFloat(ly.tp).toFixed(5), AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-'];
+            const curTradeData = getCurInstrument(currentExportPairKey).aiTradeData || {};
+            for(let d in curTradeData) {
+                if(period === 'all' || d.startsWith(targetPrefix)) {
+                    curTradeData[d].forEach(t => {
+                        const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
+                        const layers = t.layers || [];
+                        let row = [
+                            d, t.arah, t.tf || '-', t.signalType || '-',
+                            t.openedAt || '-', t.closedAt || 'Masih Open',
+                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(layers[2]),
+                            `"${alasan}"`, t.status, t.pl || 0
+                        ];
+                        csvContent += row.join(",") + "\n";
+                    });
+                }
+            }
         }
-        
+
         var encodedUri = encodeURI(csvContent);
         var link = document.createElement("a");
         link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `Data_${currentExportType}_${period === 'all' ? 'All' : targetPrefix}.csv`);
+        const exportFileTag = currentExportType === 'cur' ? `cur_${currentExportPairKey}` : currentExportType;
+        link.setAttribute("download", `Data_${exportFileTag}_${period === 'all' ? 'All' : targetPrefix}.csv`);
         document.body.appendChild(link);
         link.click();
         link.remove();
@@ -1913,7 +1950,7 @@ document.addEventListener("DOMContentLoaded", () => {
             signalStats[type].total++;
             if (t.plVal >= 0) signalStats[type].win++;
         });
-        const signalLabels = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', lainnya: 'Lainnya' };
+        const signalLabels = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', ict_liquidity_sweep: '🔵 ICT Liquidity Sweep', lainnya: 'Lainnya' };
         const signalGrid = document.getElementById('ai-signal-stats-grid');
         const signalEntries = Object.entries(signalStats);
         signalGrid.innerHTML = signalEntries.length ? signalEntries.map(([type, s]) => {
@@ -2262,7 +2299,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ==========================================
     // MODUL TRADING AI CURRENCY (multi-instrumen) - VPS-only compute (ai-tick-currency.py),
-    // browser di sini CUMA baca & tampilin, kecuali 2 aksi eksplisit: simpan Master Setting & restart bot.
+    // browser di sini CUMA baca & tampilin, kecuali aksi eksplisit: Master Setting, restart bot,
+    // kirim summary, export, reset data, & ubah modal simulasi.
     // ==========================================
     const CURRENCY_PAIRS = ['USDJPY', 'GBPUSD', 'AUDUSD', 'EURUSD', 'USDCAD'];
     const CURRENCY_MASTER_DEFAULTS = {
@@ -2270,15 +2308,21 @@ document.addEventListener("DOMContentLoaded", () => {
         lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
         minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
         newsPreMinutes: 10, newsPostMinutes: 40,
+        riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
         tpMode: 'fixed', summaryIntervalHours: 6, methodTwoEnabled: false
     };
+    const CUR_SIGNAL_LABELS = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', ict_liquidity_sweep: '🔵 ICT Liquidity Sweep', lainnya: 'Lainnya' };
 
     (function populateCurPairSelect() {
         const sel = document.getElementById('cur-pair-select');
         if (sel) sel.innerHTML = CURRENCY_PAIRS.map(p => `<option value="${p}">${p}</option>`).join('');
     })();
 
+    function currentCurPair() {
+        const sel = document.getElementById('cur-pair-select');
+        return (sel && sel.value) || CURRENCY_PAIRS[0];
+    }
     function getCurInstrument(pairKey) { return currencyInstruments[pairKey] || {}; }
     function getCurMasterSettings(pairKey) {
         const inst = getCurInstrument(pairKey);
@@ -2337,15 +2381,96 @@ document.addEventListener("DOMContentLoaded", () => {
         plEl.className = 'netral';
     }
 
-    window.renderCurrencyDashboard = function() {
-        if (!isLoggedIn) return;
-        const sel = document.getElementById('cur-pair-select');
-        if (!sel) return;
-        const pairKey = sel.value || CURRENCY_PAIRS[0];
+    // ---- Tab "Live Status" (Poin D: chart candlestick H1 gratis dari MT5 + trend/RSI/MACD) ----
+    const CUR_LIVE_PRICE_MAX_AGE_SECONDS = 45;
+    function updateCurLivePriceBox(pairKey) {
+        const priceEl = document.getElementById('cur-live-price');
+        if (!priceEl) return;
+        const updatedAt = currencyLivePriceUpdatedAt[pairKey];
+        const liveAgeSec = updatedAt ? (Date.now() - new Date(updatedAt).getTime()) / 1000 : Infinity;
+        const candles = currencyLiveCandles[pairKey];
+        if (currencyLivePrice[pairKey] != null && liveAgeSec <= CUR_LIVE_PRICE_MAX_AGE_SECONDS) priceEl.innerText = parseFloat(currencyLivePrice[pairKey]).toFixed(5);
+        else if (candles && candles.length) priceEl.innerText = candles[candles.length - 1].close.toFixed(5);
+        else priceEl.innerText = '-';
+    }
+    // Reuse calcSMA/calcRSI/calcMACD (udah generic, dipakai bareng sama Gold) - cuma beda sumber candle & target DOM id.
+    function updateCurTrendSummary(pairKey) {
+        const trendEl = document.getElementById('cur-trend-summary-trend');
+        const candles = currencyLiveCandles[pairKey];
+        if (!trendEl || !candles || candles.length < 35) return;
+        const rsiEl = document.getElementById('cur-trend-summary-rsi');
+        const macdEl = document.getElementById('cur-trend-summary-macd');
+        const closes = candles.map(c => c.close);
+        const ma20 = calcSMA(closes, 20), ma50 = calcSMA(closes, 50), rsi = calcRSI(closes, 14), macd = calcMACD(closes);
+        if (ma20 !== null && ma50 !== null) {
+            const up = ma20 > ma50;
+            trendEl.innerHTML = up ? '📈 Naik' : '📉 Turun';
+            trendEl.className = up ? 'profit-text' : 'loss-text';
+        }
+        if (rsi !== null) {
+            const extreme = rsi >= 70 || rsi <= 30;
+            const zone = rsi >= 70 ? 'Overbought' : rsi <= 30 ? 'Oversold' : 'Netral';
+            rsiEl.innerHTML = `${rsi.toFixed(1)} <span style="font-size:0.6em;">(${zone})</span>`;
+            rsiEl.className = extreme ? '' : 'netral';
+            rsiEl.style.color = extreme ? '#ff9800' : '';
+        }
+        if (macd) {
+            const bullish = macd.macd > macd.signal;
+            macdEl.innerHTML = bullish ? '🐂 Bullish' : '🐻 Bearish';
+            macdEl.className = bullish ? 'profit-text' : 'loss-text';
+        }
+    }
+    let curChart = null; let curCandleSeries = null; let curPriceLines = [];
+    function clearCurPriceLines() {
+        if (!curCandleSeries) return;
+        curPriceLines.forEach(line => curCandleSeries.removePriceLine(line));
+        curPriceLines = [];
+    }
+    function updateCurTradeLines(trade) {
+        clearCurPriceLines();
+        if (!trade.layers) return;
+        curPriceLines.push(curCandleSeries.createPriceLine({ price: parseFloat(trade.entry), color: '#ffd700', lineWidth: 1, lineStyle: 2, title: 'Entry' }));
+        trade.layers.forEach((ly, i) => {
+            if (ly.status === 'pending') {
+                curPriceLines.push(curCandleSeries.createPriceLine({ price: parseFloat(ly.entry), color: '#888', lineWidth: 1, lineStyle: 3, title: `Pending${i + 1}` }));
+                return;
+            }
+            if (ly.status !== 'open') return;
+            curPriceLines.push(curCandleSeries.createPriceLine({ price: parseFloat(ly.tp), color: '#00e676', lineWidth: 1, lineStyle: 2, title: `TP${i + 1}` }));
+            const slPrice = ly.sl !== undefined ? ly.sl : trade.sl;
+            curPriceLines.push(curCandleSeries.createPriceLine({ price: parseFloat(slPrice), color: ly.slMoved ? '#2196f3' : '#ff1744', lineWidth: 1, lineStyle: 2, title: ly.slMoved ? `BE${i + 1}` : `SL${i + 1}` }));
+        });
+    }
+    // Reuse ensureLightweightChartsLoaded (punya Gold, load library sekali doang) - chart instance-nya sendiri
+    // (curChart/curCandleSeries) terpisah dari punya Gold (container DOM beda: cur-chart-container).
+    function renderCurLightweightChart(pairKey) {
+        const candles = currencyLiveCandles[pairKey];
+        if (!candles || !candles.length) return;
+        ensureLightweightChartsLoaded(() => {
+            const container = document.getElementById('cur-chart-container');
+            if (!curChart) {
+                curChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth, height: 500,
+                    layout: { background: { color: '#1e1e1e' }, textColor: '#ccc' },
+                    grid: { vertLines: { color: '#333' }, horzLines: { color: '#333' } },
+                    timeScale: { timeVisible: true }
+                });
+                curCandleSeries = curChart.addCandlestickSeries({ upColor: '#00e676', downColor: '#ff1744', borderVisible: false, wickUpColor: '#00e676', wickDownColor: '#ff1744' });
+                window.addEventListener('resize', () => { if (curChart) curChart.applyOptions({ width: container.clientWidth }); });
+            }
+            curCandleSeries.setData(candles.map(c => ({ time: Math.floor(new Date(c.time).getTime() / 1000), open: c.open, high: c.high, low: c.low, close: c.close })));
+            const openInfo = findOpenTradeIn(getCurInstrument(pairKey).aiTradeData || {}, AI_METHOD_GROUPS.method1);
+            if (openInfo) updateCurTradeLines(openInfo.trade); else clearCurPriceLines();
+            updateCurTrendSummary(pairKey);
+        });
+    }
+
+    function updateCurLiveStatusBoxes(pairKey) {
         const inst = getCurInstrument(pairKey);
         const tradeData = inst.aiTradeData || {};
         const m = getCurMasterSettings(pairKey);
 
+        document.getElementById('cur-chart-pair-label').innerText = pairKey;
         document.getElementById('cur-method2-section').style.display = m.methodTwoEnabled ? '' : 'none';
 
         const openM1 = findOpenTradeIn(tradeData, AI_METHOD_GROUPS.method1);
@@ -2366,26 +2491,290 @@ document.addEventListener("DOMContentLoaded", () => {
         const today = curTodayPl(tradeData), week = curWeekPl(tradeData), all = curAllPl(tradeData);
         const setPl = (id, r) => { const el = document.getElementById(id); el.innerText = `${r.total >= 0 ? '+' : ''}${formatRupiah(r.total)} (${r.count})`; el.className = r.total >= 0 ? 'profit-text' : 'loss-text'; };
         setPl('cur-pl-today', today); setPl('cur-pl-week', week); setPl('cur-pl-all', all);
-
-        renderCurrencyHistory(tradeData);
-        renderCurrencyLog(pairKey);
-    };
-
-    function renderCurrencyHistory(tradeData) {
-        const el = document.getElementById('cur-history-list');
-        if (!el) return;
-        const dates = Object.keys(tradeData).sort().reverse();
-        if (!dates.length) { el.innerHTML = '<p style="color:#888;">Belum ada entry.</p>'; return; }
-        el.innerHTML = '';
-        dates.forEach(dateStr => {
-            tradeData[dateStr].forEach(t => {
-                const plClass = t.status === 'closed' ? (t.pl >= 0 ? 'profit-text' : 'loss-text') : 'netral';
-                const plText = t.status === 'closed' ? `${t.pl >= 0 ? '+' : ''}${formatRupiah(t.pl)}` : 'Open';
-                el.innerHTML += `<div class="history-item"><div><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(5)}</strong> <span style="color:#888; font-size:0.75rem;">[${t.signalType}]</span><br><span style="color:#aaa; font-size:0.8rem;">${dateStr} — ${t.status}</span></div><div class="${plClass}" style="font-weight:bold;">${plText}</div></div>`;
-            });
-        });
+        updateCurLivePriceBox(pairKey);
+    }
+    function renderCurMarketTab(pairKey) {
+        updateCurLiveStatusBoxes(pairKey);
+        renderCurLightweightChart(pairKey);
     }
 
+    // ---- Tab "Riwayat" (Poin A/B: kalender + Modal Simulasi/Pertumbuhan) ----
+    function renderCurCalendar(pairKey) {
+        const cal = document.getElementById('cur-calendar'); cal.innerHTML = '';
+        const inst = getCurInstrument(pairKey);
+        const tradeData = inst.aiTradeData || {};
+        document.getElementById('cur-cal-pair-label').innerText = pairKey;
+        const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
+        document.getElementById('cur-month-year-display').innerText = `${monthNames[m]} ${y}`;
+        const firstDay = new Date(y, m, 1).getDay(); const daysInMonth = new Date(y, m + 1, 0).getDate();
+        let totalBulan = 0;
+
+        for (let w = 0; w < Math.ceil((firstDay + daysInMonth) / 7); w++) {
+            let weeklyPl = 0; let hasData = false;
+            for (let d = 0; d < 7; d++) {
+                const dayNum = (w * 7 + d) - firstDay + 1;
+                if (dayNum > 0 && dayNum <= daysInMonth) {
+                    const fDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+                    const trades = tradeData[fDate] || []; let dayPl = 0;
+                    if (trades.length > 0) { hasData = true; trades.forEach(t => dayPl += parseFloat(t.pl || 0)); weeklyPl += dayPl; totalBulan += dayPl; }
+                    const card = document.createElement('div'); card.className = `day-card ${dayPl > 0 ? 'profit' : dayPl < 0 ? 'loss' : ''}`;
+                    card.innerHTML = `${trades.length > 0 ? `<span class="trade-count">${trades.length}</span>` : ''}<div class="day-number">${dayNum}</div>${trades.length > 0 ? `<span class="day-pl ${dayPl > 0 ? 'profit-text' : dayPl < 0 ? 'loss-text' : ''}">${dayPl > 0 ? '+' : ''}${formatRupiah(dayPl)}</span>` : ''}`;
+                    card.onclick = () => openCurModal(pairKey, fDate, dayNum);
+                    cal.appendChild(card);
+                } else cal.appendChild(Object.assign(document.createElement('div'), { className: 'empty-card' }));
+            }
+            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData ? (weeklyPl > 0 ? 'weekly-profit' : 'weekly-loss') : 'empty-card'}`;
+            if (hasData) wCard.innerHTML = `<div class="week-title">Mg ${w + 1}</div><div class="week-pl ${weeklyPl > 0 ? 'profit-text' : 'loss-text'}">${weeklyPl > 0 ? '+' : ''}${formatRupiah(weeklyPl)}</div>`;
+            cal.appendChild(wCard);
+        }
+        const totalEl = document.getElementById('cur-monthly-total'); totalEl.innerText = formatRupiah(totalBulan); totalEl.className = totalBulan > 0 ? 'profit-text' : (totalBulan < 0 ? 'loss-text' : 'netral');
+        document.getElementById('cur-base-equity').innerText = formatRupiah(inst.aiModalAwal || 2500000);
+        updateCurEquity(pairKey, y, m);
+    }
+    document.getElementById('cur-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderCurCalendar(currentCurPair()); };
+    document.getElementById('cur-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderCurCalendar(currentCurPair()); };
+
+    function updateCurEquity(pairKey, vY, vM) {
+        const tradeData = getCurInstrument(pairKey).aiTradeData || {};
+        const modalAwal = getCurInstrument(pairKey).aiModalAwal || 2500000;
+        let sumBefore = 0; let sumDuring = 0;
+        for (const d in tradeData) {
+            let tY = new Date(d).getFullYear(); let tM = new Date(d).getMonth(); let dt = 0;
+            tradeData[d].forEach(t => dt += parseFloat(t.pl || 0));
+            if (tY < vY || (tY === vY && tM < vM)) sumBefore += dt; else if (tY === vY && tM === vM) sumDuring += dt;
+        }
+        let stEq = modalAwal + sumBefore; let enEq = stEq + sumDuring;
+        document.getElementById('cur-start-equity').innerText = formatRupiah(stEq);
+        document.getElementById('cur-current-equity').innerText = formatRupiah(enEq);
+        document.getElementById('cur-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
+    }
+    document.getElementById('cur-modal-box').onclick = () => {
+        const pairKey = currentCurPair();
+        const current = getCurInstrument(pairKey).aiModalAwal || 2500000;
+        const val = prompt(`Masukkan modal simulasi baru buat ${pairKey} (Rp):`, current);
+        if (val === null) return;
+        const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
+        if (isNaN(num) || num <= 0) { alert('Angka gak valid.'); return; }
+        if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud.'); return; }
+        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiModalAwal: num } } }, { merge: true })
+            .catch(err => alert('Gagal simpan modal: ' + err.message));
+    };
+
+    // Reuse AI_LAYER_STATUS_LABEL/formatAiTime/toggleAiHistDetail (punya Gold, generic gak nyimpang per instrumen).
+    function openCurModal(pairKey, dateStr, dayNum) {
+        const tradeData = getCurInstrument(pairKey).aiTradeData || {};
+        document.getElementById('cur-modal-date-title').innerText = `${pairKey} — Entry Simulasi Tgl ${dayNum}`;
+        const list = tradeData[dateStr] || [];
+        const histEl = document.getElementById('cur-today-history');
+        histEl.innerHTML = list.length ? '' : '<p style="color:#888;">Gak ada entry tanggal ini.</p>';
+        list.forEach((t) => {
+            const layerLines = (t.layers || []).map((ly, idx) => {
+                const label = AI_LAYER_STATUS_LABEL[ly.status] || ly.status;
+                return `Layer ${idx + 1}: Entry ${parseFloat(ly.entry).toFixed(5)} | SL ${parseFloat(ly.sl).toFixed(5)} | TP ${parseFloat(ly.tp).toFixed(5)} (${ly.tpPips}p) | ${label} | ${formatRupiah(ly.pl || 0)}`;
+            }).join('<br>');
+            histEl.innerHTML += `<div class="history-item ai-hist-collapsible ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}">
+                <div class="ai-hist-header" onclick="toggleAiHistDetail(this)">
+                    <span><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(5)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'})</span></span>
+                    <span class="ai-hist-arrow">▼</span>
+                </div>
+                <div class="ai-hist-detail">
+                    <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'}) 🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
+                    <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
+                    <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
+                    <strong>Total P/L: ${formatRupiah(t.pl || 0)}</strong>
+                </div>
+            </div>`;
+        });
+        document.getElementById('cur-entry-modal').style.display = 'flex';
+    }
+    document.getElementById('close-cur-modal').onclick = () => document.getElementById('cur-entry-modal').style.display = 'none';
+
+    // ---- Tab "Dashboard Evaluasi" (Poin C) ----
+    let curPlChartInstance = null; let curWinRateChartInstance = null;
+    function renderCurDashboard(pairKey) {
+        const tradeData = getCurInstrument(pairKey).aiTradeData || {};
+        const modalAwal = getCurInstrument(pairKey).aiModalAwal || 2500000;
+        const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
+        document.getElementById('cur-dash-month-year-display').innerText = `${monthNames[m]} ${y}`;
+
+        let monthHasData = false; let monthPl = 0; let winCount = 0; let lossCount = 0;
+        let maxWin = { pl: 0, date: '-', detail: '-' }; let maxLoss = { pl: 0, date: '-', detail: '-' };
+        const firstDay = new Date(y, m, 1).getDay(); const daysInMonth = new Date(y, m + 1, 0).getDate();
+        let weeklyReports = []; for (let i = 0; i < Math.ceil((firstDay + daysInMonth) / 7); i++) weeklyReports.push({ wins: 0, losses: 0, pl: 0, hasData: false });
+        let tableRows = [];
+        let chartLabels = [], profitDataArr = [], lossDataArr = [];
+
+        for (let i = 1; i <= daysInMonth; i++) {
+            const fDate = `${y}-${String(m + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+            const trades = tradeData[fDate] || []; let wIdx = Math.floor((firstDay + i - 1) / 7);
+            if (trades.length > 0) {
+                monthHasData = true; weeklyReports[wIdx].hasData = true;
+                let dailyProfit = 0, dailyLoss = 0;
+                trades.forEach(t => {
+                    let p = parseFloat(t.pl || 0); monthPl += p;
+                    if (t.status === 'closed') { if (p >= 0) { winCount++; weeklyReports[wIdx].wins++; dailyProfit += p; } else { lossCount++; weeklyReports[wIdx].losses++; dailyLoss += p; } }
+                    weeklyReports[wIdx].pl += p;
+                    if (p > maxWin.pl) maxWin = { pl: p, date: fDate, detail: t.alasan };
+                    if (p < maxLoss.pl) maxLoss = { pl: p, date: fDate, detail: t.alasan };
+                    tableRows.push({ date: fDate, ...t, plVal: p });
+                });
+                chartLabels.push(`Tgl ${i}`); profitDataArr.push(dailyProfit); lossDataArr.push(dailyLoss);
+            }
+        }
+
+        const emptyState = document.getElementById('cur-empty-state'); const dashContent = document.getElementById('cur-dash-content');
+        if (!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; return; }
+        emptyState.style.display = 'none'; dashContent.style.display = 'block';
+
+        const masterS = getCurMasterSettings(pairKey);
+        const riskPeriodLabel = masterS.riskPeriod === 'weekly' ? 'minggu' : 'bulan';
+        const periodPl = masterS.riskPeriod === 'weekly' ? curWeekPl(tradeData).total : monthPl;
+        const riskLimit = modalAwal * (masterS.riskLimitPct / 100);
+        const usedPct = periodPl < 0 ? Math.min((Math.abs(periodPl) / riskLimit) * 100, 999) : 0;
+        const riskBox = document.getElementById('cur-risk-insight');
+        if (periodPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Aman! ${riskPeriodLabel === 'minggu' ? 'Minggu' : 'Bulan'} ini masih profit ${formatRupiah(periodPl)}, belum kepakai risk budget.</div>`;
+        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel} (${formatRupiah(Math.abs(periodPl))} dari ${formatRupiah(riskLimit)}).</div>`;
+        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">⚠️ Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}. Kurangi ukuran posisi.</div>`;
+        else riskBox.innerHTML = `<div class="insight-box insight-danger">🚨 LIMIT TERLAMPAUI! Rugi ${riskPeriodLabel} ini ${formatRupiah(Math.abs(periodPl))}, lewat batas ${masterS.riskLimitPct}% modal (${formatRupiah(riskLimit)}). STOP entry baru ${riskPeriodLabel} ini.</div>`;
+
+        let closedTrades = tableRows.filter(t => t.status === 'closed');
+        let overboughtMistakes = closedTrades.filter(t => t.arah === 'BUY' && t.alasan && t.alasan.toLowerCase().includes('overbought')).length;
+        let oversoldMistakes = closedTrades.filter(t => t.arah === 'SELL' && t.alasan && t.alasan.toLowerCase().includes('oversold')).length;
+        let winRate = closedTrades.length > 0 ? ((winCount / closedTrades.length) * 100).toFixed(0) : 0;
+        document.getElementById('cur-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${periodPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
+
+        let signalStats = {};
+        closedTrades.forEach(t => {
+            const type = t.signalType || 'lainnya';
+            if (!signalStats[type]) signalStats[type] = { total: 0, win: 0 };
+            signalStats[type].total++;
+            if (t.plVal >= 0) signalStats[type].win++;
+        });
+        const signalGrid = document.getElementById('cur-signal-stats-grid');
+        const signalEntries = Object.entries(signalStats);
+        signalGrid.innerHTML = signalEntries.length ? signalEntries.map(([type, s]) => {
+            const wr = ((s.win / s.total) * 100).toFixed(0);
+            return `<div class="weekly-card"><h4>${CUR_SIGNAL_LABELS[type] || type}</h4><p><span>Total Entry:</span> <strong>${s.total}</strong></p><p style="border-top:1px dotted #444; padding-top:5px;"><span>Win Rate:</span> <strong class="${wr >= 50 ? 'profit-text' : 'loss-text'}">${wr}%</strong></p></div>`;
+        }).join('') : '<p style="color:#888; grid-column:1/-1;">Belum ada entry closed bulan ini.</p>';
+
+        const wGrid = document.getElementById('cur-weekly-breakdown-grid'); wGrid.innerHTML = '';
+        weeklyReports.forEach((wr, idx) => { if (wr.hasData) wGrid.innerHTML += `<div class="weekly-card ${wr.pl > 0 ? 'week-profit' : (wr.pl < 0 ? 'week-loss' : '')}"><h4>Minggu ${idx + 1}</h4><p><span>Win:</span> <span style="color:#00e676;">${wr.wins}x</span></p><p><span>Loss:</span> <span style="color:#ff1744;">${wr.losses}x</span></p><p style="border-top:1px dotted #444; padding-top:5px;"><span>Hasil:</span> <strong class="${wr.pl > 0 ? 'profit-text' : 'loss-text'}">${wr.pl > 0 ? '+' : ''}${formatRupiah(wr.pl)}</strong></p></div>`; });
+
+        document.getElementById('cur-highest-win-pl').innerText = maxWin.pl > 0 ? `+${formatRupiah(maxWin.pl)}` : 'Rp 0'; document.getElementById('cur-highest-win-desc').innerText = maxWin.date !== '-' ? `[${maxWin.date}] ${maxWin.detail}` : '-';
+        document.getElementById('cur-highest-loss-pl').innerText = maxLoss.pl < 0 ? formatRupiah(maxLoss.pl) : 'Rp 0'; document.getElementById('cur-highest-loss-desc').innerText = maxLoss.date !== '-' ? `[${maxLoss.date}] ${maxLoss.detail}` : '-';
+
+        if (curPlChartInstance) curPlChartInstance.destroy();
+        curPlChartInstance = new Chart(document.getElementById('cur-plChart').getContext('2d'), {
+            type: 'bar',
+            data: { labels: chartLabels, datasets: [
+                { label: 'Total Profit', data: profitDataArr, backgroundColor: '#00e676', borderRadius: 4 },
+                { label: 'Total Loss', data: lossDataArr, backgroundColor: '#ff1744', borderRadius: 4 }
+            ]},
+            options: {
+                maintainAspectRatio: false,
+                scales: { x: { stacked: true }, y: { stacked: true } },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { footer: function(tooltipItems) { let total = 0; tooltipItems.forEach(function(ti) { total += ti.parsed.y; }); return 'Net P/L: ' + formatRupiah(total); } } }
+                }
+            }
+        });
+
+        if (curWinRateChartInstance) curWinRateChartInstance.destroy();
+        curWinRateChartInstance = new Chart(document.getElementById('cur-winRateChart').getContext('2d'), {
+            type: 'doughnut',
+            data: { labels: ['Win', 'Loss'], datasets: [{ data: [winCount, lossCount], backgroundColor: ['#00e676', '#ff1744'], borderWidth: 0 }] },
+            options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+        let curWinPct = closedTrades.length > 0 ? Math.round((winCount / closedTrades.length) * 100) : 0;
+        let curLossPct = closedTrades.length > 0 ? 100 - curWinPct : 0;
+        document.getElementById('cur-win-rate-text').innerHTML = `<span style="font-size:1.5rem;">${curWinPct}% Win</span><span style="font-size:1.1rem; color:#ff1744;">${curLossPct}% Loss</span>`;
+
+        curTableMaster = tableRows;
+        curTableCurrentPage = 1;
+        renderCurTable();
+    }
+    document.getElementById('cur-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderCurDashboard(currentCurPair()); };
+    document.getElementById('cur-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderCurDashboard(currentCurPair()); };
+
+    let curTableMaster = [];
+    let curTableSearch = '';
+    let curTableSort = { col: 'date', dir: 'desc' };
+    let curTablePageSize = 30;
+    let curTableCurrentPage = 1;
+
+    function renderCurTable() {
+        let rows = [...curTableMaster];
+        const q = curTableSearch.trim().toLowerCase();
+        if (q) {
+            rows = rows.filter(e => {
+                const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '');
+                return [e.date, e.arah, e.alasan, tpDisplay].some(v => (v || '').toString().toLowerCase().includes(q));
+            });
+        }
+        const { col, dir } = curTableSort;
+        rows.sort((a, b) => {
+            let va = a[col], vb = b[col];
+            if (typeof va === 'string' && typeof vb === 'string') return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+            va = parseFloat(va) || 0; vb = parseFloat(vb) || 0;
+            return dir === 'asc' ? va - vb : vb - va;
+        });
+
+        const total = rows.length;
+        const pageSize = curTablePageSize === 'all' ? Math.max(total, 1) : curTablePageSize;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (curTableCurrentPage > totalPages) curTableCurrentPage = totalPages;
+        const startIdx = (curTableCurrentPage - 1) * pageSize;
+        const pageRows = rows.slice(startIdx, startIdx + pageSize);
+
+        const tbody = document.getElementById('cur-dashboard-table-body');
+        tbody.innerHTML = pageRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
+        pageRows.forEach((e, i) => {
+            const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '-');
+            tbody.innerHTML += `<tr><td>${startIdx + i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${parseFloat(e.entry).toFixed(5)}</td><td>${parseFloat(e.sl).toFixed(5)}</td><td>${tpDisplay}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`;
+        });
+
+        const pagEl = document.getElementById('cur-table-pagination');
+        pagEl.innerHTML = `<span style="color:#888; font-size:0.85rem;">${total === 0 ? 0 : startIdx + 1}-${Math.min(startIdx + pageSize, total)} dari ${total} entry</span>` +
+            `<div style="display:flex; gap:6px; align-items:center;">
+                <button type="button" class="btn-action" id="cur-table-prev" ${curTableCurrentPage <= 1 ? 'disabled' : ''} style="padding:4px 12px;">&lt; Prev</button>
+                <span style="color:#ccc; font-size:0.85rem;">Hal ${curTableCurrentPage}/${totalPages}</span>
+                <button type="button" class="btn-action" id="cur-table-next" ${curTableCurrentPage >= totalPages ? 'disabled' : ''} style="padding:4px 12px;">Next &gt;</button>
+            </div>`;
+        document.getElementById('cur-table-prev').onclick = () => { curTableCurrentPage--; renderCurTable(); };
+        document.getElementById('cur-table-next').onclick = () => { curTableCurrentPage++; renderCurTable(); };
+
+        document.querySelectorAll('#cur-view-dashboard th.cur-sortable').forEach(th => {
+            const oldArrow = th.querySelector('.cur-sort-arrow'); if (oldArrow) oldArrow.remove();
+            if (th.dataset.col === col) {
+                const arrow = document.createElement('span'); arrow.className = 'cur-sort-arrow'; arrow.textContent = dir === 'asc' ? ' ▲' : ' ▼';
+                th.appendChild(arrow);
+            }
+        });
+    }
+    document.getElementById('cur-table-search').addEventListener('input', (e) => { curTableSearch = e.target.value; curTableCurrentPage = 1; renderCurTable(); });
+    document.getElementById('cur-table-page-size').addEventListener('change', (e) => {
+        const val = e.target.value;
+        document.getElementById('cur-table-page-size-custom').style.display = val === 'custom' ? 'inline-block' : 'none';
+        if (val === 'custom') { const n = parseInt(document.getElementById('cur-table-page-size-custom').value); curTablePageSize = n > 0 ? n : 30; }
+        else curTablePageSize = val === 'all' ? 'all' : parseInt(val);
+        curTableCurrentPage = 1;
+        renderCurTable();
+    });
+    document.getElementById('cur-table-page-size-custom').addEventListener('input', (e) => {
+        const n = parseInt(e.target.value);
+        if (n > 0) { curTablePageSize = n; curTableCurrentPage = 1; renderCurTable(); }
+    });
+    document.querySelectorAll('#cur-view-dashboard th.cur-sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const col = th.dataset.col;
+            curTableSort = curTableSort.col === col ? { col, dir: curTableSort.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'desc' };
+            curTableCurrentPage = 1;
+            renderCurTable();
+        });
+    });
+
+    // ---- Tab "Log Aktivitas" ----
     function renderCurrencyLog(pairKey) {
         const el = document.getElementById('cur-log-list');
         if (!el || !auth.currentUser) return;
@@ -2394,10 +2783,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // kayak renderAiLog() punya Gold: ambil dulu (single-field orderBy, gak butuh index tambahan),
         // filter source-nya belakangan di JS. Limit digedein (900, bukan 300) - 6 bot (Gold+5 currency)
         // nulis ke subcollection yang SAMA, jadi jatah 1 pair bisa abis duluan kalau limit-nya kekecilan.
+        // Terima 2 jenis source: server_<PAIR> (dari bot VPS) & browser_<PAIR> (aksi manual di web, mis. Reset Data)
+        // - kalau cuma nerima server_<PAIR>, aksi manual browser gak bakal pernah kebaca di sini.
         db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
             .orderBy('time', 'desc').limit(900).get()
             .then(snap => {
-                const logs = snap.docs.map(d => d.data()).filter(l => l.source === `server_${pairKey}`).slice(0, 100);
+                const logs = snap.docs.map(d => d.data()).filter(l => l.source === `server_${pairKey}` || l.source === `browser_${pairKey}`).slice(0, 100);
                 el.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas.</p>';
                 logs.forEach(l => {
                     const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
@@ -2406,15 +2797,31 @@ document.addEventListener("DOMContentLoaded", () => {
             }).catch(err => console.error('Gagal ambil log Currency:', err));
     }
 
+    // ---- Dispatcher utama (dipanggil dari klik menu, ganti pair, tombol refresh, & tiap update realtime Firestore) ----
+    // Mirror pola rerenderActiveSection punya Gold (baris ~105-113): cuma render tab yang lagi AKTIF,
+    // biar gak buang-buang kerja render ulang chart/tabel yang lagi gak keliatan tiap ada snapshot baru.
+    window.renderCurrencyDashboard = function() {
+        if (!isLoggedIn) return;
+        const pairKey = currentCurPair();
+        if (document.getElementById('cur-menu-dashboard').classList.contains('active')) renderCurDashboard(pairKey);
+        else if (document.getElementById('cur-menu-calendar').classList.contains('active')) renderCurCalendar(pairKey);
+        else if (document.getElementById('cur-menu-log').classList.contains('active')) renderCurrencyLog(pairKey);
+        else renderCurMarketTab(pairKey);
+    };
+
     document.getElementById('cur-pair-select').addEventListener('change', renderCurrencyDashboard);
-    document.getElementById('btn-cur-refresh').addEventListener('click', renderCurrencyDashboard);
+    document.getElementById('btn-cur-refresh-market').addEventListener('click', renderCurrencyDashboard);
+    document.getElementById('btn-cur-refresh-calendar').addEventListener('click', renderCurrencyDashboard);
+    document.getElementById('btn-cur-refresh-dashboard').addEventListener('click', renderCurrencyDashboard);
+    document.getElementById('btn-cur-refresh-log').addEventListener('click', renderCurrencyDashboard);
 
     function switchCurTab(activeMenuId, activeViewId) {
-        ['cur-menu-market', 'cur-menu-calendar', 'cur-menu-log'].forEach(id => document.getElementById(id).classList.toggle('active', id === activeMenuId));
-        ['cur-view-market', 'cur-view-calendar', 'cur-view-log'].forEach(id => document.getElementById(id).style.display = id === activeViewId ? 'block' : 'none');
+        ['cur-menu-market', 'cur-menu-calendar', 'cur-menu-dashboard', 'cur-menu-log'].forEach(id => document.getElementById(id).classList.toggle('active', id === activeMenuId));
+        ['cur-view-market', 'cur-view-calendar', 'cur-view-dashboard', 'cur-view-log'].forEach(id => document.getElementById(id).style.display = id === activeViewId ? 'block' : 'none');
     }
     document.getElementById('cur-menu-market').addEventListener('click', () => { switchCurTab('cur-menu-market', 'cur-view-market'); renderCurrencyDashboard(); });
     document.getElementById('cur-menu-calendar').addEventListener('click', () => { switchCurTab('cur-menu-calendar', 'cur-view-calendar'); renderCurrencyDashboard(); });
+    document.getElementById('cur-menu-dashboard').addEventListener('click', () => { switchCurTab('cur-menu-dashboard', 'cur-view-dashboard'); renderCurrencyDashboard(); });
     document.getElementById('cur-menu-log').addEventListener('click', () => { switchCurTab('cur-menu-log', 'cur-view-log'); renderCurrencyDashboard(); });
 
     document.getElementById('btn-cur-more-menu').addEventListener('click', (e) => {
@@ -2426,10 +2833,13 @@ document.addEventListener("DOMContentLoaded", () => {
         if (dd && dd.classList.contains('open') && !dd.contains(e.target) && e.target.id !== 'btn-cur-more-menu') dd.classList.remove('open');
     });
 
+    // ---- Master Setting (Poin F: +Risk Insight fields & preview) ----
     document.getElementById('btn-cur-master-settings').onclick = () => {
-        const pairKey = document.getElementById('cur-pair-select').value;
+        const pairKey = currentCurPair();
         const m = getCurMasterSettings(pairKey);
         document.getElementById('cur-master-pair-label').innerText = pairKey;
+        document.getElementById('cur-master-risk-limit-pct').value = m.riskLimitPct;
+        document.getElementById('cur-master-risk-period').value = m.riskPeriod;
         document.getElementById('cur-master-sl-pips').value = m.slPips;
         document.getElementById('cur-master-sl-mode').value = m.slMode;
         document.getElementById('cur-master-atr-multiplier').value = m.atrMultiplier;
@@ -2453,10 +2863,32 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('cur-master-summary-interval-hours').value = m.summaryIntervalHours;
         document.getElementById('cur-master-method-two-enabled').value = m.methodTwoEnabled ? 'on' : 'off';
         document.getElementById('cur-master-modal').style.display = 'flex';
+        updateCurMasterPreview();
     };
 
+    function updateCurMasterPreview() {
+        const readNum = (id) => parseFloat(document.getElementById(id).value);
+        const lot = readNum('cur-master-lot-size');
+        const slPips = readNum('cur-master-sl-pips');
+        const tp1 = readNum('cur-master-tp1-pips'), tp2 = readNum('cur-master-tp2-pips'), tp3 = readNum('cur-master-tp3-pips');
+        const unit = document.getElementById('cur-master-pip-value-unit').value;
+        const pipValue = readNum('cur-master-pip-value-per-lot');
+        const el = document.getElementById('cur-master-pl-preview');
+        if ([lot, slPips, tp1, tp2, tp3, pipValue].some(v => isNaN(v) || v <= 0)) { el.innerHTML = '<span style="color:#888;">Isi semua field lot/SL/TP/nilai-pip dulu buat lihat preview.</span>'; return; }
+        const toRp = (pips) => { const amount = pips * (lot / 0.1) * pipValue; const usd = unit === 'usd' ? amount : amount / 100; return usd * liveKursIDR; };
+        el.innerHTML = `Preview nilai (lot ${lot}, kurs saat ini):<br>` +
+            `SL &nbsp;&nbsp;&nbsp;: <span class="loss-text">-${formatRupiah(toRp(slPips))}</span><br>` +
+            `TP L1 : <span class="profit-text">+${formatRupiah(toRp(tp1))}</span><br>` +
+            `TP L2 : <span class="profit-text">+${formatRupiah(toRp(tp2))}</span><br>` +
+            `TP L3 : <span class="profit-text">+${formatRupiah(toRp(tp3))}</span>`;
+    }
+    ['cur-master-lot-size', 'cur-master-sl-pips', 'cur-master-tp1-pips', 'cur-master-tp2-pips', 'cur-master-tp3-pips', 'cur-master-pip-value-per-lot'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateCurMasterPreview);
+    });
+    document.getElementById('cur-master-pip-value-unit').addEventListener('change', updateCurMasterPreview);
+
     document.getElementById('btn-reset-cur-master').onclick = () => {
-        const pairKey = document.getElementById('cur-pair-select').value;
+        const pairKey = currentCurPair();
         if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud.'); return; }
         db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiSettings: { master: Object.assign({}, CURRENCY_MASTER_DEFAULTS) } } } }, { merge: true })
             .then(() => { alert(`Master Setting ${pairKey} dikembalikan ke default.`); document.getElementById('cur-master-modal').style.display = 'none'; })
@@ -2464,9 +2896,10 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     document.getElementById('btn-save-cur-master').onclick = () => {
-        const pairKey = document.getElementById('cur-pair-select').value;
+        const pairKey = currentCurPair();
         const readNum = (id) => parseFloat(document.getElementById(id).value);
         const fields = {
+            riskLimitPct: readNum('cur-master-risk-limit-pct'),
             slPips: readNum('cur-master-sl-pips'),
             atrMultiplier: readNum('cur-master-atr-multiplier'),
             tp1: readNum('cur-master-tp1-pips'), tp2: readNum('cur-master-tp2-pips'), tp3: readNum('cur-master-tp3-pips'),
@@ -2484,10 +2917,11 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPostMinutes: readNum('cur-master-news-post-minutes'),
             summaryIntervalHours: readNum('cur-master-summary-interval-hours')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0;
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.riskLimitPct > 0 && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0;
         if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
         if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud & kepakai bot VPS.'); return; }
         const master = {
+            riskLimitPct: fields.riskLimitPct, riskPeriod: document.getElementById('cur-master-risk-period').value,
             slPips: fields.slPips, slMode: document.getElementById('cur-master-sl-mode').value,
             atrMultiplier: fields.atrMultiplier, tpMode: document.getElementById('cur-master-tp-mode').value,
             tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
@@ -2508,9 +2942,10 @@ document.addEventListener("DOMContentLoaded", () => {
             .catch(err => alert('Gagal simpan: ' + err.message));
     };
 
+    // ---- Restart Bot, Kirim Summary, Export, Reset Data (Poin F) ----
     // Sama pola kayak restart Gold - pakai spread (...existingBotControl) biar field lain (summaryRequested dkk) gak ke-wipe.
     document.getElementById('btn-cur-restart-bot').onclick = () => {
-        const pairKey = document.getElementById('cur-pair-select').value;
+        const pairKey = currentCurPair();
         if (!confirm(`Restart bot VPS pair ${pairKey} sekarang? Bot bakal ambil kode terbaru & jalan ulang otomatis dalam ~10 detik (cuma jalan kalau prosesnya lagi hidup).`)) return;
         if (!auth.currentUser) { alert('Login dulu.'); return; }
         const existingBotControl = getCurInstrument(pairKey).botControl || {};
@@ -2519,6 +2954,49 @@ document.addEventListener("DOMContentLoaded", () => {
         }, { merge: true })
             .then(() => alert(`Sinyal restart ${pairKey} terkirim. Cek tab Log Aktivitas dalam ~30 detik.`))
             .catch(err => alert('Gagal kirim sinyal restart: ' + err.message));
+    };
+
+    // Backend (ai-tick-currency.py) udah support botControl.summaryRequested dari sesi kemarin - tombol ini baru nambahin sisi web-nya.
+    document.getElementById('btn-cur-send-summary').onclick = () => {
+        const pairKey = currentCurPair();
+        if (!confirm(`Kirim summary posisi & P/L ${pairKey} ke Telegram sekarang?`)) return;
+        if (!auth.currentUser) { alert('Login dulu.'); return; }
+        const existingBotControl = getCurInstrument(pairKey).botControl || {};
+        db.collection('appData').doc(auth.currentUser.uid).set({
+            currencyInstruments: { [pairKey]: { botControl: { ...existingBotControl, summaryRequested: true, summaryRequestedAt: new Date().toISOString() } } }
+        }, { merge: true })
+            .then(() => alert(`Sinyal summary ${pairKey} terkirim. Cek Telegram dalam ~30 detik (cuma jalan kalau proses bot lagi hidup).`))
+            .catch(err => alert('Gagal kirim sinyal summary: ' + err.message));
+    };
+
+    document.getElementById('btn-cur-export').onclick = () => openExportMenu('cur');
+
+    document.getElementById('btn-cur-clear-data').onclick = () => {
+        const pairKey = currentCurPair();
+        document.getElementById('cur-reset-pair-label').innerText = pairKey;
+        document.getElementById('cur-reset-reason').value = '';
+        document.getElementById('cur-reset-reason-error').style.display = 'none';
+        document.getElementById('cur-reset-modal').style.display = 'flex';
+    };
+    document.getElementById('close-cur-reset-modal').onclick = () => document.getElementById('cur-reset-modal').style.display = 'none';
+    document.getElementById('btn-confirm-cur-reset').onclick = () => {
+        const pairKey = currentCurPair();
+        const reason = document.getElementById('cur-reset-reason').value.trim();
+        if (!reason) { document.getElementById('cur-reset-reason-error').style.display = 'block'; return; }
+        if (!auth.currentUser) { alert('Login dulu.'); return; }
+        // BUKAN panggil logAiTick() punya Gold - itu hardcode source:'browser' yang bakal nyasar ke Log Aktivitas
+        // GOLD (bug class yang sama kayak yang difix pas maintenance kemarin). Tulis manual dgn source per-pair,
+        // renderCurrencyLog udah diperluas buat nerima browser_<PAIR> juga.
+        db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
+            .add({ time: new Date().toISOString(), outcome: 'manual_reset', detail: reason, source: `browser_${pairKey}` })
+            .catch(err => console.error('Gagal catat log reset:', err));
+        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiTradeData: {} } } }, { merge: true })
+            .then(() => {
+                document.getElementById('cur-reset-modal').style.display = 'none';
+                alert(`Data simulasi ${pairKey} direset. Pair lain & Gold gak kesenggol.`);
+                renderCurrencyDashboard();
+            })
+            .catch(err => alert('Gagal reset: ' + err.message));
     };
 
     renderXAUCalendar();

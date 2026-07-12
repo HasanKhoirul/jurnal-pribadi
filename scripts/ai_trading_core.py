@@ -438,8 +438,9 @@ def auto_open_ai_position(ai_trade_data, sug):
     })
     cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {fmt_price(sug['entry'])} "
                f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}).")
+    method_tag = ' (Metode 2/ICT)' if sug['signalType'] == 'ict_liquidity_sweep' else ''
     cfg.send_telegram_fn(
-        f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL}</b>\n\n"
+        f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL}{method_tag}</b>\n\n"
         f"<b>Entry:</b> <code>{fmt_price(sug['entry'])}</code>\n"
         f"<b>SL:</b> <code>{fmt_price(layers[0]['sl'])}</code> ({sug['slPipsUsed']} pips)\n\n"
         f"<b>TP1:</b> <code>{fmt_price(layers[0]['tp'])}</code>\n"
