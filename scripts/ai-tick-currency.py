@@ -55,6 +55,11 @@ if len(sys.argv) < 2 or sys.argv[1] not in CURRENCY_INSTRUMENTS:
 PAIR = sys.argv[1]
 PAIR_CFG = CURRENCY_INSTRUMENTS[PAIR]
 FIELD_PREFIX = 'currencyInstruments'  # doc_ref.set({FIELD_PREFIX: {PAIR: {...}}}, merge=True) buat semua tulis
+# Urutan sesuai dropdown web (USDJPY/GBPUSD/AUDUSD/EURUSD/USDCAD) - dipakai buat nge-stagger jadwal
+# kirim summary Telegram tiap pair (lihat maybe_send_summary), biar 5 proses independen ini gak ngirim
+# bareng & kecampur urutannya di 1 chat.
+PAIR_INDEX = list(CURRENCY_INSTRUMENTS.keys()).index(PAIR)
+SUMMARY_STAGGER_SECONDS = 30
 
 FIREBASE_SERVICE_ACCOUNT_PATH = os.environ['FIREBASE_SERVICE_ACCOUNT_PATH']
 AI_TARGET_UID = os.environ['AI_TARGET_UID']
@@ -254,6 +259,8 @@ def send_periodic_summary(ai_trade_data, tick):
     all_pl, all_n = get_all_time_pl(ai_trade_data)
     send_telegram(f"📊 <b>P/L Keseluruhan ({PAIR})</b>\n\n{format_rupiah(all_pl)} dari {all_n} entry closed.")
 
+    send_telegram(f"➖➖➖➖➖ Selesai {PAIR} ➖➖➖➖➖")
+
 
 _summary_in_flight = False
 
@@ -291,6 +298,11 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now):
     def _worker():
         global _summary_in_flight
         try:
+            # Terjadwal (bukan manual) - tunggu jatah PAIR_INDEX * 30 detik dulu, biar 5 pair ngirim
+            # berurutan (USDJPY dulu, baru GBPUSD, dst - sesuai urutan dropdown), gak numpuk bareng
+            # kecampur di 1 chat. Manual trigger (tombol "Kirim Summary" per pair) tetap instan.
+            if not manual and PAIR_INDEX > 0:
+                time.sleep(PAIR_INDEX * SUMMARY_STAGGER_SECONDS)
             send_periodic_summary(trade_data_snapshot, tick)
             doc_ref.set(instrument_fields({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}), merge=True)
             log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
