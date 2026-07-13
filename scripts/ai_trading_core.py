@@ -358,6 +358,20 @@ METHOD_GROUPS = {
     'method2': {'ict_liquidity_sweep'},
 }
 
+# Label buat semua pesan Telegram (sinyal baru, update posisi, trade selesai, ditutup berita) - dulu cuma
+# Metode 2 yang ditandain, Metode 1 dibiarin kosong (implicit) sampai kebukti bikin bingung pas 2 metode
+# jalan bareng (notifikasi Layer 1 kena TP dari Metode 2 nempel sama Layer 1 kena SL dari Metode 1, keliatan
+# kontradiktif kalau gak ada tag jelas). Sekarang keduanya eksplisit & konsisten.
+SIGNAL_TYPE_LABELS = {
+    'trend_following': 'Metode 1 (Trend-Following)',
+    'rsi_reversal': 'Metode 1 (RSI Reversal)',
+    'ict_liquidity_sweep': 'Metode 2 (ICT)',
+}
+
+
+def signal_type_label(signal_type):
+    return SIGNAL_TYPE_LABELS.get(signal_type, signal_type or '-')
+
 
 def find_open_ai_trade_for_group(ai_trade_data, signal_types):
     for date_key, trades in ai_trade_data.items():
@@ -438,9 +452,8 @@ def auto_open_ai_position(ai_trade_data, sug):
     })
     cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {fmt_price(sug['entry'])} "
                f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}).")
-    method_tag = ' (Metode 2/ICT)' if sug['signalType'] == 'ict_liquidity_sweep' else ''
     cfg.send_telegram_fn(
-        f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL}{method_tag}</b>\n\n"
+        f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL} — {signal_type_label(sug['signalType'])}</b>\n\n"
         f"<b>Entry:</b> <code>{fmt_price(sug['entry'])}</code>\n"
         f"<b>SL:</b> <code>{fmt_price(layers[0]['sl'])}</code> ({sug['slPipsUsed']} pips)\n\n"
         f"<b>TP1:</b> <code>{fmt_price(layers[0]['tp'])}</code>\n"

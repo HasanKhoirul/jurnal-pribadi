@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from ai_trading_core import (
     cfg, AI_MASTER_DEFAULTS, apply_master_settings, fmt_price,
     fetch_candles, get_today_pl, get_current_week_pl, get_all_time_pl, format_rupiah,
-    find_open_ai_trade_for_group, METHOD_GROUPS, compute_ai_suggestion, auto_open_ai_position,
+    find_open_ai_trade_for_group, METHOD_GROUPS, signal_type_label, compute_ai_suggestion, auto_open_ai_position,
     check_and_close_position_tick, force_close_all_layers_at_market, run_ict_state_machine,
     ICT_STATE_DEFAULT, exit_price_for, calc_layer_pl_usc, usc_to_rupiah,
     fetch_active_high_impact_news, fetch_live_kurs_idr, is_market_open,
@@ -388,8 +388,8 @@ def run_fast_tick():
         open_info = find_open_ai_trade_for_group(ai_trade_data, signal_types)
         if not open_info:
             continue
-        label = 'Metode 2 (ICT) ' if group_name == 'method2' else ''
         trade = open_info['trade']
+        label = signal_type_label(trade['signalType']) + ' '
 
         if news_info:
             changed = force_close_all_layers_at_market(trade, tick.bid, tick.ask, live_kurs, 'news_close', now)
