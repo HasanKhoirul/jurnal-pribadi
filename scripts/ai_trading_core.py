@@ -51,6 +51,11 @@ class Config:
         self.AI_NEWS_PRE_MINUTES = 10
         self.AI_NEWS_POST_MINUTES = 40
         self.AI_METHOD_TWO_ENABLED = False
+        self.AI_RISK_LIMIT_PCT = 10
+        self.AI_RISK_PERIOD = 'monthly'
+        # Flag in-memory (reset kalau proses direstart) - biar alert "entry diblok" kekirim SEKALI doang
+        # pas limit baru kesentuh, bukan spam tiap tick selama masih over-limit.
+        self.risk_limit_blocked = False
 
         # Metode 2 (ICT) - asumsi v1, sama utk semua instrumen (lihat plan Metode 2 buat rasionalnya)
         self.AI_ICT_SWING_LOOKBACK = 2
@@ -77,6 +82,7 @@ AI_MASTER_DEFAULTS = {
     'tpMode': 'fixed',
     'summaryIntervalHours': 6,
     'methodTwoEnabled': False,
+    'riskLimitPct': 10, 'riskPeriod': 'monthly',
 }
 
 
@@ -106,6 +112,8 @@ def apply_master_settings(master):
     cfg.AI_NEWS_PRE_MINUTES = master.get('newsPreMinutes', AI_MASTER_DEFAULTS['newsPreMinutes'])
     cfg.AI_NEWS_POST_MINUTES = master.get('newsPostMinutes', AI_MASTER_DEFAULTS['newsPostMinutes'])
     cfg.AI_METHOD_TWO_ENABLED = bool(master.get('methodTwoEnabled', AI_MASTER_DEFAULTS['methodTwoEnabled']))
+    cfg.AI_RISK_LIMIT_PCT = master.get('riskLimitPct', AI_MASTER_DEFAULTS['riskLimitPct'])
+    cfg.AI_RISK_PERIOD = 'weekly' if master.get('riskPeriod') == 'weekly' else 'monthly'
 
 
 # ---------- Helper angka & indikator (pure, gak butuh cfg) ----------
@@ -412,6 +420,19 @@ def get_current_week_pl(ai_trade_data):
     return total, count
 
 
+def get_current_month_pl(ai_trade_data):
+    now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
+    month_prefix = now_wib.strftime('%Y-%m')
+    total, count = 0.0, 0
+    for date_str, trades in ai_trade_data.items():
+        if not date_str.startswith(month_prefix):
+            continue
+        t, c = _sum_closed_pl(trades)
+        total += t
+        count += c
+    return total, count
+
+
 def get_all_time_pl(ai_trade_data):
     total, count = 0.0, 0
     for trades in ai_trade_data.values():
@@ -421,9 +442,31 @@ def get_all_time_pl(ai_trade_data):
     return total, count
 
 
-def auto_open_ai_position(ai_trade_data, sug):
+def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
     if not sug:
         return False
+
+    # Hard-stop risk limit - GABUNGAN Metode 1+2 (1 modal, 1 limit per instrumen, bukan 2 anggaran
+    # terpisah). Sebelumnya riskLimitPct cuma nge-render warna di dashboard, gak beneran ngeblok apa2.
+    if cfg.AI_RISK_LIMIT_PCT and ai_modal_awal:
+        period_pl, _ = (get_current_week_pl(ai_trade_data) if cfg.AI_RISK_PERIOD == 'weekly'
+                         else get_current_month_pl(ai_trade_data))
+        risk_limit = ai_modal_awal * (cfg.AI_RISK_LIMIT_PCT / 100)
+        period_label = 'minggu' if cfg.AI_RISK_PERIOD == 'weekly' else 'bulan'
+        if period_pl < 0 and abs(period_pl) >= risk_limit:
+            cfg.log_fn(f"Entry diblok: limit risk {cfg.AI_RISK_LIMIT_PCT}%/{period_label} kesentuh "
+                       f"({format_rupiah(period_pl)} dari batas {format_rupiah(-risk_limit)}).")
+            if not cfg.risk_limit_blocked:
+                cfg.risk_limit_blocked = True
+                cfg.send_telegram_fn(
+                    f"🚨 <b>Entry Diblok - Limit Risk Kesentuh ({cfg.SYMBOL_LABEL})</b>\n\n"
+                    f"Rugi {period_label} ini {format_rupiah(period_pl)}, lewat batas "
+                    f"{cfg.AI_RISK_LIMIT_PCT}% modal ({format_rupiah(-risk_limit)}).\n"
+                    f"Entry baru DITAHAN sampai {period_label} berikutnya atau limit dinaikkan."
+                )
+            return False
+        cfg.risk_limit_blocked = False
+
     date_str = today_wib_date_str()
     ai_trade_data.setdefault(date_str, [])
     layers = []

@@ -1114,20 +1114,90 @@ document.addEventListener("DOMContentLoaded", () => {
         aiDisplayTick();
     });
 
-    async function polishReasonWithLLM(rawReason, settings) {
-        const prompt_ = `Tuliskan ulang analisa trading berikut jadi lebih natural dan enak dibaca dalam Bahasa Indonesia, TANPA mengubah angka atau menambah fakta baru:\n\n${rawReason}`;
+    async function callLLM(prompt_, settings, maxTokens = 300) {
         try {
             if (settings.llmProvider === 'gemini') {
                 const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${settings.llmKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt_ }] }] }) });
                 const data = await res.json();
                 return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
             } else if (settings.llmProvider === 'claude') {
-                const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': settings.llmKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt_ }] }) });
+                const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': settings.llmKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, messages: [{ role: 'user', content: prompt_ }] }) });
                 const data = await res.json();
                 return data?.content?.[0]?.text || null;
             }
-        } catch (err) { console.error('LLM polish gagal, fallback ke template:', err); return null; }
+        } catch (err) { console.error('Panggilan LLM gagal:', err); return null; }
         return null;
+    }
+
+    async function polishReasonWithLLM(rawReason, settings) {
+        const prompt_ = `Tuliskan ulang analisa trading berikut jadi lebih natural dan enak dibaca dalam Bahasa Indonesia, TANPA mengubah angka atau menambah fakta baru:\n\n${rawReason}`;
+        return callLLM(prompt_, settings, 300);
+    }
+
+    // Shared antara renderAiDashboard/renderCurDashboard (stat box per jenis sinyal) & buildEvalRecommendationPrompt
+    // di bawah - dulu ada 2 copy identik (signalLabels lokal di renderAiDashboard + CUR_SIGNAL_LABELS), disatukan.
+    const SIGNAL_TYPE_LABELS = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', ict_liquidity_sweep: '🔵 ICT Liquidity Sweep', lainnya: 'Lainnya' };
+
+    // Rekomendasi AI di Dashboard Evaluasi - reuse callLLM() di atas, prompt dari agregat statistik
+    // (bukan dump semua trade satu-satu) dan sengaja diminta cuma observasi pola + saran, BUKAN sinyal
+    // entry baru (itu tugas bot, bukan tugas fitur ini).
+    function buildEvalRecommendationPrompt(stats, label) {
+        const signalLines = Object.entries(stats.signalStats || {}).map(([type, s]) => {
+            const wr = s.total > 0 ? ((s.win / s.total) * 100).toFixed(0) : '-';
+            return `- ${SIGNAL_TYPE_LABELS[type] || type}: ${s.total} entry, win rate ${wr}%`;
+        }).join('\n') || '(belum ada entry closed bulan ini)';
+        const weeklyLines = (stats.weeklyReports || []).map((w, i) => w.hasData ? `- Minggu ${i + 1}: ${w.wins} win / ${w.losses} loss, hasil ${formatRupiah(w.pl)}` : null).filter(Boolean).join('\n') || '(belum ada data mingguan)';
+        return `Kamu analis trading yang mereview data BULANAN dari bot trading simulasi (shadow trading, belum uang real) buat instrumen ${label}. Data agregat bulan ini:\n\n` +
+            `Total entry: ${stats.totalEntries} (${stats.closedCount} closed, win rate ${stats.winRate}%)\n` +
+            `P/L bulan ini: ${formatRupiah(stats.monthPl)}\n` +
+            `Risk budget terpakai: ${stats.usedPct}% dari limit ${stats.riskLimitPct}%/${stats.riskPeriodLabel}\n\n` +
+            `Breakdown per jenis sinyal:\n${signalLines}\n\n` +
+            `Breakdown mingguan:\n${weeklyLines}\n\n` +
+            `Biggest win: ${formatRupiah(stats.maxWin.pl)} (${stats.maxWin.detail})\n` +
+            `Biggest loss: ${formatRupiah(stats.maxLoss.pl)} (${stats.maxLoss.detail})\n\n` +
+            `Tulis dalam Bahasa Indonesia santai: (1) 1-2 kalimat ringkasan pola bulan ini, (2) 1-3 saran actionable ` +
+            `berdasarkan data di atas (misal jenis sinyal mana yang lemah, apakah risk usage sehat). JANGAN kasih sinyal ` +
+            `beli/jual baru atau rekomendasi entry spesifik - fokus cuma ke observasi & evaluasi dari data yang ada.`;
+    }
+
+    // Cap harian (di localStorage, BUKAN Firestore - gak nyentuh kuota database) buat jaga-jaga jangan
+    // sampai kepakai berlebihan & kena billing berbayar di akun LLM sendiri. Shared Gold+Currency karena
+    // sama-sama pakai 1 API key yang sama, biayanya nempel ke akun yang sama juga.
+    const LLM_RECOMMEND_DAILY_LIMIT = 3;
+    function getLlmRecommendQuota() {
+        const today = new Date().toISOString().slice(0, 10);
+        let q = JSON.parse(localStorage.getItem('llm_recommend_quota') || 'null');
+        if (!q || q.date !== today) q = { date: today, count: 0 };
+        return q;
+    }
+
+    async function requestEvalRecommendation(stats, label, boxElId, btnEl) {
+        const box = document.getElementById(boxElId);
+        const settings = getAiSettings();
+        if (settings.llmProvider === 'none' || !settings.llmKey) {
+            box.innerHTML = `<div class="insight-box insight-warning">Isi dulu API Key LLM (Gemini/Claude) di ⚙️ Settings Trading AI buat pakai fitur ini.</div>`;
+            return;
+        }
+        const quota = getLlmRecommendQuota();
+        if (quota.count >= LLM_RECOMMEND_DAILY_LIMIT) {
+            box.innerHTML = `<div class="insight-box insight-warning">Udah dipakai ${LLM_RECOMMEND_DAILY_LIMIT}x hari ini (batas harian biar gak kena biaya berlebih) - coba lagi besok.</div>`;
+            return;
+        }
+        btnEl.disabled = true; const origText = btnEl.innerText; btnEl.innerText = '⏳ Menganalisa...';
+        box.innerHTML = '';
+        try {
+            quota.count++;
+            localStorage.setItem('llm_recommend_quota', JSON.stringify(quota));
+            const prompt_ = buildEvalRecommendationPrompt(stats, label);
+            const result = await callLLM(prompt_, settings, 600);
+            box.innerHTML = result
+                ? `<div class="insight-box" style="border-left-color:#00bcd4;">🤖 ${result.replace(/\n/g, '<br>')}</div>`
+                : `<div class="insight-box insight-warning">Gagal dapet respon dari LLM, coba lagi.</div>`;
+        } catch (err) {
+            box.innerHTML = `<div class="insight-box insight-warning">Error: ${err.message}</div>`;
+        } finally {
+            btnEl.disabled = false; btnEl.innerText = origText;
+        }
     }
 
     // Adaptif: kalau win rate tipe sinyal tertentu lagi jelek belakangan ini, bot skip generate sinyal itu dulu (proporsi entry condong ke yang lebih akurat).
@@ -1893,6 +1963,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- Dashboard evaluasi ---
     let aiPlChartInstance = null; let aiWinRateChartInstance = null;
+    let lastAiDashboardStats = null;
     function renderAiDashboard() {
         const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth();
         document.getElementById('ai-dash-month-year-display').innerText = `${monthNames[m]} ${y}`;
@@ -1950,7 +2021,7 @@ document.addEventListener("DOMContentLoaded", () => {
             signalStats[type].total++;
             if (t.plVal >= 0) signalStats[type].win++;
         });
-        const signalLabels = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', ict_liquidity_sweep: '🔵 ICT Liquidity Sweep', lainnya: 'Lainnya' };
+        const signalLabels = SIGNAL_TYPE_LABELS;
         const signalGrid = document.getElementById('ai-signal-stats-grid');
         const signalEntries = Object.entries(signalStats);
         signalGrid.innerHTML = signalEntries.length ? signalEntries.map(([type, s]) => {
@@ -1994,9 +2065,20 @@ document.addEventListener("DOMContentLoaded", () => {
         aiTableMaster = tableRows;
         aiTableCurrentPage = 1;
         renderAiTable();
+
+        // Snapshot angka yang UDAH dihitung di atas - dipakai tombol "Analisa AI", gak hitung ulang apa-apa.
+        lastAiDashboardStats = {
+            totalEntries: tableRows.length, closedCount: closedTrades.length, winRate,
+            monthPl, usedPct: periodPl < 0 ? usedPct.toFixed(0) : 0, riskLimitPct: masterS.riskLimitPct, riskPeriodLabel,
+            signalStats, weeklyReports, maxWin, maxLoss,
+        };
     }
     document.getElementById('ai-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderAiDashboard(); };
     document.getElementById('ai-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderAiDashboard(); };
+    document.getElementById('btn-ai-llm-recommend').onclick = function() {
+        if (!lastAiDashboardStats) { alert('Belum ada data bulan ini buat dianalisa.'); return; }
+        requestEvalRecommendation(lastAiDashboardStats, 'XAUUSD (Gold)', 'ai-llm-recommendation', this);
+    };
 
     // --- Detail Entry Simulasi: search + sort + pagination (client-side, dari aiTableMaster bulan yang lagi dibrowse) ---
     let aiTableMaster = [];
@@ -2312,7 +2394,7 @@ document.addEventListener("DOMContentLoaded", () => {
         pipValueUnit: 'cent', pipValuePerLot: 1,
         tpMode: 'fixed', summaryIntervalHours: 6, methodTwoEnabled: false
     };
-    const CUR_SIGNAL_LABELS = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', ict_liquidity_sweep: '🔵 ICT Liquidity Sweep', lainnya: 'Lainnya' };
+    const CUR_SIGNAL_LABELS = SIGNAL_TYPE_LABELS;
 
     (function populateCurPairSelect() {
         const sel = document.getElementById('cur-pair-select');
@@ -2591,6 +2673,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ---- Tab "Dashboard Evaluasi" (Poin C) ----
     let curPlChartInstance = null; let curWinRateChartInstance = null;
+    let lastCurDashboardStats = null;
     function renderCurDashboard(pairKey) {
         const tradeData = getCurInstrument(pairKey).aiTradeData || {};
         const modalAwal = getCurInstrument(pairKey).aiModalAwal || 2500000;
@@ -2693,9 +2776,20 @@ document.addEventListener("DOMContentLoaded", () => {
         curTableMaster = tableRows;
         curTableCurrentPage = 1;
         renderCurTable();
+
+        // Snapshot angka yang UDAH dihitung di atas - dipakai tombol "Analisa AI", gak hitung ulang apa-apa.
+        lastCurDashboardStats = {
+            totalEntries: tableRows.length, closedCount: closedTrades.length, winRate,
+            monthPl, usedPct: periodPl < 0 ? usedPct.toFixed(0) : 0, riskLimitPct: masterS.riskLimitPct, riskPeriodLabel,
+            signalStats, weeklyReports, maxWin, maxLoss,
+        };
     }
     document.getElementById('cur-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() - 1); renderCurDashboard(currentCurPair()); };
     document.getElementById('cur-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderCurDashboard(currentCurPair()); };
+    document.getElementById('btn-cur-llm-recommend').onclick = function() {
+        if (!lastCurDashboardStats) { alert('Belum ada data bulan ini buat dianalisa.'); return; }
+        requestEvalRecommendation(lastCurDashboardStats, currentCurPair(), 'cur-llm-recommendation', this);
+    };
 
     let curTableMaster = [];
     let curTableSearch = '';

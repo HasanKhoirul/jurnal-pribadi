@@ -405,7 +405,7 @@ def run_slow_tick():
         log_ai_tick('news_block', msg)
     else:
         sug1 = compute_ai_suggestion(candles, ai_trade_data)
-        opened1 = auto_open_ai_position(ai_trade_data, sug1)
+        opened1 = auto_open_ai_position(ai_trade_data, sug1, ai_modal_awal)
         if opened1:
             doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
             log_ai_tick('entry_opened', 'Entry Metode 1 berhasil dibuka.')
@@ -431,7 +431,7 @@ def run_slow_tick():
         log_ai_tick('news_block_m2', f"Sinyal Metode 2 ready tapi jam rawan berita, entry ditahan.")
         return
 
-    opened2 = auto_open_ai_position(ai_trade_data, ready_sug)
+    opened2 = auto_open_ai_position(ai_trade_data, ready_sug, ai_modal_awal)
     if opened2:
         doc_ref.set(
             {'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)},
