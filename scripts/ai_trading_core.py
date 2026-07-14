@@ -455,13 +455,13 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
         period_label = 'minggu' if cfg.AI_RISK_PERIOD == 'weekly' else 'bulan'
         if period_pl < 0 and abs(period_pl) >= risk_limit:
             cfg.log_fn(f"Entry diblok: limit risk {cfg.AI_RISK_LIMIT_PCT}%/{period_label} kesentuh "
-                       f"({format_rupiah(period_pl)} dari batas {format_rupiah(-risk_limit)}).")
+                       f"(rugi {format_rupiah(abs(period_pl))} dari batas {format_rupiah(risk_limit)}).")
             if not cfg.risk_limit_blocked:
                 cfg.risk_limit_blocked = True
                 cfg.send_telegram_fn(
                     f"🚨 <b>Entry Diblok - Limit Risk Kesentuh ({cfg.SYMBOL_LABEL})</b>\n\n"
-                    f"Rugi {period_label} ini {format_rupiah(period_pl)}, lewat batas "
-                    f"{cfg.AI_RISK_LIMIT_PCT}% modal ({format_rupiah(-risk_limit)}).\n"
+                    f"Rugi {period_label} ini {format_rupiah(abs(period_pl))}, lewat batas "
+                    f"{cfg.AI_RISK_LIMIT_PCT}% modal ({format_rupiah(risk_limit)}).\n"
                     f"Entry baru DITAHAN sampai {period_label} berikutnya atau limit dinaikkan."
                 )
             return False
