@@ -26,6 +26,10 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiSettings = JSON.parse(localStorage.getItem('ai_settings_v1')) || defaultAiSettings;
     let botControl = JSON.parse(localStorage.getItem('ai_bot_control_v1')) || {};
     let currencyInstruments = {};  // modul Currency (multi-instrumen) - VPS-only compute, cloud-driven doang, gak di-cache localStorage
+    // Dipindah ke atas (bukan deket kode Currency lain di ~baris 2389) karena renderHome() manggil ini pas
+    // load awal (baris ~199), sebelum baris 2389 sempet jalan - const gak di-hoist kayak function, jadi
+    // kalau tetep di bawah bakal ReferenceError "Cannot access before initialization" pas pertama buka web.
+    const CURRENCY_PAIRS = ['USDJPY', 'GBPUSD', 'AUDUSD', 'EURUSD', 'USDCAD'];
     // Candle/harga live per pair (dari appData/public, field di-suffix nama pair) - dipakai chart & trend summary tab Currency.
     let currencyLiveCandles = {}; let currencyLiveCandlesUpdatedAt = {};
     let currencyLivePrice = {}; let currencyLivePriceUpdatedAt = {};
@@ -128,6 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
         else if (targetId === 'view-ai-currency' && isLoggedIn) renderCurrencyDashboard();
+        else if (targetId === 'view-monitoring' && isLoggedIn) renderMonitoringDashboard();
     }
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -250,7 +255,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }).catch((err) => { console.error(err); alert("Login gagal: " + err.code + "\n" + err.message); });
     });
 
-    const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-ai-trading': 'Trading AI', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
+    const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-ai-trading': 'Trading AI', 'view-ai-currency': 'Trading AI Currency', 'view-monitoring': 'Monitoring', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
 
     menuItems.forEach(item => {
         item.addEventListener('click', () => {
@@ -265,6 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (targetId === 'view-wealth') renderWealthDashboard();
             else if (targetId === 'view-ai-trading' && isLoggedIn) { loadEconomicCalendarWidget(); startAiAutoTick(); }
             else if (targetId === 'view-ai-currency' && isLoggedIn) { renderCurrencyDashboard(); }
+            else if (targetId === 'view-monitoring' && isLoggedIn) { renderMonitoringDashboard(); }
             if (targetId !== 'view-ai-trading') stopAiAutoTick();
         });
     });
@@ -544,12 +550,37 @@ document.addEventListener("DOMContentLoaded", () => {
             else wealthHtml = `<h3 style="color:#00e676; margin-top:10px;">Aman / Surplus</h3><p style="font-size:0.8rem; color:#aaa;">Tabungan terjaga</p>`;
         }
 
-        let aiHtml = '';
-        if(!isLoggedIn) { aiHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; }
+        let aiHtml = '', curHtml = '', aiBreakdownHtml = '';
+        let aiClosedPl = 0, aiClosedCount = 0;
+        if(!isLoggedIn) {
+            aiHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`;
+            curHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`;
+        }
         else {
-            let aiClosedPl = 0, aiClosedCount = 0;
             for(let d in aiTradeData) { if(d.startsWith(targetPrefix)) aiTradeData[d].forEach(t => { if(t.status === 'closed') { aiClosedPl += parseFloat(t.pl || 0); aiClosedCount++; } }); }
             aiHtml = `<h3 class="${aiClosedPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${aiClosedPl > 0 ? '+' : ''}${formatRupiah(aiClosedPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${aiClosedCount} trade closed - ${monthNames[m]} ${y}</p>`;
+
+            let curTotalPl = 0, curTotalCount = 0;
+            const curBreakdown = CURRENCY_PAIRS.map(p => {
+                let pl = 0, count = 0;
+                const td = getCurInstrument(p).aiTradeData || {};
+                for(let d in td) { if(d.startsWith(targetPrefix)) td[d].forEach(t => { if(t.status === 'closed') { pl += parseFloat(t.pl || 0); count++; } }); }
+                curTotalPl += pl; curTotalCount += count;
+                return { pair: p, pl };
+            });
+            curHtml = `<h3 class="${curTotalPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${curTotalPl > 0 ? '+' : ''}${formatRupiah(curTotalPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${curTotalCount} trade closed - ${monthNames[m]} ${y}</p>`;
+
+            // Breakdown per instrumen (Gold + 5 pair) ditaruh di section terpisah full-width DI LUAR grid card
+            // kecil - kalau dipaksa masuk dash-card yg sama tingginya kayak card lain, baris grid ke-stretch
+            // semua ngikutin card ini (paling tinggi), bikin card lain ada ruang kosong item gede di bawahnya.
+            const totalGabungan = aiClosedPl + curTotalPl;
+            const allBreakdown = [{ pair: 'Gold (XAUUSD)', pl: aiClosedPl }, ...curBreakdown];
+            aiBreakdownHtml = `
+                <h3 style="color:#9c27b0; margin-bottom:5px;">🌐 Ringkasan Trading AI - ${monthNames[m]} ${y}</h3>
+                <p style="color:#aaa; font-size:0.85rem; margin-bottom:15px;">Total Semuanya (Gold+Currency): <strong class="${totalGabungan >= 0 ? 'profit-text' : 'loss-text'}">${totalGabungan > 0 ? '+' : ''}${formatRupiah(totalGabungan)}</strong></p>
+                <div class="weekly-report-grid">
+                    ${allBreakdown.map(c => `<div class="weekly-card"><h4>${c.pair}</h4><p><span>P/L Bulan Ini:</span> <strong class="${c.pl >= 0 ? 'profit-text' : 'loss-text'}">${c.pl > 0 ? '+' : ''}${formatRupiah(c.pl)}</strong></p></div>`).join('')}
+                </div>`;
         }
 
         const homeWidgets = document.getElementById('home-widgets');
@@ -559,9 +590,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div class="dash-card"><h3 style="color:#ff1744; border-bottom: 1px dashed #444; padding-bottom:10px;">🛒 Belanja Bulanan</h3>${expHtml}</div>
                 <div class="dash-card"><h3 style="color:#2196f3; border-bottom: 1px dashed #444; padding-bottom:10px;">🏃‍♂️ Jurnal Olahraga</h3><h3 style="color:#2196f3; margin-top:10px;">${sportSesi} Sesi | ${sportMenit} Menit</h3><p style="font-size:0.8rem; color:#aaa;">Aktivitas Fisik ${monthNames[m]} ${y}</p></div>
                 <div class="dash-card"><h3 style="color:#ffb300; border-bottom: 1px dashed #444; padding-bottom:10px;">💰 Status Kekayaan</h3>${wealthHtml}</div>
-                <div class="dash-card"><h3 style="color:#9c27b0; border-bottom: 1px dashed #444; padding-bottom:10px;">🤖 Trading AI</h3>${aiHtml}</div>
+                <div class="dash-card"><h3 style="color:#9c27b0; border-bottom: 1px dashed #444; padding-bottom:10px;">🤖 Trading AI Gold</h3>${aiHtml}</div>
+                <div class="dash-card"><h3 style="color:#00bcd4; border-bottom: 1px dashed #444; padding-bottom:10px;">💴 Trading AI Currency</h3>${curHtml}</div>
             `;
         }
+        const aiBreakdownEl = document.getElementById('home-ai-breakdown');
+        if (aiBreakdownEl) { aiBreakdownEl.innerHTML = aiBreakdownHtml; aiBreakdownEl.style.display = aiBreakdownHtml ? 'block' : 'none'; }
     }
     document.getElementById('home-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderHome(); }; document.getElementById('home-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderHome(); };
 
@@ -2384,7 +2418,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // browser di sini CUMA baca & tampilin, kecuali aksi eksplisit: Master Setting, restart bot,
     // kirim summary, export, reset data, & ubah modal simulasi.
     // ==========================================
-    const CURRENCY_PAIRS = ['USDJPY', 'GBPUSD', 'AUDUSD', 'EURUSD', 'USDCAD'];
     const CURRENCY_MASTER_DEFAULTS = {
         slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
         lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
@@ -2917,6 +2950,174 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('cur-menu-calendar').addEventListener('click', () => { switchCurTab('cur-menu-calendar', 'cur-view-calendar'); renderCurrencyDashboard(); });
     document.getElementById('cur-menu-dashboard').addEventListener('click', () => { switchCurTab('cur-menu-dashboard', 'cur-view-dashboard'); renderCurrencyDashboard(); });
     document.getElementById('cur-menu-log').addEventListener('click', () => { switchCurTab('cur-menu-log', 'cur-view-log'); renderCurrencyDashboard(); });
+
+    // ==========================================
+    // MONITORING - ringkasan gabungan Gold + 5 Currency, PER BULAN (semua card/chart di halaman ini ikut
+    // 1 nav bulan yang sama, monTrendNavDate) - sengaja BUKAN globalNavDate yang dipakai bareng-bareng semua
+    // dashboard lain, biar geser bulan di sini gak ikut nge-geser bulan yang lagi dibuka di tab Gold/Currency/dst.
+    // ==========================================
+    let monPlChartInstance = null;
+    let monTrendChartInstance = null;
+    let monTrendNavDate = new Date();
+    // Kumulatif harian dalam 1 bulan (index array 1..daysInMonth, index 0 gak dipakai) - biar "reset" tiap
+    // ganti bulan (bukan kumulatif dari awal semua histori), jadi kurvanya kebaca sebagai pergerakan bulan itu doang.
+    function computeDailyCumulative(tradeDataList, year, month) {
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const dailyPl = new Array(daysInMonth + 1).fill(0);
+        const dailyOrders = new Array(daysInMonth + 1).fill(0);
+        tradeDataList.forEach(tradeData => {
+            for (let day = 1; day <= daysInMonth; day++) {
+                const fDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                (tradeData[fDate] || []).forEach(t => { dailyPl[day] += parseFloat(t.pl || 0); dailyOrders[day]++; });
+            }
+        });
+        const cumulative = new Array(daysInMonth + 1).fill(0);
+        for (let day = 1; day <= daysInMonth; day++) cumulative[day] = cumulative[day - 1] + dailyPl[day];
+        return { daysInMonth, dailyPl, dailyOrders, cumulative };
+    }
+    // P/L SEBELUM bulan yg lagi dibuka (buat hitung equity awal bulan itu) - perbandingan string tanggal ISO
+    // (YYYY-MM-DD vs YYYY-MM) valid krn zero-padded, gak perlu parse ke Date.
+    function sumPlBeforeMonth(tradeData, year, month) {
+        const targetPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+        let sum = 0;
+        for (const d in tradeData) { if (d < targetPrefix) (tradeData[d] || []).forEach(t => sum += parseFloat(t.pl || 0)); }
+        return sum;
+    }
+    function summarizeMonthPl(tradeData, year, month) {
+        const targetPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+        let totalPl = 0, totalEntries = 0, closedCount = 0, winCount = 0;
+        for (const d in tradeData) {
+            if (!d.startsWith(targetPrefix)) continue;
+            (tradeData[d] || []).forEach(t => {
+                const p = parseFloat(t.pl || 0);
+                totalPl += p; totalEntries++;
+                if (t.status === 'closed') { closedCount++; if (p >= 0) winCount++; }
+            });
+        }
+        return { totalPl, totalEntries, closedCount, winCount };
+    }
+
+    function buildEquityBoxesHtml(equityAwal, totalPl) {
+        const equityAkhir = equityAwal + totalPl;
+        const growthPct = equityAwal > 0 ? (totalPl / equityAwal * 100) : 0;
+        const growthClass = totalPl > 0 ? 'profit-text' : (totalPl < 0 ? 'loss-text' : 'netral');
+        return `
+            <div class="equity-box"><span class="label">Equity Awal Bulan Ini</span><h3>${formatRupiah(equityAwal)}</h3></div>
+            <div class="equity-box"><span class="label">P/L Bulan Ini</span><h3 class="${growthClass}">${totalPl >= 0 ? '+' : ''}${formatRupiah(totalPl)}</h3></div>
+            <div class="equity-box"><span class="label">Equity Akhir</span><h3>${formatRupiah(equityAkhir)}</h3></div>
+            <div class="equity-box"><span class="label">Pertumbuhan</span><h3 class="${growthClass}">${growthPct >= 0 ? '+' : ''}${growthPct.toFixed(2)}%</h3></div>`;
+    }
+
+    window.renderMonitoringDashboard = function() {
+        if (!isLoggedIn) return;
+        const trendY = monTrendNavDate.getFullYear(), trendM = monTrendNavDate.getMonth();
+        document.getElementById('mon-trend-month-year').innerText = `${monthNames[trendM]} ${trendY}`;
+
+        const buildInstrument = (label, color, tradeData, modalAwal) => ({
+            label, color,
+            equityAwal: modalAwal + sumPlBeforeMonth(tradeData, trendY, trendM),
+            ...summarizeMonthPl(tradeData, trendY, trendM)
+        });
+        const instruments = [
+            buildInstrument('Gold (XAUUSD)', '#ffd700', aiTradeData, aiModalAwal),
+            ...CURRENCY_PAIRS.map(p => buildInstrument(p, '#00bcd4', getCurInstrument(p).aiTradeData || {}, getCurInstrument(p).aiModalAwal || 2500000))
+        ];
+        const currencyOnly = instruments.slice(1);
+
+        const renderCard = (list, equityElId, tradesElId, winrateElId) => {
+            const equityAwal = list.reduce((s, i) => s + i.equityAwal, 0);
+            const totalPl = list.reduce((s, i) => s + i.totalPl, 0);
+            const totalEntries = list.reduce((s, i) => s + i.totalEntries, 0);
+            const closedCount = list.reduce((s, i) => s + i.closedCount, 0);
+            const winCount = list.reduce((s, i) => s + i.winCount, 0);
+            document.getElementById(equityElId).innerHTML = buildEquityBoxesHtml(equityAwal, totalPl);
+            document.getElementById(tradesElId).innerText = totalEntries;
+            document.getElementById(winrateElId).innerText = closedCount > 0 ? `${((winCount / closedCount) * 100).toFixed(0)}%` : '-';
+        };
+        renderCard(instruments, 'mon-all-equity', 'mon-all-trades', 'mon-all-winrate');
+        renderCard(currencyOnly, 'mon-cur-equity', 'mon-cur-trades', 'mon-cur-winrate');
+
+        document.getElementById('mon-breakdown-grid').innerHTML = instruments.map(i => {
+            const equityAkhir = i.equityAwal + i.totalPl;
+            const growthPct = i.equityAwal > 0 ? (i.totalPl / i.equityAwal * 100) : 0;
+            const growthClass = i.totalPl > 0 ? 'profit-text' : (i.totalPl < 0 ? 'loss-text' : 'netral');
+            const winRate = i.closedCount > 0 ? ((i.winCount / i.closedCount) * 100).toFixed(0) + '%' : '-';
+            return `<div class="weekly-card" style="border-top-color:${i.color};">
+                <h4>${i.label}</h4>
+                <p><span>Equity Awal:</span> <strong>${formatRupiah(i.equityAwal)}</strong></p>
+                <p><span>P/L Bulan Ini:</span> <strong class="${growthClass}">${i.totalPl >= 0 ? '+' : ''}${formatRupiah(i.totalPl)}</strong></p>
+                <p><span>Equity Akhir:</span> <strong>${formatRupiah(equityAkhir)}</strong></p>
+                <p><span>Pertumbuhan:</span> <strong class="${growthClass}">${growthPct >= 0 ? '+' : ''}${growthPct.toFixed(2)}%</strong></p>
+                <p style="border-top:1px dotted #444; padding-top:5px;"><span>Win Rate:</span> <strong>${winRate}</strong> (${i.closedCount} closed)</p>
+            </div>`;
+        }).join('');
+
+        // Chart di-buat SEKALI trus di-update in-place tiap render (bukan destroy+new tiap kali) - data doc Firestore
+        // ini ke-update tiap ~10 detik dari 6 proses bot (trailing SL/lock jalan tiap tick pas ada posisi open),
+        // jadi renderMonitoringDashboard() sering ke-panggil ulang - destroy+new bikin canvas "kedip" (blank sesaat
+        // sebelum kegambar ulang), update() mulus gak ada jeda blank.
+        if (!monPlChartInstance) {
+            monPlChartInstance = new Chart(document.getElementById('mon-plChart').getContext('2d'), {
+                type: 'bar',
+                data: { labels: [], datasets: [{ label: 'Total P/L', data: [], backgroundColor: [], borderRadius: 4 }] },
+                options: { maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+        }
+        monPlChartInstance.data.labels = instruments.map(i => i.label);
+        monPlChartInstance.data.datasets[0].data = instruments.map(i => i.totalPl);
+        monPlChartInstance.data.datasets[0].backgroundColor = instruments.map(i => i.totalPl >= 0 ? '#00e676' : '#ff1744');
+        monPlChartInstance.update();
+
+        const allDaily = computeDailyCumulative([aiTradeData, ...CURRENCY_PAIRS.map(p => getCurInstrument(p).aiTradeData || {})], trendY, trendM);
+        const curDaily = computeDailyCumulative(CURRENCY_PAIRS.map(p => getCurInstrument(p).aiTradeData || {}), trendY, trendM);
+        const dayLabels = []; for (let d = 1; d <= allDaily.daysInMonth; d++) dayLabels.push(`Tgl ${d}`);
+        const pointColor = dailyPl => dailyPl.slice(1).map(v => v > 0 ? '#00e676' : (v < 0 ? '#ff1744' : '#888'));
+
+        if (!monTrendChartInstance) {
+            monTrendChartInstance = new Chart(document.getElementById('mon-trendChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Semua Instrumen', data: [], borderColor: '#ffd700', backgroundColor: 'rgba(255,215,0,0.12)', tension: 0.3, fill: true, pointRadius: 4, pointHoverRadius: 7, pointBackgroundColor: [] },
+                        { label: 'Currency Saja', data: [], borderColor: '#00bcd4', backgroundColor: 'rgba(0,188,212,0.12)', tension: 0.3, fill: true, pointRadius: 4, pointHoverRadius: 7, pointBackgroundColor: [] }
+                    ]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    scales: { x: { grid: { color: '#333' } }, y: { grid: { color: '#333' }, ticks: { callback: v => formatRupiah(v) } } },
+                    plugins: {
+                        legend: { labels: { color: '#ccc' } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => {
+                                    const day = ctx.dataIndex + 1;
+                                    const meta = ctx.dataset.meta || { dailyPl: [], dailyOrders: [] };
+                                    const dayPl = meta.dailyPl[day] || 0;
+                                    const dayOrders = meta.dailyOrders[day] || 0;
+                                    return [
+                                        `${ctx.dataset.label} (kumulatif): ${formatRupiah(ctx.parsed.y)}`,
+                                        `P/L tgl ini: ${dayPl >= 0 ? '+' : ''}${formatRupiah(dayPl)}`,
+                                        `Total order: ${dayOrders}`
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        monTrendChartInstance.data.labels = dayLabels;
+        monTrendChartInstance.data.datasets[0].data = dayLabels.map((_, idx) => allDaily.cumulative[idx + 1]);
+        monTrendChartInstance.data.datasets[0].pointBackgroundColor = pointColor(allDaily.dailyPl);
+        monTrendChartInstance.data.datasets[0].meta = { dailyPl: allDaily.dailyPl, dailyOrders: allDaily.dailyOrders };
+        monTrendChartInstance.data.datasets[1].data = dayLabels.map((_, idx) => curDaily.cumulative[idx + 1]);
+        monTrendChartInstance.data.datasets[1].pointBackgroundColor = pointColor(curDaily.dailyPl);
+        monTrendChartInstance.data.datasets[1].meta = { dailyPl: curDaily.dailyPl, dailyOrders: curDaily.dailyOrders };
+        monTrendChartInstance.update();
+    };
+    document.getElementById('mon-trend-prev-month').addEventListener('click', () => { monTrendNavDate.setMonth(monTrendNavDate.getMonth() - 1); renderMonitoringDashboard(); });
+    document.getElementById('mon-trend-next-month').addEventListener('click', () => { monTrendNavDate.setMonth(monTrendNavDate.getMonth() + 1); renderMonitoringDashboard(); });
 
     document.getElementById('btn-cur-more-menu').addEventListener('click', (e) => {
         e.stopPropagation();

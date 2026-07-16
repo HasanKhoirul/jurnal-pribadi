@@ -78,6 +78,7 @@
             <li class="menu-item" data-target="view-trading">📊 Jurnal XAUUSD</li>
             <li class="menu-item" data-target="view-ai-trading">🤖 Trading AI Gold</li>
             <li class="menu-item" data-target="view-ai-currency">💴 Trading AI Currency</li>
+            <li class="menu-item" data-target="view-monitoring">📈 Monitoring</li>
             <li class="menu-item" data-target="view-expenses">🛒 Pengeluaran Bulanan</li>
             <li class="menu-item" data-target="view-sports">🏃‍♂️ Jurnal Olahraga</li>
             <li class="menu-item" data-target="view-wealth">💰 History Kekayaan</li>
@@ -108,6 +109,7 @@
             </div>
 
             <div class="dashboard-grid" id="home-widgets"></div>
+            <div id="home-ai-breakdown" style="display:none; margin-top: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"></div>
             <div class="dashboard-grid" style="margin-top: 20px;">
                 <div class="dash-card">
                     <h3>🎯 Fokus Kuartal Ini</h3>
@@ -514,6 +516,64 @@
                     <h1 style="color:#00bcd4; margin-bottom:15px;">📜 Log Aktivitas Bot</h1>
                     <button class="btn-action" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" id="btn-cur-refresh-log">🔃 Refresh</button>
                     <div id="cur-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-monitoring" class="content-section" style="padding-top: 10px;">
+            <div id="mon-locked-ui" class="locked-overlay" style="display:none;">
+                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
+                <h2 style="color: #ffd700;">Privasi Bos!</h2>
+                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Monitoring.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+            </div>
+
+            <div id="mon-content-ui">
+                <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
+                    <div class="header-left">
+                        <h1 style="color:#4caf50;">📈 Monitoring Portfolio</h1>
+                        <p style="color:#888; font-size: 0.9rem;">Ringkasan Gold + 5 pair Currency per bulan, biar gak perlu buka 1-1 tab.</p>
+                    </div>
+                    <div class="month-navigation" style="margin:0;">
+                        <button id="mon-trend-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button>
+                        <h2 id="mon-trend-month-year" style="font-size:1.1rem; margin:0 8px;">Bulan Tahun</h2>
+                        <button id="mon-trend-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button>
+                    </div>
+                </header>
+
+                <div class="dashboard-container">
+                    <div class="chart-grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 20px;">
+                        <div class="chart-card" style="border-left: 4px solid #ffd700;">
+                            <h3 class="chart-title">🌐 Semua Instrumen (Gold + 5 Currency)</h3>
+                            <div class="equity-dashboard" id="mon-all-equity"></div>
+                            <p style="color:#aaa; font-size:0.85rem; margin-top:10px;">Total Entry: <strong id="mon-all-trades">0</strong> · Win Rate: <strong id="mon-all-winrate">0%</strong></p>
+                        </div>
+                        <div class="chart-card" style="border-left: 4px solid #00bcd4;">
+                            <h3 class="chart-title">💴 Currency Saja (5 Pair)</h3>
+                            <div class="equity-dashboard" id="mon-cur-equity"></div>
+                            <p style="color:#aaa; font-size:0.85rem; margin-top:10px;">Total Entry: <strong id="mon-cur-trades">0</strong> · Win Rate: <strong id="mon-cur-winrate">0%</strong></p>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
+                        <h3 class="chart-title">📊 Breakdown per Instrumen</h3>
+                        <div id="mon-breakdown-grid" class="weekly-report-grid" style="margin-top:10px;"></div>
+                    </div>
+
+                    <div class="chart-grid" style="margin-bottom: 20px;">
+                        <div class="chart-card" style="grid-column: 1 / -1;">
+                            <h3 class="chart-title">Trend P/L Harian (Kumulatif)</h3>
+                            <p style="color:#777; font-size:0.75rem; margin:8px 0 0;">Arahkan kursor ke titik buat lihat detail P/L & jumlah order hari itu.</p>
+                            <div style="position:relative; min-height:280px; margin-top:10px;"><canvas id="mon-trendChart"></canvas></div>
+                        </div>
+                    </div>
+
+                    <div class="chart-grid">
+                        <div class="chart-card" style="grid-column: 1 / -1;">
+                            <h3 class="chart-title">Grafik P/L Bulan Ini per Instrumen</h3>
+                            <div style="position:relative; min-height:280px;"><canvas id="mon-plChart"></canvas></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
