@@ -41,11 +41,11 @@ load_dotenv()
 # atrSlMin/MaxPips: batas clamp SL adaptif ATR - asumsi awal buat forex major (beda skala dari Gold
 # yang ATR-nya jauh lebih gede), tuning-in lagi kalau observed ATR ternyata sering mentok clamp ini.
 CURRENCY_INSTRUMENTS = {
-    'USDJPY': {'pipSize': 0.01, 'priceDecimals': 3, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'symbolCandidates': ['USDJPY', 'USDJPYm', 'USDJPYc']},
-    'GBPUSD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'symbolCandidates': ['GBPUSD', 'GBPUSDm', 'GBPUSDc']},
-    'AUDUSD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'symbolCandidates': ['AUDUSD', 'AUDUSDm', 'AUDUSDc']},
-    'EURUSD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'symbolCandidates': ['EURUSD', 'EURUSDm', 'EURUSDc']},
-    'USDCAD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'symbolCandidates': ['USDCAD', 'USDCADm', 'USDCADc']},
+    'USDJPY': {'pipSize': 0.01, 'priceDecimals': 3, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'l3TpAtrMinPips': 30, 'l3TpAtrMaxPips': 180, 'symbolCandidates': ['USDJPY', 'USDJPYm', 'USDJPYc']},
+    'GBPUSD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'l3TpAtrMinPips': 30, 'l3TpAtrMaxPips': 180, 'symbolCandidates': ['GBPUSD', 'GBPUSDm', 'GBPUSDc']},
+    'AUDUSD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'l3TpAtrMinPips': 30, 'l3TpAtrMaxPips': 180, 'symbolCandidates': ['AUDUSD', 'AUDUSDm', 'AUDUSDc']},
+    'EURUSD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'l3TpAtrMinPips': 30, 'l3TpAtrMaxPips': 180, 'symbolCandidates': ['EURUSD', 'EURUSDm', 'EURUSDc']},
+    'USDCAD': {'pipSize': 0.0001, 'priceDecimals': 5, 'atrSlMinPips': 10, 'atrSlMaxPips': 60, 'l3TpAtrMinPips': 30, 'l3TpAtrMaxPips': 180, 'symbolCandidates': ['USDCAD', 'USDCADm', 'USDCADc']},
 }
 
 if len(sys.argv) < 2 or sys.argv[1] not in CURRENCY_INSTRUMENTS:
@@ -162,6 +162,8 @@ cfg.AI_PIP_SIZE = PAIR_CFG['pipSize']  # beda dari Gold (0.1) - apply_master_set
 cfg.PRICE_DECIMALS = PAIR_CFG['priceDecimals']
 cfg.ATR_SL_MIN_PIPS = PAIR_CFG['atrSlMinPips']
 cfg.ATR_SL_MAX_PIPS = PAIR_CFG['atrSlMaxPips']
+cfg.L3_TP_ATR_MIN_PIPS = PAIR_CFG['l3TpAtrMinPips']
+cfg.L3_TP_ATR_MAX_PIPS = PAIR_CFG['l3TpAtrMaxPips']
 cfg.TIMEFRAME_MT5 = mt5.TIMEFRAME_H1
 cfg.TIMEFRAME_LABEL = '1h'
 cfg.ICT_HTF_MT5 = mt5.TIMEFRAME_H4

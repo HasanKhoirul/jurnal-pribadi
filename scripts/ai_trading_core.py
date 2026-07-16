@@ -57,6 +57,13 @@ class Config:
         self.AI_METHOD_TWO_ENABLED = False
         self.AI_RISK_LIMIT_PCT = 10
         self.AI_RISK_PERIOD = 'monthly'
+        # TP Layer 3 adaptif ATR - opt-in per instrumen (default OFF, Metode 1 doang). Sama pola kayak SL
+        # adaptif ATR tapi terpisah total (field beda, TIDAK reuse AI_TP_MODE yang artinya scale-proporsional-
+        # ke-SL). Clamp (di bawah) di-set host per-instrumen kayak ATR_SL_MIN_PIPS/MAX_PIPS, BUKAN dari Master Setting.
+        self.AI_L3_TP_ATR_MODE = False
+        self.AI_L3_TP_ATR_MULTIPLIER = 0.6
+        self.L3_TP_ATR_MIN_PIPS = 90
+        self.L3_TP_ATR_MAX_PIPS = 360
         # Flag in-memory (reset kalau proses direstart) - biar alert "entry diblok" kekirim SEKALI doang
         # pas limit baru kesentuh, bukan spam tiap tick selama masih over-limit.
         self.risk_limit_blocked = False
@@ -87,6 +94,7 @@ AI_MASTER_DEFAULTS = {
     'summaryIntervalHours': 6,
     'methodTwoEnabled': False,
     'riskLimitPct': 10, 'riskPeriod': 'monthly',
+    'l3TpAtrMode': False, 'l3TpAtrMultiplier': 0.6,
 }
 
 
@@ -118,6 +126,8 @@ def apply_master_settings(master):
     cfg.AI_METHOD_TWO_ENABLED = bool(master.get('methodTwoEnabled', AI_MASTER_DEFAULTS['methodTwoEnabled']))
     cfg.AI_RISK_LIMIT_PCT = master.get('riskLimitPct', AI_MASTER_DEFAULTS['riskLimitPct'])
     cfg.AI_RISK_PERIOD = 'weekly' if master.get('riskPeriod') == 'weekly' else 'monthly'
+    cfg.AI_L3_TP_ATR_MODE = bool(master.get('l3TpAtrMode', AI_MASTER_DEFAULTS['l3TpAtrMode']))
+    cfg.AI_L3_TP_ATR_MULTIPLIER = master.get('l3TpAtrMultiplier', AI_MASTER_DEFAULTS['l3TpAtrMultiplier'])
 
 
 # ---------- Helper angka & indikator (pure, gak butuh cfg) ----------
@@ -335,11 +345,12 @@ def compute_ai_suggestion(candles, trade_data):
 
     dir_sign = 1 if arah == 'BUY' else -1
     entry = last_close
+    # ATR dihitung sekali kalau salah satu (SL adaptif ATAU L3 TP adaptif) butuh - biar gak dobel komputasi
+    # pas dua-duanya aktif bareng.
+    atr = calc_atr(candles, 14) if (cfg.AI_SL_MODE == 'atr' or cfg.AI_L3_TP_ATR_MODE) else None
     sl_pips_used = cfg.AI_SL_PIPS
-    if cfg.AI_SL_MODE == 'atr':
-        atr = calc_atr(candles, 14)
-        if atr is not None:
-            sl_pips_used = min(cfg.ATR_SL_MAX_PIPS, max(cfg.ATR_SL_MIN_PIPS, round((atr / cfg.AI_PIP_SIZE) * cfg.AI_ATR_MULTIPLIER)))
+    if cfg.AI_SL_MODE == 'atr' and atr is not None:
+        sl_pips_used = min(cfg.ATR_SL_MAX_PIPS, max(cfg.ATR_SL_MIN_PIPS, round((atr / cfg.AI_PIP_SIZE) * cfg.AI_ATR_MULTIPLIER)))
     sl = entry - dir_sign * pip_to_price(sl_pips_used)
 
     tp_pips_used = list(cfg.AI_TP_LAYERS_PIPS)
@@ -350,9 +361,21 @@ def compute_ai_suggestion(candles, trade_data):
         deep_lock_trigger_used = round(sl_pips_used * (cfg.AI_DEEP_LOCK_TRIGGER_PIPS / cfg.AI_SL_PIPS))
         deep_lock_pips_used = round(sl_pips_used * (cfg.AI_DEEP_LOCK_PIPS / cfg.AI_SL_PIPS))
 
+    # TP Layer 3 adaptif ATR - opt-in per instrumen, TERPISAH dari AI_TP_MODE di atas (yang scale L1/2/3
+    # proporsional ke SL). Cuma nimpa index terakhir (L3), L1/L2 tetap dari logic di atas apa adanya.
+    # l3_tp_fixed_equivalent/l3_raw_pips disimpan buat dual-track log (bandingin ATR vs fixed di trade record),
+    # BUKAN buat ngubah behavior - cuma keisi kalau mode ini ON & ATR berhasil dihitung.
+    l3_tp_fixed_equivalent = None
+    l3_raw_pips = None
+    if cfg.AI_L3_TP_ATR_MODE and atr is not None:
+        l3_tp_fixed_equivalent = tp_pips_used[2]
+        l3_raw_pips = round((atr / cfg.AI_PIP_SIZE) * cfg.AI_L3_TP_ATR_MULTIPLIER)
+        tp_pips_used[2] = min(cfg.L3_TP_ATR_MAX_PIPS, max(cfg.L3_TP_ATR_MIN_PIPS, l3_raw_pips))
+
     reason_parts.append(
         f"Entry {fmt_price(entry)}, SL {sl_pips_used} pips{' (adaptif ATR)' if cfg.AI_SL_MODE == 'atr' else ''} ({fmt_price(sl)}), "
-        f"TP berlapis {'/'.join(map(str, tp_pips_used))} pips{' (adaptif)' if cfg.AI_TP_MODE == 'adaptive' else ''}, lot {cfg.AI_LOT_SIZE} x3 layer."
+        f"TP berlapis {'/'.join(map(str, tp_pips_used))} pips{' (adaptif)' if cfg.AI_TP_MODE == 'adaptive' else ''}"
+        f"{' [L3 ATR-mode]' if l3_raw_pips is not None else ''}, lot {cfg.AI_LOT_SIZE} x3 layer."
     )
 
     return {
@@ -360,6 +383,7 @@ def compute_ai_suggestion(candles, trade_data):
         'reasonText': ' '.join(reason_parts), 'tf': cfg.TIMEFRAME_LABEL, 'signalType': signal_type,
         'slPipsUsed': sl_pips_used, 'tpPipsUsed': tp_pips_used,
         'deepLockTriggerPipsUsed': deep_lock_trigger_used, 'deepLockPipsUsed': deep_lock_pips_used,
+        'l3TpFixedEquivalent': l3_tp_fixed_equivalent, 'l3TpAtrRawPips': l3_raw_pips,
     }
 
 
@@ -490,6 +514,10 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
         if i == len(tp_pips_used) - 1:
             layer['deepLockTriggerPips'] = sug['deepLockTriggerPipsUsed']
             layer['deepLockPips'] = sug['deepLockPipsUsed']
+            # Dual-track L3 TP adaptif ATR - .get() (bukan akses langsung) krn sug dari Metode 2 (ICT) gak
+            # punya key ini sama sekali. None kalau mode-nya OFF atau ATR gagal dihitung.
+            layer['tpPipsFixedEquivalent'] = sug.get('l3TpFixedEquivalent')
+            layer['tpPipsAtrRaw'] = sug.get('l3TpAtrRawPips')
         layers.append(layer)
     ai_trade_data[date_str].append({
         'arah': sug['arah'], 'tf': sug['tf'], 'entry': sug['entry'], 'sl': layers[0]['sl'],

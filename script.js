@@ -1375,6 +1375,9 @@ document.addEventListener("DOMContentLoaded", () => {
         riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
         tpMode: 'fixed',
+        // L3 TP adaptif ATR - opt-in per instrumen, field TERPISAH dari tpMode (2026-07-16). Cuma nimpa
+        // target TP Layer 3, dihitung & dieksekusi di bot VPS (ai_trading_core.py), browser cuma nyimpen setting.
+        l3TpAtrMode: false, l3TpAtrMultiplier: 0.6,
         summaryIntervalHours: 6,
         methodTwoEnabled: false
     };
@@ -1432,6 +1435,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-tp1-pips').value = m.tpLayerPips[0];
         document.getElementById('ai-master-tp2-pips').value = m.tpLayerPips[1];
         document.getElementById('ai-master-tp3-pips').value = m.tpLayerPips[2];
+        document.getElementById('ai-master-l3-tp-atr-mode').value = m.l3TpAtrMode ? 'on' : 'off';
+        document.getElementById('ai-master-l3-tp-atr-multiplier').value = m.l3TpAtrMultiplier;
         document.getElementById('ai-master-pip-value-unit').value = m.pipValueUnit;
         document.getElementById('ai-master-pip-value-per-lot').value = m.pipValuePerLot;
         document.getElementById('ai-master-lot-size').value = m.lotSize;
@@ -1485,6 +1490,7 @@ document.addEventListener("DOMContentLoaded", () => {
             slPips: readNum('ai-master-sl-pips'),
             atrMultiplier: readNum('ai-master-atr-multiplier'),
             tp1: readNum('ai-master-tp1-pips'), tp2: readNum('ai-master-tp2-pips'), tp3: readNum('ai-master-tp3-pips'),
+            l3TpAtrMultiplier: readNum('ai-master-l3-tp-atr-multiplier'),
             pipValuePerLot: readNum('ai-master-pip-value-per-lot'),
             lotSize: readNum('ai-master-lot-size'),
             layerStaggerPips: readNum('ai-master-layer-stagger-pips'),
@@ -1499,7 +1505,7 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPostMinutes: readNum('ai-master-news-post-minutes'),
             summaryIntervalHours: readNum('ai-master-summary-interval-hours')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0;
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0 && fields.l3TpAtrMultiplier > 0;
         if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
         aiSettings = Object.assign({}, aiSettings, {
             master: {
@@ -1510,6 +1516,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 atrMultiplier: fields.atrMultiplier,
                 tpMode: document.getElementById('ai-master-tp-mode').value,
                 tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
+                l3TpAtrMode: document.getElementById('ai-master-l3-tp-atr-mode').value === 'on',
+                l3TpAtrMultiplier: fields.l3TpAtrMultiplier,
                 pipValueUnit: document.getElementById('ai-master-pip-value-unit').value,
                 pipValuePerLot: fields.pipValuePerLot,
                 lotSize: fields.lotSize,
@@ -2428,7 +2436,7 @@ document.addEventListener("DOMContentLoaded", () => {
         newsPreMinutes: 10, newsPostMinutes: 40,
         riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
-        tpMode: 'fixed', summaryIntervalHours: 6, methodTwoEnabled: false
+        tpMode: 'fixed', l3TpAtrMode: false, l3TpAtrMultiplier: 0.6, summaryIntervalHours: 6, methodTwoEnabled: false
     };
     const CUR_SIGNAL_LABELS = SIGNAL_TYPE_LABELS;
 
@@ -3226,6 +3234,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('cur-master-tp1-pips').value = m.tpLayerPips[0];
         document.getElementById('cur-master-tp2-pips').value = m.tpLayerPips[1];
         document.getElementById('cur-master-tp3-pips').value = m.tpLayerPips[2];
+        document.getElementById('cur-master-l3-tp-atr-mode').value = m.l3TpAtrMode ? 'on' : 'off';
+        document.getElementById('cur-master-l3-tp-atr-multiplier').value = m.l3TpAtrMultiplier;
         document.getElementById('cur-master-pip-value-unit').value = m.pipValueUnit;
         document.getElementById('cur-master-pip-value-per-lot').value = m.pipValuePerLot;
         document.getElementById('cur-master-lot-size').value = m.lotSize;
@@ -3282,6 +3292,7 @@ document.addEventListener("DOMContentLoaded", () => {
             slPips: readNum('cur-master-sl-pips'),
             atrMultiplier: readNum('cur-master-atr-multiplier'),
             tp1: readNum('cur-master-tp1-pips'), tp2: readNum('cur-master-tp2-pips'), tp3: readNum('cur-master-tp3-pips'),
+            l3TpAtrMultiplier: readNum('cur-master-l3-tp-atr-multiplier'),
             pipValuePerLot: readNum('cur-master-pip-value-per-lot'),
             lotSize: readNum('cur-master-lot-size'),
             layerStaggerPips: readNum('cur-master-layer-stagger-pips'),
@@ -3296,7 +3307,7 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPostMinutes: readNum('cur-master-news-post-minutes'),
             summaryIntervalHours: readNum('cur-master-summary-interval-hours')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.riskLimitPct > 0 && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0;
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.riskLimitPct > 0 && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0 && fields.l3TpAtrMultiplier > 0;
         if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0).'); return; }
         if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud & kepakai bot VPS.'); return; }
         const master = {
@@ -3304,6 +3315,8 @@ document.addEventListener("DOMContentLoaded", () => {
             slPips: fields.slPips, slMode: document.getElementById('cur-master-sl-mode').value,
             atrMultiplier: fields.atrMultiplier, tpMode: document.getElementById('cur-master-tp-mode').value,
             tpLayerPips: [fields.tp1, fields.tp2, fields.tp3],
+            l3TpAtrMode: document.getElementById('cur-master-l3-tp-atr-mode').value === 'on',
+            l3TpAtrMultiplier: fields.l3TpAtrMultiplier,
             pipValueUnit: document.getElementById('cur-master-pip-value-unit').value, pipValuePerLot: fields.pipValuePerLot,
             lotSize: fields.lotSize, layerStaggerPips: fields.layerStaggerPips,
             lockPipsAfterTp1: fields.lockPipsAfterTp1, deepLockTriggerPips: fields.deepLockTriggerPips,
