@@ -556,8 +556,22 @@
                     </div>
 
                     <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
+                        <h3 class="chart-title">🛡️ Risk Overview</h3>
+                        <p style="color:#777; font-size:0.75rem; margin:8px 0 15px;">Risk exposure gabungan bulan ini (ngikut nav bulan di atas) & max drawdown sepanjang masa (all-time, TIDAK ngikut nav bulan).</p>
+                        <div id="mon-risk-insight" style="margin-bottom:15px;"></div>
+                        <div class="equity-dashboard" id="mon-drawdown-stats"></div>
+                    </div>
+
+                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
                         <h3 class="chart-title">📊 Breakdown per Instrumen</h3>
                         <div id="mon-breakdown-grid" class="weekly-report-grid" style="margin-top:10px;"></div>
+                    </div>
+
+                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
+                        <h3 class="chart-title">⚠️ Kontradiksi Sinyal (Metode 1 vs Metode 2)</h3>
+                        <p style="color:#777; font-size:0.75rem; margin:8px 0 15px;">Kejadian Metode 1 & Metode 2 sama-sama buka posisi arah berlawanan di instrumen yang sama, bulan ini (ngikut nav bulan di atas).</p>
+                        <div id="mon-contradiction-grid" class="weekly-report-grid" style="margin-bottom:15px;"></div>
+                        <div id="mon-contradiction-list"></div>
                     </div>
 
                     <div class="chart-grid" style="margin-bottom: 20px;">

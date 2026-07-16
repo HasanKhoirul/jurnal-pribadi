@@ -1368,7 +1368,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const AI_MASTER_DEFAULTS = {
         slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
         lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
-        minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
+        // winrateMinSamples dinaikkan 5->10 (2026-07-16, dari evaluasi AI lain) - n=5 kena noise statistik,
+        // tapi gak dinaikin ke 20-30 biar pair Currency yg jarang entry gak bikin filter ini mati total.
+        minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 10,
         newsPreMinutes: 10, newsPostMinutes: 40,
         riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
@@ -2421,7 +2423,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const CURRENCY_MASTER_DEFAULTS = {
         slPips: 50, slMode: 'fixed', atrMultiplier: 1.5, tpLayerPips: [80, 100, 150], lotSize: 0.1, layerStaggerPips: 10,
         lockPipsAfterTp1: 10, deepLockTriggerPips: 100, deepLockPips: 80, deepLockTimeoutMinutes: 15,
-        minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 5,
+        // winrateMinSamples dinaikkan 5->10 (2026-07-16, dari evaluasi AI lain) - lihat catatan sama di AI_MASTER_DEFAULTS Gold.
+        minSignalWinrate: 35, winrateLookbackDays: 14, winrateMinSamples: 10,
         newsPreMinutes: 10, newsPostMinutes: 40,
         riskLimitPct: 10, riskPeriod: 'monthly',
         pipValueUnit: 'cent', pipValuePerLot: 1,
@@ -3008,19 +3011,68 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="equity-box"><span class="label">Pertumbuhan</span><h3 class="${growthClass}">${growthPct >= 0 ? '+' : ''}${growthPct.toFixed(2)}%</h3></div>`;
     }
 
+    // Max drawdown ALL-TIME (bukan ngikut nav bulan - ini statistik risiko sepanjang masa, disengaja beda
+    // scope dari sisa Monitoring, makanya dikasih label "(All-Time)" eksplisit biar gak ambigu lagi).
+    function computeMaxDrawdown(tradeData, modalAwal) {
+        const dates = Object.keys(tradeData).sort();
+        let cumulative = modalAwal, peak = modalAwal, maxDD = 0;
+        dates.forEach(d => {
+            (tradeData[d] || []).forEach(t => { cumulative += parseFloat(t.pl || 0); });
+            if (cumulative > peak) peak = cumulative;
+            const dd = peak - cumulative;
+            if (dd > maxDD) maxDD = dd;
+        });
+        return { maxDD, maxDDPct: peak > 0 ? (maxDD / peak * 100) : 0 };
+    }
+    // Beda dari jumlahin max drawdown tiap instrumen (yang bisa kejadian di tanggal beda2) - ini ngitung
+    // drawdown dari KURVA EQUITY GABUNGAN (dijumlah dulu per tanggal, baru dicari peak-to-trough-nya).
+    function computeCombinedMaxDrawdown(list) {
+        const allDates = new Set();
+        list.forEach(i => Object.keys(i.tradeData).forEach(d => allDates.add(d)));
+        const sortedDates = Array.from(allDates).sort();
+        let cumulative = list.reduce((s, i) => s + i.modalAwal, 0);
+        let peak = cumulative, maxDD = 0;
+        sortedDates.forEach(d => {
+            list.forEach(i => { (i.tradeData[d] || []).forEach(t => { cumulative += parseFloat(t.pl || 0); }); });
+            if (cumulative > peak) peak = cumulative;
+            const dd = peak - cumulative;
+            if (dd > maxDD) maxDD = dd;
+        });
+        return { maxDD, maxDDPct: peak > 0 ? (maxDD / peak * 100) : 0 };
+    }
+    // Kejadian Metode 1 & Metode 2 buka posisi arah BERLAWANAN bersamaan (interval waktu overlap) di
+    // instrumen yang sama - AI_METHOD_GROUPS udah didefinisikan di ~baris 1325, dipakai bareng di sini.
+    function findMethodContradictions(tradeData, year, month) {
+        const targetPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+        const all = [];
+        for (const d in tradeData) { if (d.startsWith(targetPrefix)) (tradeData[d] || []).forEach(t => all.push(Object.assign({ date: d }, t))); }
+        const m1 = all.filter(t => AI_METHOD_GROUPS.method1.has(t.signalType) && t.openedAt);
+        const m2 = all.filter(t => AI_METHOD_GROUPS.method2.has(t.signalType) && t.openedAt);
+        const found = [];
+        m1.forEach(t1 => {
+            const s1 = new Date(t1.openedAt).getTime(), e1 = t1.closedAt ? new Date(t1.closedAt).getTime() : Date.now();
+            m2.forEach(t2 => {
+                if (t1.arah === t2.arah) return;
+                const s2 = new Date(t2.openedAt).getTime(), e2 = t2.closedAt ? new Date(t2.closedAt).getTime() : Date.now();
+                if (s1 <= e2 && s2 <= e1) found.push({ t1, t2 });
+            });
+        });
+        return found;
+    }
+
     window.renderMonitoringDashboard = function() {
         if (!isLoggedIn) return;
         const trendY = monTrendNavDate.getFullYear(), trendM = monTrendNavDate.getMonth();
         document.getElementById('mon-trend-month-year').innerText = `${monthNames[trendM]} ${trendY}`;
 
-        const buildInstrument = (label, color, tradeData, modalAwal) => ({
-            label, color,
+        const buildInstrument = (label, color, tradeData, modalAwal, riskLimitPct) => ({
+            label, color, tradeData, modalAwal, riskLimitPct,
             equityAwal: modalAwal + sumPlBeforeMonth(tradeData, trendY, trendM),
             ...summarizeMonthPl(tradeData, trendY, trendM)
         });
         const instruments = [
-            buildInstrument('Gold (XAUUSD)', '#ffd700', aiTradeData, aiModalAwal),
-            ...CURRENCY_PAIRS.map(p => buildInstrument(p, '#00bcd4', getCurInstrument(p).aiTradeData || {}, getCurInstrument(p).aiModalAwal || 2500000))
+            buildInstrument('Gold (XAUUSD)', '#ffd700', aiTradeData, aiModalAwal, getMasterSettings().riskLimitPct),
+            ...CURRENCY_PAIRS.map(p => buildInstrument(p, '#00bcd4', getCurInstrument(p).aiTradeData || {}, getCurInstrument(p).aiModalAwal || 2500000, getCurMasterSettings(p).riskLimitPct))
         ];
         const currencyOnly = instruments.slice(1);
 
@@ -3037,6 +3089,24 @@ document.addEventListener("DOMContentLoaded", () => {
         renderCard(instruments, 'mon-all-equity', 'mon-all-trades', 'mon-all-winrate');
         renderCard(currencyOnly, 'mon-cur-equity', 'mon-cur-trades', 'mon-cur-winrate');
 
+        // Risk Overview - exposure gabungan bulan ini (limit tiap instrumen dijumlah, sesuai riskLimitPct
+        // masing2 dari Master Setting) + max drawdown all-time.
+        const totalLimit = instruments.reduce((s, i) => s + (i.equityAwal * ((i.riskLimitPct || 10) / 100)), 0);
+        const totalLoss = instruments.reduce((s, i) => s + (i.totalPl < 0 ? Math.abs(i.totalPl) : 0), 0);
+        const usedPct = totalLimit > 0 ? (totalLoss / totalLimit * 100) : 0;
+        let riskBoxHtml;
+        if (totalLoss === 0) riskBoxHtml = `<div class="insight-box insight-success">✅ Aman! Belum ada rugi bulan ini dari semua instrumen.</div>`;
+        else if (usedPct < 70) riskBoxHtml = `<div class="insight-box insight-success">✅ Risk exposure gabungan terpakai ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}).</div>`;
+        else if (usedPct < 100) riskBoxHtml = `<div class="insight-box insight-warning">⚠️ Risk exposure gabungan udah ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}) - kemungkinan ada instrumen yang deket/kesentuh limit sendiri.</div>`;
+        else riskBoxHtml = `<div class="insight-box insight-danger">🚨 Risk exposure gabungan udah ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}).</div>`;
+        document.getElementById('mon-risk-insight').innerHTML = riskBoxHtml;
+
+        const ddAll = computeCombinedMaxDrawdown(instruments);
+        const ddCur = computeCombinedMaxDrawdown(currencyOnly);
+        document.getElementById('mon-drawdown-stats').innerHTML = `
+            <div class="equity-box"><span class="label">Max Drawdown (All-Time) - Semua Instrumen</span><h3 class="loss-text">${formatRupiah(ddAll.maxDD)}</h3><p style="color:#888; font-size:0.75rem; margin-top:4px;">${ddAll.maxDDPct.toFixed(2)}% dari peak equity</p></div>
+            <div class="equity-box"><span class="label">Max Drawdown (All-Time) - Currency Saja</span><h3 class="loss-text">${formatRupiah(ddCur.maxDD)}</h3><p style="color:#888; font-size:0.75rem; margin-top:4px;">${ddCur.maxDDPct.toFixed(2)}% dari peak equity</p></div>`;
+
         document.getElementById('mon-breakdown-grid').innerHTML = instruments.map(i => {
             const equityAkhir = i.equityAwal + i.totalPl;
             const growthPct = i.equityAwal > 0 ? (i.totalPl / i.equityAwal * 100) : 0;
@@ -3051,6 +3121,20 @@ document.addEventListener("DOMContentLoaded", () => {
                 <p style="border-top:1px dotted #444; padding-top:5px;"><span>Win Rate:</span> <strong>${winRate}</strong> (${i.closedCount} closed)</p>
             </div>`;
         }).join('');
+
+        let totalContradictions = 0;
+        const contradictionDetails = [];
+        document.getElementById('mon-contradiction-grid').innerHTML = instruments.map(i => {
+            const found = findMethodContradictions(i.tradeData, trendY, trendM);
+            totalContradictions += found.length;
+            found.forEach(f => contradictionDetails.push({ instrument: i.label, ...f }));
+            return `<div class="weekly-card" style="border-top-color:${i.color};"><h4>${i.label}</h4><p><span>Kontradiksi:</span> <strong class="${found.length > 0 ? 'loss-text' : 'profit-text'}">${found.length}x</strong></p></div>`;
+        }).join('');
+        document.getElementById('mon-contradiction-list').innerHTML = totalContradictions === 0
+            ? `<p style="color:#888; font-size:0.85rem;">Gak ada kontradiksi sinyal bulan ini.</p>`
+            : contradictionDetails.map(d => `<div style="background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; margin-bottom:8px; font-size:0.8rem; color:#ccc;">
+                <strong>${d.instrument}</strong> - ${d.t1.date}: ${SIGNAL_TYPE_LABELS[d.t1.signalType] || d.t1.signalType} (${d.t1.arah}) vs ${SIGNAL_TYPE_LABELS[d.t2.signalType] || d.t2.signalType} (${d.t2.arah}), buka bareng.
+            </div>`).join('');
 
         // Chart di-buat SEKALI trus di-update in-place tiap render (bukan destroy+new tiap kali) - data doc Firestore
         // ini ke-update tiap ~10 detik dari 6 proses bot (trailing SL/lock jalan tiap tick pas ada posisi open),

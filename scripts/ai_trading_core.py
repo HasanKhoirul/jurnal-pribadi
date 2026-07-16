@@ -47,7 +47,11 @@ class Config:
         self.AI_DEEP_LOCK_TIMEOUT_MINUTES = 15
         self.AI_MIN_SIGNAL_WINRATE = 35
         self.AI_WINRATE_LOOKBACK_DAYS = 14
-        self.AI_WINRATE_MIN_SAMPLES = 5
+        # 5 kesamplean noise secara statistik (Wilson score interval-nya lebar banget di n=5). Naik ke 10
+        # bukan ke 20-30 kayak awalnya diusulkan - di lookback 14 hari, pair Currency yang jarang entry
+        # (USDJPY cuma ~2 closed/2minggu) gak akan pernah kesampe 20-30, jadi filter-nya malah mati total
+        # buat instrumen lambat. 10 kompromi: masih ningkatin reliabilitas, masih kejangkau instrumen lambat.
+        self.AI_WINRATE_MIN_SAMPLES = 10
         self.AI_NEWS_PRE_MINUTES = 10
         self.AI_NEWS_POST_MINUTES = 40
         self.AI_METHOD_TWO_ENABLED = False
@@ -76,7 +80,7 @@ cfg = Config()
 AI_MASTER_DEFAULTS = {
     'slPips': 50, 'slMode': 'fixed', 'atrMultiplier': 1.5, 'tpLayerPips': [80, 100, 150], 'lotSize': 0.1, 'layerStaggerPips': 10,
     'lockPipsAfterTp1': 10, 'deepLockTriggerPips': 100, 'deepLockPips': 80, 'deepLockTimeoutMinutes': 15,
-    'minSignalWinrate': 35, 'winrateLookbackDays': 14, 'winrateMinSamples': 5,
+    'minSignalWinrate': 35, 'winrateLookbackDays': 14, 'winrateMinSamples': 10,
     'newsPreMinutes': 10, 'newsPostMinutes': 40,
     'pipValueUnit': 'cent', 'pipValuePerLot': 1,
     'tpMode': 'fixed',
