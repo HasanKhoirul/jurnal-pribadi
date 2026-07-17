@@ -354,10 +354,17 @@ def compute_ai_suggestion(candles, trade_data):
     sl = entry - dir_sign * pip_to_price(sl_pips_used)
 
     tp_pips_used = list(cfg.AI_TP_LAYERS_PIPS)
-    deep_lock_trigger_used = cfg.AI_DEEP_LOCK_TRIGGER_PIPS
-    deep_lock_pips_used = cfg.AI_DEEP_LOCK_PIPS
     if cfg.AI_TP_MODE == 'adaptive' and cfg.AI_SL_PIPS > 0:
         tp_pips_used = [round(sl_pips_used * (tp / cfg.AI_SL_PIPS)) for tp in cfg.AI_TP_LAYERS_PIPS]
+
+    # Deep-lock (khusus layer terakhir) di-decouple dari AI_TP_MODE (2026-07-17) - dulu 1 flag ngatur TP+deep-lock
+    # sekaligus, padahal secara konsep deep-lock harusnya nyambung ke LEBAR SL (biar skalanya konsisten sama
+    # seberapa jauh SL-nya), bukan ke mode TP. Kalau slMode='fixed', sl_pips_used == AI_SL_PIPS (rasio selalu 1),
+    # jadi baris ini gak ngubah apa2 buat instrumen yang belum pernah pakai SL adaptif - cuma berlaku beda kalau
+    # slMode='atr'.
+    deep_lock_trigger_used = cfg.AI_DEEP_LOCK_TRIGGER_PIPS
+    deep_lock_pips_used = cfg.AI_DEEP_LOCK_PIPS
+    if cfg.AI_SL_MODE == 'atr' and cfg.AI_SL_PIPS > 0:
         deep_lock_trigger_used = round(sl_pips_used * (cfg.AI_DEEP_LOCK_TRIGGER_PIPS / cfg.AI_SL_PIPS))
         deep_lock_pips_used = round(sl_pips_used * (cfg.AI_DEEP_LOCK_PIPS / cfg.AI_SL_PIPS))
 

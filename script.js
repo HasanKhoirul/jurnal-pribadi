@@ -353,17 +353,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
         } else if (currentExportType === 'ai') {
-            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 Status,L3 PL,Alasan,Status Trade,Total P/L (Rp)\n";
-            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(2), parseFloat(ly.sl).toFixed(2), parseFloat(ly.tp).toFixed(2), AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-'];
+            // L1/L2/L3 TP Pips (ly.tpPips) & 2 kolom dual-track L3 (tpPipsAtrRaw/tpPipsFixedEquivalent, cuma
+            // keisi kalau l3TpAtrMode lagi ON pas trade itu dibuka) ditambah 2026-07-16 buat investigasi tpMode.
+            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 TP Pips,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 TP Pips,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 TP Pips,L3 Status,L3 PL,L3 TP ATR Raw (sebelum clamp),L3 TP Fixed Equivalent,Alasan,Status Trade,Total P/L (Rp)\n";
+            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(2), parseFloat(ly.sl).toFixed(2), parseFloat(ly.tp).toFixed(2), ly.tpPips ?? '-', AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-', '-'];
             for(let d in aiTradeData) {
                 if(period === 'all' || d.startsWith(targetPrefix)) {
                     aiTradeData[d].forEach(t => {
                         const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
                         const layers = t.layers || [];
+                        const l3 = layers[2];
                         let row = [
                             d, t.arah, t.tf || '-', t.signalType || '-',
                             t.openedAt || '-', t.closedAt || 'Masih Open',
-                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(layers[2]),
+                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(l3),
+                            (l3 && l3.tpPipsAtrRaw != null) ? l3.tpPipsAtrRaw : '-',
+                            (l3 && l3.tpPipsFixedEquivalent != null) ? l3.tpPipsFixedEquivalent : '-',
                             `"${alasan}"`, t.status, t.pl || 0
                         ];
                         csvContent += row.join(",") + "\n";
@@ -380,18 +385,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             });
         } else if (currentExportType === 'cur') {
-            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 Status,L3 PL,Alasan,Status Trade,Total P/L (Rp)\n";
-            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(5), parseFloat(ly.sl).toFixed(5), parseFloat(ly.tp).toFixed(5), AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-'];
+            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 TP Pips,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 TP Pips,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 TP Pips,L3 Status,L3 PL,L3 TP ATR Raw (sebelum clamp),L3 TP Fixed Equivalent,Alasan,Status Trade,Total P/L (Rp)\n";
+            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(5), parseFloat(ly.sl).toFixed(5), parseFloat(ly.tp).toFixed(5), ly.tpPips ?? '-', AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-', '-'];
             const curTradeData = getCurInstrument(currentExportPairKey).aiTradeData || {};
             for(let d in curTradeData) {
                 if(period === 'all' || d.startsWith(targetPrefix)) {
                     curTradeData[d].forEach(t => {
                         const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
                         const layers = t.layers || [];
+                        const l3 = layers[2];
                         let row = [
                             d, t.arah, t.tf || '-', t.signalType || '-',
                             t.openedAt || '-', t.closedAt || 'Masih Open',
-                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(layers[2]),
+                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(l3),
+                            (l3 && l3.tpPipsAtrRaw != null) ? l3.tpPipsAtrRaw : '-',
+                            (l3 && l3.tpPipsFixedEquivalent != null) ? l3.tpPipsFixedEquivalent : '-',
                             `"${alasan}"`, t.status, t.pl || 0
                         ];
                         csvContent += row.join(",") + "\n";
