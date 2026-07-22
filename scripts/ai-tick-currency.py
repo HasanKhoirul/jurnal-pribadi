@@ -264,18 +264,60 @@ def send_periodic_summary(ai_trade_data, tick):
     send_telegram(f"➖➖➖➖➖ Selesai {PAIR} ➖➖➖➖➖")
 
 
+# Dikirim cuma sekali per siklus, oleh pair TERAKHIR yang giliran ngirim (USDCAD, PAIR_INDEX paling
+# besar) - biar muncul di chat setelah 5 pesan detail per-pair selesai. Gak butuh baca Firestore
+# tambahan: Gold & 5 Currency nulis ke 1 doc yang sama, jadi datanya udah ada di snapshot yang sama.
+# Floating P/L posisi terbuka SENGAJA gak digabung di sini - itu butuh harga live tiap instrumen
+# (bid/ask MT5 masing2 simbol), yang cuma dipunya proses instrumen itu sendiri.
+def send_combined_summary(gold_trade_data, currency_trade_data_by_pair):
+    def totals(trade_data_list):
+        today_pl = today_n = week_pl = week_n = all_pl = all_n = 0
+        for td in trade_data_list:
+            t, n = get_today_pl(td)
+            today_pl += t
+            today_n += n
+            t, n = get_current_week_pl(td)
+            week_pl += t
+            week_n += n
+            t, n = get_all_time_pl(td)
+            all_pl += t
+            all_n += n
+        return today_pl, today_n, week_pl, week_n, all_pl, all_n
+
+    currency_list = list(currency_trade_data_by_pair.values())
+    c_today_pl, c_today_n, c_week_pl, c_week_n, c_all_pl, c_all_n = totals(currency_list)
+    send_telegram(
+        f"📊 <b>Total 5 Currency</b>\n\n"
+        f"📅 Hari Ini: {format_rupiah(c_today_pl)} ({c_today_n} entry)\n"
+        f"🗓️ Minggu Ini: {format_rupiah(c_week_pl)} ({c_week_n} entry)\n"
+        f"📈 Keseluruhan: {format_rupiah(c_all_pl)} ({c_all_n} entry)"
+    )
+
+    g_today_pl, g_today_n, g_week_pl, g_week_n, g_all_pl, g_all_n = totals([gold_trade_data] + currency_list)
+    send_telegram(
+        f"🌍 <b>Total Keseluruhan (Gold + 5 Currency)</b>\n\n"
+        f"📅 Hari Ini: {format_rupiah(g_today_pl)} ({g_today_n} entry)\n"
+        f"🗓️ Minggu Ini: {format_rupiah(g_week_pl)} ({g_week_n} entry)\n"
+        f"📈 Keseluruhan: {format_rupiah(g_all_pl)} ({g_all_n} entry)"
+    )
+
+
 _summary_in_flight = False
 
 
+# Sabtu/Minggu (WIB) market tutup - diirit jadi cuma jam 00 & 12 WIB, terlepas dari interval yang di-set.
 def _latest_scheduled_summary_utc(now_utc, interval_hours):
-    interval_hours = int(interval_hours) if interval_hours and interval_hours > 0 else 6
     now_wib = now_utc + timedelta(hours=7)
+    if now_wib.weekday() >= 5:
+        interval_hours = 12
+    else:
+        interval_hours = int(interval_hours) if interval_hours and interval_hours > 0 else 6
     slot_hour = now_wib.hour - (now_wib.hour % interval_hours)
     slot_wib = now_wib.replace(hour=slot_hour, minute=0, second=0, microsecond=0)
     return slot_wib - timedelta(hours=7)
 
 
-def maybe_send_summary(ai_trade_data, bot_control, tick, now):
+def maybe_send_summary(ai_trade_data, bot_control, tick, now, doc_data):
     global _summary_in_flight
     if _summary_in_flight:
         return
@@ -296,6 +338,16 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now):
 
     _summary_in_flight = True
     trade_data_snapshot = copy.deepcopy(ai_trade_data)
+    is_last_pair = PAIR_INDEX == len(CURRENCY_INSTRUMENTS) - 1
+    combined_snapshot = None
+    if is_last_pair:
+        combined_snapshot = copy.deepcopy({
+            'gold': doc_data.get('aiTradeData', {}),
+            'currency': {
+                pair: (doc_data.get(FIELD_PREFIX, {}).get(pair, {}) or {}).get('aiTradeData', {})
+                for pair in CURRENCY_INSTRUMENTS
+            },
+        })
 
     def _worker():
         global _summary_in_flight
@@ -306,6 +358,8 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now):
             if not manual and PAIR_INDEX > 0:
                 time.sleep(PAIR_INDEX * SUMMARY_STAGGER_SECONDS)
             send_periodic_summary(trade_data_snapshot, tick)
+            if combined_snapshot is not None:
+                send_combined_summary(combined_snapshot['gold'], combined_snapshot['currency'])
             doc_ref.set(instrument_fields({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}), merge=True)
             log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
         except Exception as e:
@@ -380,7 +434,7 @@ def run_fast_tick():
         handle_restart_request()
         return
 
-    maybe_send_summary(ai_trade_data, bot_control, tick, now)
+    maybe_send_summary(ai_trade_data, bot_control, tick, now, doc_data)
 
     live_kurs = get_cached_kurs(now)
     news_info = get_cached_news(now)

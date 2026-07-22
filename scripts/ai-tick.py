@@ -235,9 +235,13 @@ _summary_in_flight = False
 
 # Jadwal nempel ke jam bulat WIB (00/06/12/18 kalau interval=6), BUKAN "N jam sejak restart/kiriman
 # terakhir" - biar gak geser2 tiap kali bot di-restart.
+# Sabtu/Minggu (WIB) market tutup - diirit jadi cuma jam 00 & 12 WIB, terlepas dari interval yang di-set.
 def _latest_scheduled_summary_utc(now_utc, interval_hours):
-    interval_hours = int(interval_hours) if interval_hours and interval_hours > 0 else 6
     now_wib = now_utc + timedelta(hours=7)
+    if now_wib.weekday() >= 5:
+        interval_hours = 12
+    else:
+        interval_hours = int(interval_hours) if interval_hours and interval_hours > 0 else 6
     slot_hour = now_wib.hour - (now_wib.hour % interval_hours)
     slot_wib = now_wib.replace(hour=slot_hour, minute=0, second=0, microsecond=0)
     return slot_wib - timedelta(hours=7)

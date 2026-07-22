@@ -2648,6 +2648,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let monPlChartInstance = null;
     let monTrendChartInstance = null;
     let monTrendNavDate = new Date();
+    let monContradictionLimit = 10;
     // Kumulatif harian dalam 1 bulan (index array 1..daysInMonth, index 0 gak dipakai) - biar "reset" tiap
     // ganti bulan (bukan kumulatif dari awal semua histori), jadi kurvanya kebaca sebagai pergerakan bulan itu doang.
     function computeDailyCumulative(tradeDataList, year, month) {
@@ -2816,11 +2817,15 @@ document.addEventListener("DOMContentLoaded", () => {
             found.forEach(f => contradictionDetails.push({ instrument: i.label, ...f }));
             return `<div class="weekly-card" style="border-top-color:${i.color};"><h4>${i.label}</h4><p><span>Kontradiksi:</span> <strong class="${found.length > 0 ? 'loss-text' : 'profit-text'}">${found.length}x</strong></p></div>`;
         }).join('');
+        const contradictionLimitEl = document.getElementById('mon-contradiction-limit');
+        if (contradictionLimitEl) contradictionLimitEl.value = String(monContradictionLimit);
+        const shownContradictions = monContradictionLimit === 'all' ? contradictionDetails : contradictionDetails.slice(0, monContradictionLimit);
         document.getElementById('mon-contradiction-list').innerHTML = totalContradictions === 0
             ? `<p style="color:#888; font-size:0.85rem;">Gak ada kontradiksi sinyal bulan ini.</p>`
-            : contradictionDetails.map(d => `<div style="background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; margin-bottom:8px; font-size:0.8rem; color:#ccc;">
+            : shownContradictions.map(d => `<div style="background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; margin-bottom:8px; font-size:0.8rem; color:#ccc;">
                 <strong>${d.instrument}</strong> - ${d.t1.date}: ${SIGNAL_TYPE_LABELS[d.t1.signalType] || d.t1.signalType} (${d.t1.arah}) vs ${SIGNAL_TYPE_LABELS[d.t2.signalType] || d.t2.signalType} (${d.t2.arah}), buka bareng.
-            </div>`).join('');
+            </div>`).join('')
+                + (contradictionDetails.length > shownContradictions.length ? `<p style="color:#777; font-size:0.75rem; margin-top:5px;">Menampilkan ${shownContradictions.length} dari ${contradictionDetails.length} kontradiksi.</p>` : '');
 
         // Chart di-buat SEKALI trus di-update in-place tiap render (bukan destroy+new tiap kali) - data doc Firestore
         // ini ke-update tiap ~10 detik dari 6 proses bot (trailing SL/lock jalan tiap tick pas ada posisi open),
@@ -2888,6 +2893,10 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     document.getElementById('mon-trend-prev-month').addEventListener('click', () => { monTrendNavDate.setMonth(monTrendNavDate.getMonth() - 1); renderMonitoringDashboard(); });
     document.getElementById('mon-trend-next-month').addEventListener('click', () => { monTrendNavDate.setMonth(monTrendNavDate.getMonth() + 1); renderMonitoringDashboard(); });
+    document.getElementById('mon-contradiction-limit').addEventListener('change', (e) => {
+        monContradictionLimit = e.target.value === 'all' ? 'all' : Number(e.target.value);
+        renderMonitoringDashboard();
+    });
 
     document.getElementById('btn-cur-more-menu').addEventListener('click', (e) => {
         e.stopPropagation();
