@@ -64,6 +64,13 @@ class Config:
         self.AI_L3_TP_ATR_MULTIPLIER = 0.6
         self.L3_TP_ATR_MIN_PIPS = 90
         self.L3_TP_ATR_MAX_PIPS = 360
+        # Lot menyesuaikan kalau SL lebar - terutama buat Metode 2 (ICT) yang SL-nya structural (dari
+        # level sweep), BUKAN clamped ATR kayak Metode 1, jadi bisa jauh lebih lebar dari 120 pips biasa.
+        # Dipicu temuan 21 Juli: SL 410 pips x 3 layer lot flat 0.1 = rugi Rp220rb dalam 1 trade.
+        self.AI_LOT_SCALE_THRESHOLD1_PIPS = 150
+        self.AI_LOT_SCALE_LOT1 = 0.05
+        self.AI_LOT_SCALE_THRESHOLD2_PIPS = 250
+        self.AI_LOT_SCALE_LOT2 = 0.03
         # Flag in-memory (reset kalau proses direstart) - biar alert "entry diblok" kekirim SEKALI doang
         # pas limit baru kesentuh, bukan spam tiap tick selama masih over-limit.
         self.risk_limit_blocked = False
@@ -95,6 +102,8 @@ AI_MASTER_DEFAULTS = {
     'methodTwoEnabled': False,
     'riskLimitPct': 10, 'riskPeriod': 'monthly',
     'l3TpAtrMode': False, 'l3TpAtrMultiplier': 0.6,
+    'lotScaleThreshold1Pips': 150, 'lotScaleLot1': 0.05,
+    'lotScaleThreshold2Pips': 250, 'lotScaleLot2': 0.03,
 }
 
 
@@ -128,6 +137,10 @@ def apply_master_settings(master):
     cfg.AI_RISK_PERIOD = 'weekly' if master.get('riskPeriod') == 'weekly' else 'monthly'
     cfg.AI_L3_TP_ATR_MODE = bool(master.get('l3TpAtrMode', AI_MASTER_DEFAULTS['l3TpAtrMode']))
     cfg.AI_L3_TP_ATR_MULTIPLIER = master.get('l3TpAtrMultiplier', AI_MASTER_DEFAULTS['l3TpAtrMultiplier'])
+    cfg.AI_LOT_SCALE_THRESHOLD1_PIPS = master.get('lotScaleThreshold1Pips', AI_MASTER_DEFAULTS['lotScaleThreshold1Pips'])
+    cfg.AI_LOT_SCALE_LOT1 = master.get('lotScaleLot1', AI_MASTER_DEFAULTS['lotScaleLot1'])
+    cfg.AI_LOT_SCALE_THRESHOLD2_PIPS = master.get('lotScaleThreshold2Pips', AI_MASTER_DEFAULTS['lotScaleThreshold2Pips'])
+    cfg.AI_LOT_SCALE_LOT2 = master.get('lotScaleLot2', AI_MASTER_DEFAULTS['lotScaleLot2'])
 
 
 # ---------- Helper angka & indikator (pure, gak butuh cfg) ----------
@@ -257,8 +270,19 @@ def pip_to_price(pips):
     return pips * cfg.AI_PIP_SIZE
 
 
-def calc_layer_pl_usc(pips):
-    return pips * (cfg.AI_LOT_SIZE / 0.1) * cfg.AI_PIP_VALUE_PER_LOT
+def calc_layer_pl_usc(pips, lot=None):
+    lot = cfg.AI_LOT_SIZE if lot is None else lot
+    return pips * (lot / 0.1) * cfg.AI_PIP_VALUE_PER_LOT
+
+
+def lot_for_sl_pips(sl_pips):
+    # Threshold di atas SL max Metode 1 manapun (Gold ATR-clamp 120), jadi praktiknya cuma kepakai buat
+    # Metode 2 (ICT) yang SL-nya structural dari level sweep - bisa jauh lebih lebar, gak ada rem lot.
+    if sl_pips > cfg.AI_LOT_SCALE_THRESHOLD2_PIPS:
+        return cfg.AI_LOT_SCALE_LOT2
+    if sl_pips > cfg.AI_LOT_SCALE_THRESHOLD1_PIPS:
+        return cfg.AI_LOT_SCALE_LOT1
+    return cfg.AI_LOT_SIZE
 
 
 # Nama fungsi dipertahankan "usc" apa adanya (dipanggil di banyak tempat) - unit-aware lewat AI_PIP_VALUE_UNIT.
@@ -382,7 +406,7 @@ def compute_ai_suggestion(candles, trade_data):
     reason_parts.append(
         f"Entry {fmt_price(entry)}, SL {sl_pips_used} pips{' (adaptif ATR)' if cfg.AI_SL_MODE == 'atr' else ''} ({fmt_price(sl)}), "
         f"TP berlapis {'/'.join(map(str, tp_pips_used))} pips{' (adaptif)' if cfg.AI_TP_MODE == 'adaptive' else ''}"
-        f"{' [L3 ATR-mode]' if l3_raw_pips is not None else ''}, lot {cfg.AI_LOT_SIZE} x3 layer."
+        f"{' [L3 ATR-mode]' if l3_raw_pips is not None else ''}, lot {lot_for_sl_pips(sl_pips_used)} x3 layer."
     )
 
     return {
@@ -506,6 +530,8 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
     ai_trade_data.setdefault(date_str, [])
     layers = []
     tp_pips_used = sug['tpPipsUsed']
+    # SL pips sama buat ke-3 layer (cuma entry price yang staggered), jadi lot yang di-scale juga sama.
+    lot_used = lot_for_sl_pips(sug['slPipsUsed'])
     for i, tp_pips in enumerate(tp_pips_used):
         layer_entry = sug['entry'] - sug['dirSign'] * pip_to_price(i * cfg.AI_LAYER_STAGGER_PIPS)
         layer = {
@@ -513,7 +539,7 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
             'entry': layer_entry,
             'tp': layer_entry + sug['dirSign'] * pip_to_price(tp_pips),
             'sl': layer_entry - sug['dirSign'] * pip_to_price(sug['slPipsUsed']),
-            'lot': cfg.AI_LOT_SIZE,
+            'lot': lot_used,
             'status': 'open' if i == 0 else 'pending',
             'pl': 0,
             'slMoved': False,
@@ -533,11 +559,13 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
         'openedAt': datetime.now(timezone.utc).isoformat(), 'closedAt': None,
     })
     cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {fmt_price(sug['entry'])} "
-               f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}).")
+               f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}, lot {lot_used}).")
     cfg.send_telegram_fn(
         f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL} — {signal_type_label(sug['signalType'])}</b>\n\n"
         f"<b>Entry:</b> <code>{fmt_price(sug['entry'])}</code>\n"
-        f"<b>SL:</b> <code>{fmt_price(layers[0]['sl'])}</code> ({sug['slPipsUsed']} pips)\n\n"
+        f"<b>SL:</b> <code>{fmt_price(layers[0]['sl'])}</code> ({sug['slPipsUsed']} pips)\n"
+        f"<b>Lot:</b> <code>{lot_used}</code> x3 layer"
+        f"{' (⚠️ mengecil, SL lebar)' if lot_used < cfg.AI_LOT_SIZE else ''}\n\n"
         f"<b>TP1:</b> <code>{fmt_price(layers[0]['tp'])}</code>\n"
         f"<b>TP2:</b> <code>{fmt_price(layers[1]['tp'])}</code>\n"
         f"<b>TP3:</b> <code>{fmt_price(layers[2]['tp'])}</code>\n\n"
@@ -787,7 +815,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
         if sl_hit:
             pips_at_sl = ((sl_price - layer_entry) * dir_sign) / cfg.AI_PIP_SIZE
             ly['status'] = 'be' if pips_at_sl >= 0 else 'sl'
-            ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_at_sl), live_kurs)
+            ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_at_sl, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
             changed = True
             notes.append(f"Layer {idx + 1} kena {ly['status'].upper()} ({pips_at_sl:.1f} pips).")
             if idx == 0:
@@ -797,7 +825,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
         tp_hit = px >= ly['tp'] if trade['arah'] == 'BUY' else px <= ly['tp']
         if tp_hit:
             ly['status'] = 'tp'
-            ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(ly['tpPips']), live_kurs)
+            ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(ly['tpPips'], ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
             changed = True
             notes.append(f"Layer {idx + 1} kena TP (+{ly['tpPips']} pips).")
             if idx == 0:
@@ -825,7 +853,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
                 if elapsed_min >= cfg.AI_DEEP_LOCK_TIMEOUT_MINUTES:
                     pips_at_close = ((px - layer_entry) * dir_sign) / cfg.AI_PIP_SIZE
                     ly['status'] = 'timeout_lock'
-                    ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_at_close), live_kurs)
+                    ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_at_close, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
                     changed = True
                     notes.append(f"Layer terakhir timeout {cfg.AI_DEEP_LOCK_TIMEOUT_MINUTES} menit setelah lock, ditutup ({pips_at_close:.1f} pips).")
 
@@ -844,7 +872,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
             px = exit_price_for(trade['arah'], bid, ask)
             pips_moved = ((px - layer_entry) * dir_sign) / cfg.AI_PIP_SIZE
             ly['status'] = 'timeout'
-            ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_moved), live_kurs)
+            ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_moved, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
             changed = True
         notes.append("Posisi lewat 3 hari, ditutup paksa (timeout).")
 
@@ -877,7 +905,7 @@ def force_close_all_layers_at_market(trade, bid, ask, live_kurs, status_label, n
         layer_entry = ly.get('entry', trade['entry'])
         pips_moved = ((px - layer_entry) * dir_sign) / cfg.AI_PIP_SIZE
         ly['status'] = status_label
-        ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_moved), live_kurs)
+        ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_moved, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
         changed = True
     if not changed:
         return False

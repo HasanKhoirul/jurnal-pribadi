@@ -243,7 +243,7 @@ def send_periodic_summary(ai_trade_data, tick):
                 if ly['status'] != 'open':
                     continue
                 pips = ((px - ly['entry']) * dir_sign) / cfg.AI_PIP_SIZE
-                total_floating += usc_to_rupiah(calc_layer_pl_usc(pips), live_kurs)
+                total_floating += usc_to_rupiah(calc_layer_pl_usc(pips, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
             send_telegram(
                 f"📍 <b>Posisi Terbuka {PAIR}{group_label}</b>\n\n"
                 f"{trade['arah']} @ {fmt_price(trade['entry'])}\n"

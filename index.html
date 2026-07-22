@@ -250,7 +250,6 @@
                             <h1 style="color:#9c27b0;">Trading AI Gold (Simulasi)</h1>
                             <div class="action-group-main hide-for-screenshot">
                                 <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="aiRefreshBtnClick(this, 'calendar')">🔃 Refresh</button>
-                                <button class="btn-action" style="border-color:#00e676; color:#00e676;" id="btn-ai-generate">⚡ Cek Sekarang</button>
                                 <div class="ai-more-menu-wrap">
                                     <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-ai-more-menu">⚙️ Lainnya ▾</button>
                                     <div id="ai-more-menu-dropdown" class="ai-more-dropdown">
@@ -1097,6 +1096,10 @@
             <div class="master-row"><label>L3 TP Adaptif ATR (uji coba)</label><select id="ai-master-l3-tp-atr-mode" class="master-input wide"><option value="off">Off (pakai TP Layer 3 fixed di atas)</option><option value="on">On (L3 pakai ATR × multiplier)</option></select></div>
             <div class="master-row"><label>Multiplier ATR buat L3 (kalau On)</label><input type="number" id="ai-master-l3-tp-atr-multiplier" class="master-input" step="0.1" min="0.1"></div>
             <div class="master-row"><label>Lot per Layer</label><input type="number" id="ai-master-lot-size" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Lot Menyesuaikan - Threshold 1 (pips)</label><input type="number" id="ai-master-lot-scale-threshold1" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Lot kalau SL &gt; Threshold 1</label><input type="number" id="ai-master-lot-scale-lot1" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Lot Menyesuaikan - Threshold 2 (pips)</label><input type="number" id="ai-master-lot-scale-threshold2" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Lot kalau SL &gt; Threshold 2</label><input type="number" id="ai-master-lot-scale-lot2" class="master-input" step="0.01" min="0.01"></div>
             <div class="master-row"><label>Satuan Nilai Kontrak</label><select id="ai-master-pip-value-unit" class="master-input wide"><option value="cent">Cent (akun Cent)</option><option value="usd">USD (akun Standard)</option></select></div>
             <div class="master-row"><label>Nilai per Pip (per 0.1 lot, satuan di atas)</label><input type="number" id="ai-master-pip-value-per-lot" class="master-input" step="0.01" min="0.01"></div>
             <div id="ai-master-pl-preview" style="background:#0d0d0d; border:1px solid #333; border-radius:6px; padding:10px 14px; margin:4px 0 12px; font-size:0.85rem; line-height:1.6; color:#ccc;"></div>
@@ -1163,6 +1166,10 @@
             <div class="master-row"><label>L3 TP Adaptif ATR (uji coba)</label><select id="cur-master-l3-tp-atr-mode" class="master-input wide"><option value="off">Off (pakai TP Layer 3 fixed di atas)</option><option value="on">On (L3 pakai ATR × multiplier)</option></select></div>
             <div class="master-row"><label>Multiplier ATR buat L3 (kalau On)</label><input type="number" id="cur-master-l3-tp-atr-multiplier" class="master-input" step="0.1" min="0.1"></div>
             <div class="master-row"><label>Lot per Layer</label><input type="number" id="cur-master-lot-size" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Lot Menyesuaikan - Threshold 1 (pips)</label><input type="number" id="cur-master-lot-scale-threshold1" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Lot kalau SL &gt; Threshold 1</label><input type="number" id="cur-master-lot-scale-lot1" class="master-input" step="0.01" min="0.01"></div>
+            <div class="master-row"><label>Lot Menyesuaikan - Threshold 2 (pips)</label><input type="number" id="cur-master-lot-scale-threshold2" class="master-input" step="1" min="1"></div>
+            <div class="master-row"><label>Lot kalau SL &gt; Threshold 2</label><input type="number" id="cur-master-lot-scale-lot2" class="master-input" step="0.01" min="0.01"></div>
             <div class="master-row"><label>Satuan Nilai Kontrak</label><select id="cur-master-pip-value-unit" class="master-input wide"><option value="cent">Cent (akun Cent)</option><option value="usd">USD (akun Standard)</option></select></div>
             <div class="master-row"><label>Nilai per Pip (per 0.1 lot, satuan di atas)</label><input type="number" id="cur-master-pip-value-per-lot" class="master-input" step="0.01" min="0.01"></div>
             <div id="cur-master-pl-preview" style="background:#0d0d0d; border:1px solid #333; border-radius:6px; padding:10px 14px; margin:4px 0 12px; font-size:0.85rem; line-height:1.6; color:#ccc;"></div>
