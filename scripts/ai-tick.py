@@ -94,6 +94,37 @@ doc_ref = db.collection('appData').document(AI_TARGET_UID)
 public_doc_ref = db.collection('appData').document('public')
 
 
+# ---------- Cache dokumen utama (listener, gantiin doc_ref.get() polling tiap fast tick) ----------
+# aiTradeData cuma bot ini sendiri yang nulis (riwayat di web view-only) - baca ulang tiap 10 detik
+# sia-sia kalau gak ada yang berubah. Listener bikin Firestore sendiri yang notif PAS beneran ada
+# perubahan (tombol web ATAU tulisan bot sendiri), jauh lebih irit daripada polling terus-terusan.
+# Slow tick (tiap 5 menit) TETAP polling manual sendiri sebagai jaring pengaman kalau listener sempat
+# putus/nyangkut (network VPS goyang dst) - biayanya minimal karena udah jarang (300 detik sekali).
+_doc_cache = {}
+_doc_cache_lock = threading.Lock()
+
+
+def set_doc_cache(data):
+    global _doc_cache
+    with _doc_cache_lock:
+        _doc_cache = data or {}
+
+
+def get_doc_cache():
+    with _doc_cache_lock:
+        return dict(_doc_cache)
+
+
+def _on_doc_snapshot(doc_snapshot, changes, read_time):
+    for doc in doc_snapshot:
+        set_doc_cache(doc.to_dict())
+
+
+_initial_snap = doc_ref.get()
+set_doc_cache(_initial_snap.to_dict() if _initial_snap.exists else {})
+doc_ref.on_snapshot(_on_doc_snapshot)
+
+
 # ---------- Telegram ----------
 def send_telegram(text):
     try:
@@ -192,7 +223,7 @@ def handle_restart_request():
 
 
 # Dipicu tombol "Kirim Summary Sekarang" di web ATAU otomatis tiap AI_SUMMARY_INTERVAL_HOURS jam.
-# Datanya (ai_trade_data) udah kebaca doc_ref.get() tiap tick buat keperluan lain - ngirim summary ini
+# Datanya (ai_trade_data) udah kebaca dari cache (get_doc_cache()) buat keperluan lain - ngirim summary ini
 # gak nambah read Firestore sama sekali, cuma format teks + kirim ke Telegram (gratis).
 def send_periodic_summary(ai_trade_data, tick):
     for group_name, group_label in (('method1', ''), ('method2', ' — Metode 2 (ICT)')):
@@ -310,7 +341,7 @@ def get_cached_kurs(now):
     return _kurs_cache['result']
 
 
-AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3  # push tampilan tiap ~30 detik (3 x FAST_LOOP_SECONDS) - eksekusi (SL/TP/dst) TETAP tiap tick, baca harga langsung dari MT5, gak kepengaruh throttle ini
+AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 6  # push tampilan tiap ~60 detik (6 x FAST_LOOP_SECONDS) - eksekusi (SL/TP/dst) TETAP tiap tick, baca harga langsung dari MT5, gak kepengaruh throttle ini. Diperlambat dari 30 detik (2026-07-22) buat irit kuota writes Firestore.
 _fast_tick_count = 0
 
 
@@ -326,8 +357,7 @@ def run_fast_tick():
     if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0:
         push_live_price_to_public(tick)
 
-    snap = doc_ref.get()
-    data = snap.to_dict() if snap.exists else {}
+    data = get_doc_cache()
     ai_trade_data = data.get('aiTradeData', {})
     ai_modal_awal = data.get('aiModalAwal', 2500000)
     apply_ai_settings((data.get('aiSettings') or {}).get('master'))
@@ -375,6 +405,9 @@ def run_fast_tick():
 
     if any_changed:
         doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
+        data['aiTradeData'] = ai_trade_data
+        data['aiModalAwal'] = ai_modal_awal
+        set_doc_cache(data)  # update cache lokal langsung, gak perlu nunggu listener mantul balik
 
 
 def run_slow_tick():
@@ -391,6 +424,8 @@ def run_slow_tick():
 
     snap = doc_ref.get()
     data = snap.to_dict() if snap.exists else {}
+    set_doc_cache(data)  # slow tick tetep polling sendiri (murah, tiap 5 menit) - sekalian jadi jaring
+    # pengaman buat cache fast tick kalau-kalau listener sempat putus/nyangkut
     ai_trade_data = data.get('aiTradeData', {})
     ai_modal_awal = data.get('aiModalAwal', 2500000)
     news_info = get_cached_news(now)

@@ -131,6 +131,37 @@ def get_instrument_data(doc_data):
     return ((doc_data.get(FIELD_PREFIX) or {}).get(PAIR)) or {}
 
 
+# ---------- Cache dokumen utama (listener, gantiin doc_ref.get() polling tiap fast tick) ----------
+# Gold + 5 Currency nulis ke 1 doc yang sama, tapi masing2 pair CUMA nulis ke bagiannya sendiri
+# (currencyInstruments.<PAIR>.*) - jadi baca ulang tiap 10 detik sia-sia kalau gak ada yang berubah.
+# Listener bikin Firestore sendiri yang notif PAS beneran ada perubahan, jauh lebih irit daripada
+# polling terus-terusan. Slow tick (tiap 5 menit) TETAP polling manual sendiri sebagai jaring
+# pengaman kalau listener sempat putus/nyangkut - biayanya minimal karena udah jarang.
+_doc_cache = {}
+_doc_cache_lock = threading.Lock()
+
+
+def set_doc_cache(data):
+    global _doc_cache
+    with _doc_cache_lock:
+        _doc_cache = data or {}
+
+
+def get_doc_cache():
+    with _doc_cache_lock:
+        return dict(_doc_cache)
+
+
+def _on_doc_snapshot(doc_snapshot, changes, read_time):
+    for doc in doc_snapshot:
+        set_doc_cache(doc.to_dict())
+
+
+_initial_snap = doc_ref.get()
+set_doc_cache(_initial_snap.to_dict() if _initial_snap.exists else {})
+doc_ref.on_snapshot(_on_doc_snapshot)
+
+
 # ---------- Telegram ----------
 def send_telegram(text):
     try:
@@ -406,7 +437,7 @@ def get_cached_kurs(now):
     return _kurs_cache['result']
 
 
-AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 3
+AI_LIVE_PRICE_PUSH_EVERY_N_TICKS = 6  # push tampilan tiap ~60 detik (6 x FAST_LOOP_SECONDS) - eksekusi (SL/TP/dst) TETAP tiap tick, baca harga langsung dari MT5, gak kepengaruh throttle ini. Diperlambat dari 30 detik (2026-07-22) buat irit kuota writes Firestore.
 _fast_tick_count = 0
 
 
@@ -422,8 +453,7 @@ def run_fast_tick():
     if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0:
         push_live_price_to_public(tick)
 
-    snap = doc_ref.get()
-    doc_data = snap.to_dict() if snap.exists else {}
+    doc_data = get_doc_cache()
     inst = get_instrument_data(doc_data)
     ai_trade_data = inst.get('aiTradeData', {})
     ai_modal_awal = inst.get('aiModalAwal', 2500000)
@@ -470,6 +500,10 @@ def run_fast_tick():
 
     if any_changed:
         doc_ref.set(instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}), merge=True)
+        inst['aiTradeData'] = ai_trade_data
+        inst['aiModalAwal'] = ai_modal_awal
+        doc_data.setdefault(FIELD_PREFIX, {})[PAIR] = inst
+        set_doc_cache(doc_data)  # update cache lokal langsung, gak perlu nunggu listener mantul balik
 
 
 def run_slow_tick():
@@ -486,6 +520,8 @@ def run_slow_tick():
 
     snap = doc_ref.get()
     doc_data = snap.to_dict() if snap.exists else {}
+    set_doc_cache(doc_data)  # slow tick tetep polling sendiri (murah, tiap 5 menit) - sekalian jadi
+    # jaring pengaman buat cache fast tick kalau-kalau listener sempat putus/nyangkut
     inst = get_instrument_data(doc_data)
     ai_trade_data = inst.get('aiTradeData', {})
     ai_modal_awal = inst.get('aiModalAwal', 2500000)
