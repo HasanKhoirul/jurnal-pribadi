@@ -299,6 +299,42 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // MODULE EXPORT CSV SUPER LENGKAP
     // ==========================================
+    // Dipakai bareng sama export per-instrumen (modal 'ai'/'cur') dan export multi-instrumen di
+    // Monitoring - biar kolom (termasuk dual-track L3 ATR) gak kena duplikasi 2 tempat & gampang diupdate.
+    const AI_TRADE_CSV_HEADER = "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 TP Pips,L1 Lot,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 TP Pips,L2 Lot,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 TP Pips,L3 Lot,L3 Status,L3 PL,L3 TP ATR Raw (sebelum clamp),L3 TP Fixed Equivalent,Alasan,Status Trade,Total P/L (Rp)\n";
+    function buildAiTradeCsv(tradeData, period, targetPrefix, decimals) {
+        let content = AI_TRADE_CSV_HEADER;
+        const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(decimals), parseFloat(ly.sl).toFixed(decimals), parseFloat(ly.tp).toFixed(decimals), ly.tpPips ?? '-', ly.lot ?? '-', AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-', '-', '-'];
+        for (let d in tradeData) {
+            if (period === 'all' || d.startsWith(targetPrefix)) {
+                tradeData[d].forEach(t => {
+                    const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
+                    const layers = t.layers || [];
+                    const l3 = layers[2];
+                    let row = [
+                        d, t.arah, t.tf || '-', t.signalType || '-',
+                        t.openedAt || '-', t.closedAt || 'Masih Open',
+                        ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(l3),
+                        (l3 && l3.tpPipsAtrRaw != null) ? l3.tpPipsAtrRaw : '-',
+                        (l3 && l3.tpPipsFixedEquivalent != null) ? l3.tpPipsFixedEquivalent : '-',
+                        `"${alasan}"`, t.status, t.pl || 0
+                    ];
+                    content += row.join(",") + "\n";
+                });
+            }
+        }
+        return content;
+    }
+    function triggerCsvDownload(csvContent, filename) {
+        const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
     let currentExportType = '';
     let currentExportPairKey = '';
     window.openExportMenu = function(type) {
@@ -355,26 +391,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (currentExportType === 'ai') {
             // L1/L2/L3 TP Pips (ly.tpPips) & 2 kolom dual-track L3 (tpPipsAtrRaw/tpPipsFixedEquivalent, cuma
             // keisi kalau l3TpAtrMode lagi ON pas trade itu dibuka) ditambah 2026-07-16 buat investigasi tpMode.
-            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 TP Pips,L1 Lot,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 TP Pips,L2 Lot,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 TP Pips,L3 Lot,L3 Status,L3 PL,L3 TP ATR Raw (sebelum clamp),L3 TP Fixed Equivalent,Alasan,Status Trade,Total P/L (Rp)\n";
-            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(2), parseFloat(ly.sl).toFixed(2), parseFloat(ly.tp).toFixed(2), ly.tpPips ?? '-', ly.lot ?? '-', AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-', '-', '-'];
-            for(let d in aiTradeData) {
-                if(period === 'all' || d.startsWith(targetPrefix)) {
-                    aiTradeData[d].forEach(t => {
-                        const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
-                        const layers = t.layers || [];
-                        const l3 = layers[2];
-                        let row = [
-                            d, t.arah, t.tf || '-', t.signalType || '-',
-                            t.openedAt || '-', t.closedAt || 'Masih Open',
-                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(l3),
-                            (l3 && l3.tpPipsAtrRaw != null) ? l3.tpPipsAtrRaw : '-',
-                            (l3 && l3.tpPipsFixedEquivalent != null) ? l3.tpPipsFixedEquivalent : '-',
-                            `"${alasan}"`, t.status, t.pl || 0
-                        ];
-                        csvContent += row.join(",") + "\n";
-                    });
-                }
-            }
+            csvContent += buildAiTradeCsv(aiTradeData, period, targetPrefix, 2);
         } else if (currentExportType === 'wealth') {
             csvContent += "ID,Tanggal,Jenis Transaksi,Keterangan,Jumlah (Rp)\n";
             wealthData.items.forEach(t => {
@@ -385,27 +402,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             });
         } else if (currentExportType === 'cur') {
-            csvContent += "Tanggal,Arah,Timeframe,Jenis Sinyal,Waktu Buka,Waktu Tutup,L1 Entry,L1 SL,L1 TP,L1 TP Pips,L1 Lot,L1 Status,L1 PL,L2 Entry,L2 SL,L2 TP,L2 TP Pips,L2 Lot,L2 Status,L2 PL,L3 Entry,L3 SL,L3 TP,L3 TP Pips,L3 Lot,L3 Status,L3 PL,L3 TP ATR Raw (sebelum clamp),L3 TP Fixed Equivalent,Alasan,Status Trade,Total P/L (Rp)\n";
-            const layerCols = (ly) => ly ? [parseFloat(ly.entry).toFixed(5), parseFloat(ly.sl).toFixed(5), parseFloat(ly.tp).toFixed(5), ly.tpPips ?? '-', ly.lot ?? '-', AI_LAYER_STATUS_LABEL[ly.status] || ly.status, ly.pl || 0] : ['-', '-', '-', '-', '-', '-', '-'];
             const curTradeData = getCurInstrument(currentExportPairKey).aiTradeData || {};
-            for(let d in curTradeData) {
-                if(period === 'all' || d.startsWith(targetPrefix)) {
-                    curTradeData[d].forEach(t => {
-                        const alasan = t.alasan ? t.alasan.replace(/"/g, '""') : '';
-                        const layers = t.layers || [];
-                        const l3 = layers[2];
-                        let row = [
-                            d, t.arah, t.tf || '-', t.signalType || '-',
-                            t.openedAt || '-', t.closedAt || 'Masih Open',
-                            ...layerCols(layers[0]), ...layerCols(layers[1]), ...layerCols(l3),
-                            (l3 && l3.tpPipsAtrRaw != null) ? l3.tpPipsAtrRaw : '-',
-                            (l3 && l3.tpPipsFixedEquivalent != null) ? l3.tpPipsFixedEquivalent : '-',
-                            `"${alasan}"`, t.status, t.pl || 0
-                        ];
-                        csvContent += row.join(",") + "\n";
-                    });
-                }
-            }
+            csvContent += buildAiTradeCsv(curTradeData, period, targetPrefix, 5);
         }
 
         var encodedUri = encodeURI(csvContent);
@@ -2896,6 +2894,48 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('mon-contradiction-limit').addEventListener('change', (e) => {
         monContradictionLimit = e.target.value === 'all' ? 'all' : Number(e.target.value);
         renderMonitoringDashboard();
+    });
+
+    // Export multi-instrumen dari Monitoring - datanya udah ke-load di memori (sama kayak yang dipakai
+    // render dashboard), jadi gak nambah baca Firestore sama sekali, murni proses browser doang.
+    const MON_EXPORT_INSTRUMENTS = [
+        { key: 'gold', label: 'Gold (XAUUSD)' },
+        ...CURRENCY_PAIRS.map(p => ({ key: p, label: p })),
+    ];
+    function updateMonExportCount() {
+        document.getElementById('mon-export-count').textContent = document.querySelectorAll('.mon-export-chip.selected').length;
+    }
+    document.getElementById('btn-mon-open-export').addEventListener('click', () => {
+        document.getElementById('mon-export-checklist').innerHTML = MON_EXPORT_INSTRUMENTS.map(i => `
+            <div class="mon-export-chip" data-key="${i.key}"><span class="chip-check">✓</span><span class="chip-label">${i.label}</span></div>`).join('');
+        document.querySelectorAll('.mon-export-chip').forEach(chip => {
+            chip.addEventListener('click', () => { chip.classList.toggle('selected'); updateMonExportCount(); });
+        });
+        updateMonExportCount();
+        document.getElementById('mon-export-modal').style.display = 'flex';
+    });
+    document.getElementById('mon-export-select-all').addEventListener('click', () => {
+        const chips = document.querySelectorAll('.mon-export-chip');
+        const allSelected = Array.from(chips).every(c => c.classList.contains('selected'));
+        chips.forEach(c => c.classList.toggle('selected', !allSelected));
+        updateMonExportCount();
+    });
+    document.getElementById('btn-mon-export-confirm').addEventListener('click', () => {
+        const period = document.getElementById('mon-export-period').value;
+        const y = monTrendNavDate.getFullYear(), m = monTrendNavDate.getMonth();
+        const targetPrefix = `${y}-${String(m + 1).padStart(2, '0')}`;
+        const selectedKeys = Array.from(document.querySelectorAll('.mon-export-chip.selected')).map(chip => chip.dataset.key);
+        if (selectedKeys.length === 0) { alert('Pilih minimal 1 instrumen dulu.'); return; }
+        selectedKeys.forEach((key, i) => {
+            // Stagger tiap download dikit - browser suka nge-block kalau banyak file di-trigger bersamaan persis di tick yang sama.
+            setTimeout(() => {
+                const isGold = key === 'gold';
+                const tradeData = isGold ? aiTradeData : (getCurInstrument(key).aiTradeData || {});
+                const csv = buildAiTradeCsv(tradeData, period, targetPrefix, isGold ? 2 : 5);
+                triggerCsvDownload(csv, `Data_${isGold ? 'Gold' : key}_${period === 'all' ? 'All' : targetPrefix}.csv`);
+            }, i * 400);
+        });
+        document.getElementById('mon-export-modal').style.display = 'none';
     });
 
     document.getElementById('btn-cur-more-menu').addEventListener('click', (e) => {

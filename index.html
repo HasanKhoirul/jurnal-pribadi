@@ -55,6 +55,29 @@
         </div>
     </div>
 
+    <div id="mon-export-modal" class="modal" style="z-index: 9000;">
+        <div class="modal-content" style="width: 480px;">
+            <span class="close-btn" onclick="document.getElementById('mon-export-modal').style.display='none'">&times;</span>
+            <h2 style="color:#4caf50; margin-bottom: 5px;">📤 Export Data Monitoring</h2>
+            <p style="color:#aaa; font-size: 0.85rem; margin-bottom: 15px;">Ketuk instrumen yang mau di-export (bisa satu, beberapa, atau semua) - tiap instrumen jadi 1 file CSV terpisah.</p>
+            <div style="margin-bottom: 15px;">
+                <label style="color:#aaa; font-size:0.85rem;">Pilih Periode:</label>
+                <select id="mon-export-period" class="form-input" style="margin-top:5px; border-color:#4caf50;">
+                    <option value="current" selected>Hanya Bulan yang Lagi Ditampilin</option>
+                    <option value="all">Semua Waktu (All Periode)</option>
+                </select>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                <label style="color:#aaa; font-size:0.85rem;">Instrumen:</label>
+                <button id="mon-export-select-all" type="button" style="background:none; border:1px solid #444; color:#00e676; font-size:0.75rem; padding:4px 10px; border-radius:20px; cursor:pointer;">☑️ Pilih Semua</button>
+            </div>
+            <div id="mon-export-checklist" class="mon-export-grid" style="margin-bottom: 20px;"></div>
+            <div style="display: flex; gap: 10px;">
+                <button id="btn-mon-export-confirm" class="save-btn" style="flex: 1; background: #00e676; margin-top: 0; font-size: 0.9rem; color:#121212;">📄 Export CSV (<span id="mon-export-count">0</span> dipilih)</button>
+            </div>
+        </div>
+    </div>
+
     <div id="login-modal" class="modal" style="z-index: 10000;">
         <div class="modal-content" style="width: 350px; text-align: center; border: 1px solid #ffd700;">
             <h2 style="color:#ffd700; margin-bottom: 5px;">🔒 Authentication</h2>
@@ -533,10 +556,11 @@
                         <h1 style="color:#4caf50;">📈 Monitoring Portfolio</h1>
                         <p style="color:#888; font-size: 0.9rem;">Ringkasan Gold + 5 pair Currency per bulan, biar gak perlu buka 1-1 tab.</p>
                     </div>
-                    <div class="month-navigation" style="margin:0;">
+                    <div class="month-navigation" style="margin:0; gap:10px;">
                         <button id="mon-trend-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button>
                         <h2 id="mon-trend-month-year" style="font-size:1.1rem; margin:0 8px;">Bulan Tahun</h2>
                         <button id="mon-trend-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button>
+                        <button id="btn-mon-open-export" class="nav-btn hide-for-screenshot" style="border-color:#00e676; color:#00e676;">📤 Export</button>
                     </div>
                 </header>
 
