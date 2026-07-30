@@ -40,15 +40,26 @@ document.addEventListener("DOMContentLoaded", () => {
     // Dokumen per-UID: expData/wealthData -> cuma bisa dibaca & ditulis kalau login asli.
     // ==========================================
     let privateUnsub = null;
-    let pushTimer = null;
+    let financeUnsub = null;
+    let pushTimerAi = null;
+    let pushTimerFinance = null;
+    let pushTimerPublic = null;
 
+    // expData/wealthData sengaja dipisah ke dokumen 'userFinance' sendiri (bukan numpang di 'appData'
+    // yang di-listen 6 proses bot VPS) - biar jurnal keuangan manual gak ikut ke-download ulang tiap
+    // kali salah satu dari 6 bot trading nulis perubahan kecil (efisiensi bandwidth Firestore, Juli 2026).
     function saveData(key, obj) {
         localStorage.setItem(key, JSON.stringify(obj));
-        clearTimeout(pushTimer);
-        pushTimer = setTimeout(() => {
-            if (key === 'expense_data_v1' || key === 'wealth_data_v1' || key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_settings_v1' || key === 'ai_bot_control_v1') pushPrivateToCloud();
-            else pushPublicToCloud();
-        }, 800);
+        if (key === 'expense_data_v1' || key === 'wealth_data_v1') {
+            clearTimeout(pushTimerFinance);
+            pushTimerFinance = setTimeout(pushFinanceToCloud, 800);
+        } else if (key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_settings_v1' || key === 'ai_bot_control_v1') {
+            clearTimeout(pushTimerAi);
+            pushTimerAi = setTimeout(pushAiToCloud, 800);
+        } else {
+            clearTimeout(pushTimerPublic);
+            pushTimerPublic = setTimeout(pushPublicToCloud, 800);
+        }
     }
 
     function pushPublicToCloud() {
@@ -57,14 +68,20 @@ document.addEventListener("DOMContentLoaded", () => {
             .catch(err => { console.error('Gagal sync data publik ke cloud:', err); throw err; });
     }
 
-    function pushPrivateToCloud() {
+    function pushAiToCloud() {
         if (!auth.currentUser) return Promise.resolve();
         // PENTING: .set() ini TANPA merge (biar fitur "Reset Data" yang nge-kosongin aiTradeData={} tetap
         // beneran ke-kosongin di server, bukan cuma "gak ada yg di-merge") - jadi currencyInstruments WAJIB
         // ikut disertain di sini pakai nilai terakhir yang udah ke-sync dari listener, biar gak ke-wipe
         // tiap kali Gold nyimpen data (auto-open posisi, checkAndClose, Master Setting, dst).
-        return db.collection('appData').doc(auth.currentUser.uid).set({ expData, wealthData, aiTradeData, aiModalAwal, aiSettings, botControl, currencyInstruments })
-            .catch(err => { console.error('Gagal sync data privat ke cloud:', err); throw err; });
+        return db.collection('appData').doc(auth.currentUser.uid).set({ aiTradeData, aiModalAwal, aiSettings, botControl, currencyInstruments })
+            .catch(err => { console.error('Gagal sync data AI ke cloud:', err); throw err; });
+    }
+
+    function pushFinanceToCloud() {
+        if (!auth.currentUser) return Promise.resolve();
+        return db.collection('userFinance').doc(auth.currentUser.uid).set({ expData, wealthData })
+            .catch(err => { console.error('Gagal sync data keuangan ke cloud:', err); throw err; });
     }
 
     function attachPublicListener() {
@@ -97,12 +114,10 @@ document.addEventListener("DOMContentLoaded", () => {
         privateUnsub = db.collection('appData').doc(uid).onSnapshot(doc => {
             if (doc.exists) {
                 const d = doc.data();
-                expData = d.expData || {}; wealthData = d.wealthData || defaultWealthHistory;
                 aiTradeData = d.aiTradeData || {}; aiModalAwal = d.aiModalAwal || 2500000;
                 aiSettings = d.aiSettings || defaultAiSettings;
                 botControl = d.botControl || {};
                 currencyInstruments = d.currencyInstruments || {};  // modul Currency - VPS-only compute, di sini cuma dibaca (gak ada localStorage cache, murni cloud-driven)
-                localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 localStorage.setItem('ai_settings_v1', JSON.stringify(aiSettings));
                 localStorage.setItem('ai_bot_control_v1', JSON.stringify(botControl));
@@ -110,6 +125,34 @@ document.addEventListener("DOMContentLoaded", () => {
                 rerenderActiveSection();
             }
         }, err => { console.error('Gagal ambil data privat dari cloud:', err); alert('Gagal ambil data privat: ' + err.code); });
+    }
+
+    // Migrasi 1x: expData/wealthData dulu numpang di 'appData/{uid}', sekarang pindah ke dokumen
+    // 'userFinance/{uid}' sendiri. Kalau dokumen baru belum ada, salin dulu dari yang lama biar gak
+    // keliatan kosong di device yang belum sempat nge-trigger save manual.
+    function migrateFinanceDataIfNeeded(uid) {
+        db.collection('userFinance').doc(uid).get().then(financeDoc => {
+            if (financeDoc.exists) return;
+            db.collection('appData').doc(uid).get().then(oldDoc => {
+                if (!oldDoc.exists) return;
+                const d = oldDoc.data();
+                if (!d.expData && !d.wealthData) return;
+                db.collection('userFinance').doc(uid).set({ expData: d.expData || {}, wealthData: d.wealthData || defaultWealthHistory })
+                    .catch(err => console.error('Gagal migrasi data keuangan:', err));
+            });
+        }).catch(err => console.error('Gagal cek migrasi data keuangan:', err));
+    }
+
+    function attachFinanceListener(uid) {
+        if (financeUnsub) financeUnsub();
+        financeUnsub = db.collection('userFinance').doc(uid).onSnapshot(doc => {
+            if (doc.exists) {
+                const d = doc.data();
+                expData = d.expData || {}; wealthData = d.wealthData || defaultWealthHistory;
+                localStorage.setItem('expense_data_v1', JSON.stringify(expData)); localStorage.setItem('wealth_data_v1', JSON.stringify(wealthData));
+                rerenderActiveSection();
+            }
+        }, err => { console.error('Gagal ambil data keuangan dari cloud:', err); alert('Gagal ambil data keuangan: ' + err.code); });
     }
 
     function rerenderActiveSection() {
@@ -217,8 +260,12 @@ document.addEventListener("DOMContentLoaded", () => {
         isLoggedIn = !!user;
         applyAuthState();
         rerenderActiveSection();
-        if (user) attachPrivateListener(user.uid);
-        else { if (privateUnsub) { privateUnsub(); privateUnsub = null; } stopAiAutoTick(); }
+        if (user) { attachPrivateListener(user.uid); attachFinanceListener(user.uid); migrateFinanceDataIfNeeded(user.uid); }
+        else {
+            if (privateUnsub) { privateUnsub(); privateUnsub = null; }
+            if (financeUnsub) { financeUnsub(); financeUnsub = null; }
+            stopAiAutoTick();
+        }
     });
 
     document.getElementById('btn-login').addEventListener('click', () => {
@@ -228,7 +275,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById('btn-upload-cloud').addEventListener('click', () => {
         showConfirm("Ini akan MENIMPA data cloud dengan data di device ini. Cuma pakai ini di device yang punya data paling lengkap. Yakin?", () => {
-            Promise.all([pushPublicToCloud(), pushPrivateToCloud()]).then(() => {
+            Promise.all([pushPublicToCloud(), pushAiToCloud(), pushFinanceToCloud()]).then(() => {
                 alert("Data lokal berhasil di-upload ke Cloud!");
             }).catch(err => {
                 alert("Gagal upload ke Cloud: " + err.code + "\n" + err.message);
