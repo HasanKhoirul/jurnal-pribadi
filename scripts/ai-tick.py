@@ -354,7 +354,7 @@ def run_fast_tick():
         return
 
     _fast_tick_count += 1
-    if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0:
+    if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0 and is_market_open(now):
         push_live_price_to_public(tick)
 
     data = get_doc_cache()
@@ -412,15 +412,17 @@ def run_fast_tick():
 
 def run_slow_tick():
     now = datetime.now(timezone.utc)
+    market_open = is_market_open(now)
 
-    try:
-        candles = fetch_candles(100)
-        push_live_candles_to_public(candles)
-    except Exception as e:
-        log(f"Gagal ambil data candle: {e}")
-        log_ai_tick('error', f"Gagal ambil data candle: {e}")
-        send_telegram(f"⚠️ <b>Bot Error</b>\n\nGagal ambil data candle: {e}")
-        return
+    if market_open:
+        try:
+            candles = fetch_candles(100)
+            push_live_candles_to_public(candles)
+        except Exception as e:
+            log(f"Gagal ambil data candle: {e}")
+            log_ai_tick('error', f"Gagal ambil data candle: {e}")
+            send_telegram(f"⚠️ <b>Bot Error</b>\n\nGagal ambil data candle: {e}")
+            return
 
     snap = doc_ref.get()
     data = snap.to_dict() if snap.exists else {}
@@ -430,7 +432,7 @@ def run_slow_tick():
     ai_modal_awal = data.get('aiModalAwal', 2500000)
     news_info = get_cached_news(now)
 
-    if not is_market_open(now):
+    if not market_open:
         log("Market tutup (weekend), skip.")
         log_ai_tick('market_closed', 'Weekend, market tutup.')
         return
@@ -439,7 +441,7 @@ def run_slow_tick():
     open_m1 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method1'])
     if open_m1:
         log("Metode 1: posisi masih open, belum ada perubahan (dicek ulang tiap fast loop).")
-        log_ai_tick('waiting', 'Metode 1: posisi masih open, belum ada perubahan.')
+        # sengaja gak log_ai_tick ke Firestore tiap 5 menit cuma buat "belum ada perubahan" - noise, numpuk storage percuma
     elif news_info:
         msg = f"Jam rawan berita high-impact \"{news_info['title']}\", entry Metode 1 ditahan."
         log(msg)
@@ -451,14 +453,14 @@ def run_slow_tick():
             doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
             log_ai_tick('entry_opened', 'Entry Metode 1 berhasil dibuka.')
         else:
-            log_ai_tick('no_signal', cfg.last_signal_skip_reason or 'Gak ada sinyal Metode 1 valid tick ini.')
+            log(cfg.last_signal_skip_reason or 'Gak ada sinyal Metode 1 valid tick ini.')
 
     # ---------- Method 2 (ICT/SMC liquidity sweep) - slot terpisah, independen dari Method 1 ----------
     if not cfg.AI_METHOD_TWO_ENABLED:
         return
     open_m2 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method2'])
     if open_m2:
-        log_ai_tick('waiting_m2', 'Metode 2: posisi masih open, belum ada perubahan.')
+        log("Metode 2: posisi masih open, belum ada perubahan (dicek ulang tiap fast loop).")
         return
 
     ict_state = data.get('ictState') or dict(ICT_STATE_DEFAULT)
