@@ -2713,9 +2713,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // P/L SEBELUM bulan yg lagi dibuka (buat hitung equity awal bulan itu) - perbandingan string tanggal ISO
     // (YYYY-MM-DD vs YYYY-MM) valid krn zero-padded, gak perlu parse ke Date.
     function sumPlBeforeMonth(tradeData, year, month) {
+        // Cuma jumlahin trade yang UDAH closed - trade open yang kebawa dari bulan lalu punya field
+        // pl floating/belum final, gak boleh dianggap P/L realized sampai beneran ketutup.
         const targetPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
         let sum = 0;
-        for (const d in tradeData) { if (d < targetPrefix) (tradeData[d] || []).forEach(t => sum += parseFloat(t.pl || 0)); }
+        for (const d in tradeData) { if (d < targetPrefix) (tradeData[d] || []).forEach(t => { if (t.status === 'closed') sum += parseFloat(t.pl || 0); }); }
         return sum;
     }
     function summarizeMonthPl(tradeData, year, month) {
@@ -2724,9 +2726,11 @@ document.addEventListener("DOMContentLoaded", () => {
         for (const d in tradeData) {
             if (!d.startsWith(targetPrefix)) continue;
             (tradeData[d] || []).forEach(t => {
-                const p = parseFloat(t.pl || 0);
-                totalPl += p; totalEntries++;
-                if (t.status === 'closed') { closedCount++; if (p >= 0) winCount++; }
+                totalEntries++;
+                if (t.status === 'closed') {
+                    const p = parseFloat(t.pl || 0);
+                    totalPl += p; closedCount++; if (p >= 0) winCount++;
+                }
             });
         }
         return { totalPl, totalEntries, closedCount, winCount };
