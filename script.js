@@ -25,6 +25,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // Tanggal "berdiri sendiri" modal (YYYY-MM-DD) - kalau keisi, trade SEBELUM tanggal ini gak ikut
     // dihitung ke Equity Awal/Akhir (tapi histori kalender/detailnya tetap ke-simpen & bisa dilihat lagi).
     let aiModalResetAt = JSON.parse(localStorage.getItem('ai_modal_reset_at') || 'null');
+    // Modal LAMA yang berlaku sebelum aiModalResetAt - dipakai biar bulan sebelum tanggal reset tetap
+    // kebaca akurat (bukan ketarik modal baru) pas di-browse ulang.
+    let aiModalBeforeReset = JSON.parse(localStorage.getItem('ai_modal_before_reset') || 'null');
     const defaultAiSettings = { twelvedata: localStorage.getItem('ai_key_twelvedata') || '', llmProvider: localStorage.getItem('ai_llm_provider') || 'none', llmKey: localStorage.getItem('ai_key_llm') || '' };
     let aiSettings = JSON.parse(localStorage.getItem('ai_settings_v1')) || defaultAiSettings;
     let botControl = JSON.parse(localStorage.getItem('ai_bot_control_v1')) || {};
@@ -56,7 +59,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (key === 'expense_data_v1' || key === 'wealth_data_v1') {
             clearTimeout(pushTimerFinance);
             pushTimerFinance = setTimeout(pushFinanceToCloud, 800);
-        } else if (key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_modal_reset_at' || key === 'ai_settings_v1' || key === 'ai_bot_control_v1') {
+        } else if (key === 'ai_trade_data_v1' || key === 'ai_modal_awal' || key === 'ai_modal_reset_at' || key === 'ai_modal_before_reset' || key === 'ai_settings_v1' || key === 'ai_bot_control_v1') {
             clearTimeout(pushTimerAi);
             pushTimerAi = setTimeout(pushAiToCloud, 800);
         } else {
@@ -77,7 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // beneran ke-kosongin di server, bukan cuma "gak ada yg di-merge") - jadi currencyInstruments WAJIB
         // ikut disertain di sini pakai nilai terakhir yang udah ke-sync dari listener, biar gak ke-wipe
         // tiap kali Gold nyimpen data (auto-open posisi, checkAndClose, Master Setting, dst).
-        return db.collection('appData').doc(auth.currentUser.uid).set({ aiTradeData, aiModalAwal, aiModalResetAt, aiSettings, botControl, currencyInstruments })
+        return db.collection('appData').doc(auth.currentUser.uid).set({ aiTradeData, aiModalAwal, aiModalResetAt, aiModalBeforeReset, aiSettings, botControl, currencyInstruments })
             .catch(err => { console.error('Gagal sync data AI ke cloud:', err); throw err; });
     }
 
@@ -119,11 +122,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 const d = doc.data();
                 aiTradeData = d.aiTradeData || {}; aiModalAwal = d.aiModalAwal || 2500000;
                 aiModalResetAt = d.aiModalResetAt || null;
+                aiModalBeforeReset = d.aiModalBeforeReset || null;
                 aiSettings = d.aiSettings || defaultAiSettings;
                 botControl = d.botControl || {};
                 currencyInstruments = d.currencyInstruments || {};  // modul Currency - VPS-only compute, di sini cuma dibaca (gak ada localStorage cache, murni cloud-driven)
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 localStorage.setItem('ai_modal_reset_at', JSON.stringify(aiModalResetAt));
+                localStorage.setItem('ai_modal_before_reset', JSON.stringify(aiModalBeforeReset));
                 localStorage.setItem('ai_settings_v1', JSON.stringify(aiSettings));
                 localStorage.setItem('ai_bot_control_v1', JSON.stringify(botControl));
                 applyMasterSettings();
@@ -1087,10 +1092,26 @@ document.addEventListener("DOMContentLoaded", () => {
         const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
         if (isNaN(num) || num <= 0) { alert('Angka gak valid.'); return; }
         const todayStr = new Date().toISOString().slice(0, 10);
-        const resetVal = prompt('Modal ini berlaku efektif mulai tanggal berapa? Histori SEBELUM tanggal ini tetap kesimpen & bisa dilihat lagi, cuma gak ikut dihitung ke Equity Awal/Akhir mulai tanggal ini (kayak buka akun baru).\n\nKosongin isinya kalau mau modal berlaku retroaktif ke semua histori (perilaku lama). Format: YYYY-MM-DD', aiModalResetAt || todayStr);
-        if (resetVal !== null) { aiModalResetAt = resetVal.trim() || null; saveData('ai_modal_reset_at', aiModalResetAt); }
+        const resetVal = prompt('Modal ini berlaku efektif mulai tanggal berapa? Histori SEBELUM tanggal ini tetap kesimpen & bisa dilihat lagi (Equity-nya pun tetap kebaca pakai modal LAMA), cuma gak ikut dihitung ke Equity Awal/Akhir mulai tanggal ini (kayak buka akun baru).\n\nKosongin isinya kalau mau modal berlaku retroaktif ke semua histori (perilaku lama). Format: YYYY-MM-DD', aiModalResetAt || todayStr);
+        let newResetAt = aiModalResetAt, newBeforeReset = aiModalBeforeReset;
+        if (resetVal !== null) {
+            newResetAt = resetVal.trim() || null;
+            if (newResetAt) {
+                // Tanya EKSPLISIT (bukan nebak dari state lama) - modal aiModalAwal saat ini bisa aja
+                // udah kepakai/keubah sebelumnya, jadi gak selalu representasi modal lama yang bener.
+                const beforeVal = prompt(`Modal yang BERLAKU SEBELUM ${newResetAt} (dipakai biar bulan-bulan lama tetap kebaca akurat pas di-browse ulang):`, aiModalBeforeReset || aiModalAwal);
+                const beforeNum = beforeVal !== null ? parseFloat(String(beforeVal).replace(/[^0-9.]/g, '')) : NaN;
+                newBeforeReset = !isNaN(beforeNum) && beforeNum > 0 ? beforeNum : (aiModalBeforeReset || aiModalAwal);
+            } else {
+                newBeforeReset = null;
+            }
+        }
         aiModalAwal = num;
+        aiModalResetAt = newResetAt;
+        aiModalBeforeReset = newBeforeReset;
         saveData('ai_modal_awal', aiModalAwal);
+        saveData('ai_modal_reset_at', aiModalResetAt);
+        saveData('ai_modal_before_reset', aiModalBeforeReset);
         document.getElementById('ai-base-equity').innerText = formatRupiah(aiModalAwal);
         updateAiEquity(globalNavDate.getFullYear(), globalNavDate.getMonth());
     };
@@ -1671,14 +1692,21 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     function updateAiEquity(vY, vM) {
+        // Bulan yang dibuka SEBELUM aiModalResetAt harus tetap kebaca pakai modal LAMA & histori penuh
+        // (gak boleh ke-cutoff) - kalau enggak, browsing balik ke bulan lama jadi keliatan modal baru
+        // padahal waktu itu belum berlaku. Cutoff cuma aktif buat bulan reset itu sendiri & seterusnya.
+        const monthPrefix = `${vY}-${String(vM + 1).padStart(2, '0')}`;
+        const isPreReset = !!(aiModalResetAt && monthPrefix < aiModalResetAt.slice(0, 7));
+        const baseModal = isPreReset ? (aiModalBeforeReset ?? aiModalAwal) : aiModalAwal;
+        const cutoff = isPreReset ? null : aiModalResetAt;
         let sumBefore = 0; let sumDuring = 0;
         for (const d in aiTradeData) {
-            if (aiModalResetAt && d < aiModalResetAt) continue;
+            if (cutoff && d < cutoff) continue;
             let tY = new Date(d).getFullYear(); let tM = new Date(d).getMonth(); let dt = 0;
             aiTradeData[d].forEach(t => dt += parseFloat(t.pl || 0));
             if (tY < vY || (tY === vY && tM < vM)) sumBefore += dt; else if (tY === vY && tM === vM) sumDuring += dt;
         }
-        let stEq = aiModalAwal + sumBefore; let enEq = stEq + sumDuring;
+        let stEq = baseModal + sumBefore; let enEq = stEq + sumDuring;
         document.getElementById('ai-start-equity').innerText = formatRupiah(stEq);
         document.getElementById('ai-current-equity').innerText = formatRupiah(enEq);
         document.getElementById('ai-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
@@ -2393,17 +2421,23 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('cur-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth() + 1); renderCurCalendar(currentCurPair()); };
 
     function updateCurEquity(pairKey, vY, vM) {
-        const tradeData = getCurInstrument(pairKey).aiTradeData || {};
-        const modalAwal = getCurInstrument(pairKey).aiModalAwal || 2500000;
-        const resetAt = getCurInstrument(pairKey).aiModalResetAt || null;
+        const inst = getCurInstrument(pairKey);
+        const tradeData = inst.aiTradeData || {};
+        const modalAwal = inst.aiModalAwal || 2500000;
+        const resetAt = inst.aiModalResetAt || null;
+        // Sama kayak updateAiEquity Gold: bulan sebelum resetAt pakai modal LAMA & histori penuh (gak di-cutoff).
+        const monthPrefix = `${vY}-${String(vM + 1).padStart(2, '0')}`;
+        const isPreReset = !!(resetAt && monthPrefix < resetAt.slice(0, 7));
+        const baseModal = isPreReset ? (inst.aiModalBeforeReset || modalAwal) : modalAwal;
+        const cutoff = isPreReset ? null : resetAt;
         let sumBefore = 0; let sumDuring = 0;
         for (const d in tradeData) {
-            if (resetAt && d < resetAt) continue;
+            if (cutoff && d < cutoff) continue;
             let tY = new Date(d).getFullYear(); let tM = new Date(d).getMonth(); let dt = 0;
             tradeData[d].forEach(t => dt += parseFloat(t.pl || 0));
             if (tY < vY || (tY === vY && tM < vM)) sumBefore += dt; else if (tY === vY && tM === vM) sumDuring += dt;
         }
-        let stEq = modalAwal + sumBefore; let enEq = stEq + sumDuring;
+        let stEq = baseModal + sumBefore; let enEq = stEq + sumDuring;
         document.getElementById('cur-start-equity').innerText = formatRupiah(stEq);
         document.getElementById('cur-current-equity').innerText = formatRupiah(enEq);
         document.getElementById('cur-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
@@ -2418,9 +2452,19 @@ document.addEventListener("DOMContentLoaded", () => {
         if (isNaN(num) || num <= 0) { alert('Angka gak valid.'); return; }
         if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud.'); return; }
         const todayStr = new Date().toISOString().slice(0, 10);
-        const resetVal = prompt(`Modal ${pairKey} ini berlaku efektif mulai tanggal berapa? Histori SEBELUM tanggal ini tetap kesimpen & bisa dilihat lagi, cuma gak ikut dihitung ke Equity Awal/Akhir mulai tanggal ini.\n\nKosongin isinya kalau mau berlaku retroaktif ke semua histori (perilaku lama). Format: YYYY-MM-DD`, inst.aiModalResetAt || todayStr);
+        const resetVal = prompt(`Modal ${pairKey} ini berlaku efektif mulai tanggal berapa? Histori SEBELUM tanggal ini tetap kesimpen & bisa dilihat lagi (Equity-nya pun tetap kebaca pakai modal LAMA), cuma gak ikut dihitung ke Equity Awal/Akhir mulai tanggal ini.\n\nKosongin isinya kalau mau berlaku retroaktif ke semua histori (perilaku lama). Format: YYYY-MM-DD`, inst.aiModalResetAt || todayStr);
         const update = { aiModalAwal: num };
-        if (resetVal !== null) update.aiModalResetAt = resetVal.trim() || null;
+        if (resetVal !== null) {
+            const newResetAt = resetVal.trim() || null;
+            update.aiModalResetAt = newResetAt;
+            if (newResetAt) {
+                const beforeVal = prompt(`Modal ${pairKey} yang BERLAKU SEBELUM ${newResetAt} (dipakai biar bulan-bulan lama tetap kebaca akurat pas di-browse ulang):`, inst.aiModalBeforeReset || current);
+                const beforeNum = beforeVal !== null ? parseFloat(String(beforeVal).replace(/[^0-9.]/g, '')) : NaN;
+                update.aiModalBeforeReset = !isNaN(beforeNum) && beforeNum > 0 ? beforeNum : (inst.aiModalBeforeReset || current);
+            } else {
+                update.aiModalBeforeReset = null;
+            }
+        }
         db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: update } }, { merge: true })
             .catch(err => alert('Gagal simpan modal: ' + err.message));
     };
@@ -2784,15 +2828,24 @@ document.addEventListener("DOMContentLoaded", () => {
     // Beda dari jumlahin max drawdown tiap instrumen (yang bisa kejadian di tanggal beda2) - ini ngitung
     // drawdown dari KURVA EQUITY GABUNGAN (dijumlah dulu per tanggal, baru dicari peak-to-trough-nya).
     function computeCombinedMaxDrawdown(list) {
-        // resetAt per instrumen (kalau ada) - tanggal sebelum itu di-skip biar drawdown gak ikut kebawa
-        // histori "lama" yang udah dipisah dari modal berjalan.
+        // "All-Time" beneran - gak boleh ke-cutoff kayak equity per-bulan. Kurva jalan kronologis pakai
+        // modal LAMA (rawModalBeforeReset) dari awal histori, terus pas nyampe rawResetAt modalnya
+        // "disuntik ulang" ke rawModalAwal (dianggap setoran/deposit, gak masuk hitungan drawdown -
+        // drawdown cuma dari hasil trading, bukan dari nambah modal).
         const allDates = new Set();
-        list.forEach(i => Object.keys(i.tradeData).forEach(d => { if (!i.resetAt || d >= i.resetAt) allDates.add(d); }));
+        list.forEach(i => Object.keys(i.tradeData).forEach(d => allDates.add(d)));
         const sortedDates = Array.from(allDates).sort();
-        let cumulative = list.reduce((s, i) => s + i.modalAwal, 0);
+        let cumulative = list.reduce((s, i) => s + (i.rawResetAt ? (i.rawModalBeforeReset || i.rawModalAwal) : i.rawModalAwal), 0);
         let peak = cumulative, maxDD = 0;
+        const injected = list.map(() => false);
         sortedDates.forEach(d => {
-            list.forEach(i => { if (i.resetAt && d < i.resetAt) return; (i.tradeData[d] || []).forEach(t => { cumulative += parseFloat(t.pl || 0); }); });
+            list.forEach((i, idx) => {
+                if (i.rawResetAt && !injected[idx] && d >= i.rawResetAt) {
+                    cumulative += i.rawModalAwal - (i.rawModalBeforeReset || i.rawModalAwal);
+                    injected[idx] = true;
+                }
+                (i.tradeData[d] || []).forEach(t => { cumulative += parseFloat(t.pl || 0); });
+            });
             if (cumulative > peak) peak = cumulative;
             const dd = peak - cumulative;
             if (dd > maxDD) maxDD = dd;
@@ -2824,14 +2877,24 @@ document.addEventListener("DOMContentLoaded", () => {
         const trendY = monTrendNavDate.getFullYear(), trendM = monTrendNavDate.getMonth();
         document.getElementById('mon-trend-month-year').innerText = `${monthNames[trendM]} ${trendY}`;
 
-        const buildInstrument = (label, color, tradeData, modalAwal, riskLimitPct, resetAt) => ({
-            label, color, tradeData, modalAwal, riskLimitPct, resetAt,
-            equityAwal: modalAwal + sumPlBeforeMonth(tradeData, trendY, trendM, resetAt),
-            ...summarizeMonthPl(tradeData, trendY, trendM, resetAt)
-        });
+        // Bulan yang dibuka SEBELUM tanggal reset instrumen itu harus tetap kebaca pakai modal LAMA &
+        // histori penuh (sama logikanya kayak updateAiEquity/updateCurEquity) - biar Monitoring gak
+        // "ngilangin" P/L bulan lama pas modal instrumen itu udah di-reset.
+        const buildInstrument = (label, color, tradeData, modalAwal, riskLimitPct, resetAt, modalBeforeReset) => {
+            const monthPrefix = `${trendY}-${String(trendM + 1).padStart(2, '0')}`;
+            const isPreReset = !!(resetAt && monthPrefix < resetAt.slice(0, 7));
+            const baseModal = isPreReset ? (modalBeforeReset || modalAwal) : modalAwal;
+            const cutoff = isPreReset ? null : resetAt;
+            return {
+                label, color, tradeData, modalAwal: baseModal, riskLimitPct, resetAt: cutoff,
+                rawModalAwal: modalAwal, rawResetAt: resetAt, rawModalBeforeReset: modalBeforeReset,
+                equityAwal: baseModal + sumPlBeforeMonth(tradeData, trendY, trendM, cutoff),
+                ...summarizeMonthPl(tradeData, trendY, trendM, cutoff)
+            };
+        };
         const instruments = [
-            buildInstrument('Gold (XAUUSD)', '#ffd700', aiTradeData, aiModalAwal, getMasterSettings().riskLimitPct, aiModalResetAt),
-            ...CURRENCY_PAIRS.map(p => buildInstrument(p, '#00bcd4', getCurInstrument(p).aiTradeData || {}, getCurInstrument(p).aiModalAwal || 2500000, getCurMasterSettings(p).riskLimitPct, getCurInstrument(p).aiModalResetAt || null))
+            buildInstrument('Gold (XAUUSD)', '#ffd700', aiTradeData, aiModalAwal, getMasterSettings().riskLimitPct, aiModalResetAt, aiModalBeforeReset),
+            ...CURRENCY_PAIRS.map(p => buildInstrument(p, '#00bcd4', getCurInstrument(p).aiTradeData || {}, getCurInstrument(p).aiModalAwal || 2500000, getCurMasterSettings(p).riskLimitPct, getCurInstrument(p).aiModalResetAt || null, getCurInstrument(p).aiModalBeforeReset || null))
         ];
         const currencyOnly = instruments.slice(1);
 

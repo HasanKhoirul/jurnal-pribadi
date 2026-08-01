@@ -93,6 +93,7 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
   },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiModalResetAt: string (YYYY-MM-DD) | null,  // kalau keisi, trade SEBELUM tanggal ini di-skip dari kalkulasi Equity Awal/Akhir (modal "berdiri sendiri") - histori kalender/detail trade tetap utuh, cuma gak ikut ke equity lagi
+  aiModalBeforeReset: number | null,  // modal yang berlaku SEBELUM aiModalResetAt - dipakai biar bulan-bulan sebelum tanggal reset tetap kebaca akurat (bukan ketarik modal baru) pas di-browse ulang
   // INVARIANT: maks 1 trade "open" PER GRUP signalType, bukan 1 trade open total lagi.
   // Grup "method1" = trend_following + rsi_reversal (berbagi 1 slot, kayak sebelumnya).
   // Grup "method2" = ict_liquidity_sweep (slot sendiri, independen dari method1) - biar 2 metode
@@ -141,6 +142,7 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
       aiTradeData: {...sama persis shape aiTradeData Gold di atas...},
       aiModalAwal: number,        // modal simulasi TERPISAH per pair, gak digabung sama Gold atau pair lain
       aiModalResetAt: string (YYYY-MM-DD) | null,  // sama konsepnya kayak aiModalResetAt Gold di atas, per pair sendiri
+      aiModalBeforeReset: number | null,  // sama konsepnya kayak aiModalBeforeReset Gold di atas, per pair sendiri
       aiSettings: { master: {...sama shape aiSettings.master Gold, termasuk methodTwoEnabled...} },  // SL/TP/lot per pair independen
       botControl: {...sama shape botControl Gold...},   // proses OS terpisah per pair, butuh restart-signal sendiri
       ictState: {...sama shape ictState Gold...}
