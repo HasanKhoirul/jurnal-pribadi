@@ -1707,6 +1707,10 @@ document.addEventListener("DOMContentLoaded", () => {
             if (tY < vY || (tY === vY && tM < vM)) sumBefore += dt; else if (tY === vY && tM === vM) sumDuring += dt;
         }
         let stEq = baseModal + sumBefore; let enEq = stEq + sumDuring;
+        // Box "Modal Simulasi" ikut nampilin modal yang RESOLVED buat bulan yang lagi dibuka (bukan
+        // selalu modal live/terkini) - biar konsisten sama Equity Awal/Akhir di sebelahnya pas browsing
+        // ke bulan sebelum tanggal reset. Klik box tetap ngedit modal TERKINI, bukan modal historis ini.
+        document.getElementById('ai-base-equity').innerText = formatRupiah(baseModal);
         document.getElementById('ai-start-equity').innerText = formatRupiah(stEq);
         document.getElementById('ai-current-equity').innerText = formatRupiah(enEq);
         document.getElementById('ai-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
@@ -2438,6 +2442,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (tY < vY || (tY === vY && tM < vM)) sumBefore += dt; else if (tY === vY && tM === vM) sumDuring += dt;
         }
         let stEq = baseModal + sumBefore; let enEq = stEq + sumDuring;
+        document.getElementById('cur-base-equity').innerText = formatRupiah(baseModal);
         document.getElementById('cur-start-equity').innerText = formatRupiah(stEq);
         document.getElementById('cur-current-equity').innerText = formatRupiah(enEq);
         document.getElementById('cur-equity-growth').innerHTML = sumDuring > 0 ? `<span style="color:#00e676;">+${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : (sumDuring < 0 ? `<span style="color:#ff1744;">${(stEq > 0 ? sumDuring / stEq * 100 : 0).toFixed(2)}%</span>` : `<span style="color:#aaa;">0.00%</span>`);
