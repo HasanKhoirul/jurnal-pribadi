@@ -71,6 +71,12 @@ class Config:
         self.AI_LOT_SCALE_LOT1 = 0.05
         self.AI_LOT_SCALE_THRESHOLD2_PIPS = 250
         self.AI_LOT_SCALE_LOT2 = 0.03
+        # Tingkat ke-3 (Agustus 2026) - Threshold 1/2 gak ngerem lagi begitu udah lewat Threshold 2, jadi
+        # SL 251 pips & SL 779 pips kepakai lot yang SAMA. Ketauan dari trade ICT Gold 5 Agustus (SL 779
+        # pips, lot masih 0,05, rugi Rp210rb) - pola sama kayak outlier Juli (SL 410 pips) yang mestinya
+        # dicegah tingkat ini.
+        self.AI_LOT_SCALE_THRESHOLD3_PIPS = 500
+        self.AI_LOT_SCALE_LOT3 = 0.02
         # Flag in-memory (reset kalau proses direstart) - biar alert "entry diblok" kekirim SEKALI doang
         # pas limit baru kesentuh, bukan spam tiap tick selama masih over-limit.
         self.risk_limit_blocked = False
@@ -104,6 +110,7 @@ AI_MASTER_DEFAULTS = {
     'l3TpAtrMode': False, 'l3TpAtrMultiplier': 0.6,
     'lotScaleThreshold1Pips': 150, 'lotScaleLot1': 0.05,
     'lotScaleThreshold2Pips': 250, 'lotScaleLot2': 0.03,
+    'lotScaleThreshold3Pips': 500, 'lotScaleLot3': 0.02,
 }
 
 
@@ -141,6 +148,8 @@ def apply_master_settings(master):
     cfg.AI_LOT_SCALE_LOT1 = master.get('lotScaleLot1', AI_MASTER_DEFAULTS['lotScaleLot1'])
     cfg.AI_LOT_SCALE_THRESHOLD2_PIPS = master.get('lotScaleThreshold2Pips', AI_MASTER_DEFAULTS['lotScaleThreshold2Pips'])
     cfg.AI_LOT_SCALE_LOT2 = master.get('lotScaleLot2', AI_MASTER_DEFAULTS['lotScaleLot2'])
+    cfg.AI_LOT_SCALE_THRESHOLD3_PIPS = master.get('lotScaleThreshold3Pips', AI_MASTER_DEFAULTS['lotScaleThreshold3Pips'])
+    cfg.AI_LOT_SCALE_LOT3 = master.get('lotScaleLot3', AI_MASTER_DEFAULTS['lotScaleLot3'])
 
 
 # ---------- Helper angka & indikator (pure, gak butuh cfg) ----------
@@ -278,6 +287,8 @@ def calc_layer_pl_usc(pips, lot=None):
 def lot_for_sl_pips(sl_pips):
     # Threshold di atas SL max Metode 1 manapun (Gold ATR-clamp 120), jadi praktiknya cuma kepakai buat
     # Metode 2 (ICT) yang SL-nya structural dari level sweep - bisa jauh lebih lebar, gak ada rem lot.
+    if sl_pips > cfg.AI_LOT_SCALE_THRESHOLD3_PIPS:
+        return cfg.AI_LOT_SCALE_LOT3
     if sl_pips > cfg.AI_LOT_SCALE_THRESHOLD2_PIPS:
         return cfg.AI_LOT_SCALE_LOT2
     if sl_pips > cfg.AI_LOT_SCALE_THRESHOLD1_PIPS:

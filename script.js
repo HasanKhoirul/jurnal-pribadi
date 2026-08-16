@@ -1310,6 +1310,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Lot menyesuaikan kalau SL lebar (terutama Metode 2/ICT, SL structural bisa jauh lebih lebar dari
         // clamp ATR Metode 1) - dihitung & dieksekusi di bot VPS, browser cuma nyimpen setting.
         lotScaleThreshold1Pips: 150, lotScaleLot1: 0.05, lotScaleThreshold2Pips: 250, lotScaleLot2: 0.03,
+        lotScaleThreshold3Pips: 500, lotScaleLot3: 0.02,
         summaryIntervalHours: 6,
         methodTwoEnabled: false
     };
@@ -1361,6 +1362,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('ai-master-lot-scale-lot1').value = m.lotScaleLot1;
         document.getElementById('ai-master-lot-scale-threshold2').value = m.lotScaleThreshold2Pips;
         document.getElementById('ai-master-lot-scale-lot2').value = m.lotScaleLot2;
+        document.getElementById('ai-master-lot-scale-threshold3').value = m.lotScaleThreshold3Pips;
+        document.getElementById('ai-master-lot-scale-lot3').value = m.lotScaleLot3;
         document.getElementById('ai-master-layer-stagger-pips').value = m.layerStaggerPips;
         document.getElementById('ai-master-lock-pips-after-tp1').value = m.lockPipsAfterTp1;
         document.getElementById('ai-master-deep-lock-trigger-pips').value = m.deepLockTriggerPips;
@@ -1418,6 +1421,8 @@ document.addEventListener("DOMContentLoaded", () => {
             lotScaleLot1: readNum('ai-master-lot-scale-lot1'),
             lotScaleThreshold2Pips: readNum('ai-master-lot-scale-threshold2'),
             lotScaleLot2: readNum('ai-master-lot-scale-lot2'),
+            lotScaleThreshold3Pips: readNum('ai-master-lot-scale-threshold3'),
+            lotScaleLot3: readNum('ai-master-lot-scale-lot3'),
             layerStaggerPips: readNum('ai-master-layer-stagger-pips'),
             lockPipsAfterTp1: readNum('ai-master-lock-pips-after-tp1'),
             deepLockTriggerPips: readNum('ai-master-deep-lock-trigger-pips'),
@@ -1430,8 +1435,8 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPostMinutes: readNum('ai-master-news-post-minutes'),
             summaryIntervalHours: readNum('ai-master-summary-interval-hours')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0 && fields.l3TpAtrMultiplier > 0 && fields.lotScaleThreshold1Pips > 0 && fields.lotScaleLot1 > 0 && fields.lotScaleThreshold2Pips > fields.lotScaleThreshold1Pips && fields.lotScaleLot2 > 0;
-        if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0), dan Threshold 2 lot menyesuaikan harus lebih besar dari Threshold 1.'); return; }
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.riskLimitPct > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0 && fields.l3TpAtrMultiplier > 0 && fields.lotScaleThreshold1Pips > 0 && fields.lotScaleLot1 > 0 && fields.lotScaleThreshold2Pips > fields.lotScaleThreshold1Pips && fields.lotScaleLot2 > 0 && fields.lotScaleThreshold3Pips > fields.lotScaleThreshold2Pips && fields.lotScaleLot3 > 0;
+        if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0), dan tiap Threshold lot menyesuaikan harus lebih besar dari Threshold sebelumnya.'); return; }
         aiSettings = Object.assign({}, aiSettings, {
             master: {
                 riskLimitPct: fields.riskLimitPct,
@@ -1450,6 +1455,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 lotScaleLot1: fields.lotScaleLot1,
                 lotScaleThreshold2Pips: fields.lotScaleThreshold2Pips,
                 lotScaleLot2: fields.lotScaleLot2,
+                lotScaleThreshold3Pips: fields.lotScaleThreshold3Pips,
+                lotScaleLot3: fields.lotScaleLot3,
                 layerStaggerPips: fields.layerStaggerPips,
                 lockPipsAfterTp1: fields.lockPipsAfterTp1,
                 deepLockTriggerPips: fields.deepLockTriggerPips,
@@ -2200,6 +2207,7 @@ document.addEventListener("DOMContentLoaded", () => {
         pipValueUnit: 'cent', pipValuePerLot: 1,
         tpMode: 'fixed', l3TpAtrMode: false, l3TpAtrMultiplier: 0.6,
         lotScaleThreshold1Pips: 150, lotScaleLot1: 0.05, lotScaleThreshold2Pips: 250, lotScaleLot2: 0.03,
+        lotScaleThreshold3Pips: 500, lotScaleLot3: 0.02,
         summaryIntervalHours: 6, methodTwoEnabled: false
     };
     const CUR_SIGNAL_LABELS = SIGNAL_TYPE_LABELS;
@@ -3112,6 +3120,8 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById('cur-master-lot-scale-lot1').value = m.lotScaleLot1;
         document.getElementById('cur-master-lot-scale-threshold2').value = m.lotScaleThreshold2Pips;
         document.getElementById('cur-master-lot-scale-lot2').value = m.lotScaleLot2;
+        document.getElementById('cur-master-lot-scale-threshold3').value = m.lotScaleThreshold3Pips;
+        document.getElementById('cur-master-lot-scale-lot3').value = m.lotScaleLot3;
         document.getElementById('cur-master-layer-stagger-pips').value = m.layerStaggerPips;
         document.getElementById('cur-master-lock-pips-after-tp1').value = m.lockPipsAfterTp1;
         document.getElementById('cur-master-deep-lock-trigger-pips').value = m.deepLockTriggerPips;
@@ -3172,6 +3182,8 @@ document.addEventListener("DOMContentLoaded", () => {
             lotScaleLot1: readNum('cur-master-lot-scale-lot1'),
             lotScaleThreshold2Pips: readNum('cur-master-lot-scale-threshold2'),
             lotScaleLot2: readNum('cur-master-lot-scale-lot2'),
+            lotScaleThreshold3Pips: readNum('cur-master-lot-scale-threshold3'),
+            lotScaleLot3: readNum('cur-master-lot-scale-lot3'),
             layerStaggerPips: readNum('cur-master-layer-stagger-pips'),
             lockPipsAfterTp1: readNum('cur-master-lock-pips-after-tp1'),
             deepLockTriggerPips: readNum('cur-master-deep-lock-trigger-pips'),
@@ -3184,8 +3196,8 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPostMinutes: readNum('cur-master-news-post-minutes'),
             summaryIntervalHours: readNum('cur-master-summary-interval-hours')
         };
-        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.riskLimitPct > 0 && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0 && fields.l3TpAtrMultiplier > 0 && fields.lotScaleThreshold1Pips > 0 && fields.lotScaleLot1 > 0 && fields.lotScaleThreshold2Pips > fields.lotScaleThreshold1Pips && fields.lotScaleLot2 > 0;
-        if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0), dan Threshold 2 lot menyesuaikan harus lebih besar dari Threshold 1.'); return; }
+        const allValid = Object.values(fields).every(v => !isNaN(v) && v >= 0) && fields.riskLimitPct > 0 && fields.slPips > 0 && fields.atrMultiplier > 0 && fields.lotSize > 0 && fields.layerStaggerPips > 0 && fields.deepLockTriggerPips > 0 && fields.winrateLookbackDays > 0 && fields.winrateMinSamples > 0 && fields.tp1 > 0 && fields.tp2 > 0 && fields.tp3 > 0 && fields.pipValuePerLot > 0 && fields.summaryIntervalHours > 0 && fields.l3TpAtrMultiplier > 0 && fields.lotScaleThreshold1Pips > 0 && fields.lotScaleLot1 > 0 && fields.lotScaleThreshold2Pips > fields.lotScaleThreshold1Pips && fields.lotScaleLot2 > 0 && fields.lotScaleThreshold3Pips > fields.lotScaleThreshold2Pips && fields.lotScaleLot3 > 0;
+        if (!allValid) { alert('Ada input yang kosong/gak valid. Semua field harus angka positif (kecuali beberapa yang boleh 0), dan tiap Threshold lot menyesuaikan harus lebih besar dari Threshold sebelumnya.'); return; }
         if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud & kepakai bot VPS.'); return; }
         const master = {
             riskLimitPct: fields.riskLimitPct, riskPeriod: document.getElementById('cur-master-risk-period').value,
@@ -3198,6 +3210,7 @@ document.addEventListener("DOMContentLoaded", () => {
             lotSize: fields.lotSize,
             lotScaleThreshold1Pips: fields.lotScaleThreshold1Pips, lotScaleLot1: fields.lotScaleLot1,
             lotScaleThreshold2Pips: fields.lotScaleThreshold2Pips, lotScaleLot2: fields.lotScaleLot2,
+            lotScaleThreshold3Pips: fields.lotScaleThreshold3Pips, lotScaleLot3: fields.lotScaleLot3,
             layerStaggerPips: fields.layerStaggerPips,
             lockPipsAfterTp1: fields.lockPipsAfterTp1, deepLockTriggerPips: fields.deepLockTriggerPips,
             deepLockPips: fields.deepLockPips, deepLockTimeoutMinutes: fields.deepLockTimeoutMinutes,
