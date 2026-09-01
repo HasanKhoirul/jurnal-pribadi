@@ -136,22 +136,27 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     readySl: number|null,
     readyTpPipsUsed: [number, number, number]|null,
     readyAlasan: string|null
-  },
-  currencyInstruments: {       // modul Currency (multi-instrumen) - Gold TETAP di field root di atas, gak dipindah kesini
-    "<PAIR>": {                  // key = nama pair, misal "USDJPY", "GBPUSD", "AUDUSD", "EURUSD", "USDCAD"
-      aiTradeData: {...sama persis shape aiTradeData Gold di atas...},
-      aiModalAwal: number,        // modal simulasi TERPISAH per pair, gak digabung sama Gold atau pair lain
-      aiModalResetAt: string (YYYY-MM-DD) | null,  // sama konsepnya kayak aiModalResetAt Gold di atas, per pair sendiri
-      aiModalBeforeReset: number | null,  // sama konsepnya kayak aiModalBeforeReset Gold di atas, per pair sendiri
-      aiSettings: { master: {...sama shape aiSettings.master Gold, termasuk methodTwoEnabled...} },  // SL/TP/lot per pair independen
-      botControl: {...sama shape botControl Gold...},   // proses OS terpisah per pair, butuh restart-signal sendiri
-      ictState: {...sama shape ictState Gold...}
-    }
   }
 }
 ```
 
-Ditulis/dibaca oleh `scripts/ai-tick-currency.py <PAIR>` (1 proses per pair, parameterized - lihat komentar di file itu), pakai helper `instrument_fields()`/`get_instrument_data()` biar nempel ke `currencyInstruments.<PAIR>.*` doang. Logic symbol-agnostic (indikator, Metode 1, Metode 2 ICT, manajemen posisi) di-share dari `scripts/ai_trading_core.py` — dipakai bareng sama `ai-tick.py` (Gold), bukan duplikat kode. `AI_PIP_SIZE` per pair beda dari Gold (0.01 buat JPY, 0.0001 buat non-JPY) — lihat `CURRENCY_INSTRUMENTS` dict di `ai-tick-currency.py`.
+### Subcollection `appData/{uid}/currencyPairs/{PAIR}` — modul Currency (multi-instrumen), 1 dokumen sendiri per pair
+
+**Fase 2 Firestore egress fix (2026-09)**: dulu ini nested field `currencyInstruments.<PAIR>` di dalam dokumen `appData/{uid}` yang sama kayak Gold, sekarang dipisah jadi dokumen sendiri-sendiri biar `ai-tick-currency.py <PAIR>` bisa `on_snapshot()` ke dokumennya doang — update 1 pair (atau Gold) gak lagi nge-trigger re-download seluruh data 6 instrumen di listener instrumen lain (root cause biaya egress Firestore, lihat histori commit sekitar tanggal ini).
+
+```
+{                               // key dokumen = nama pair, misal "USDJPY", "GBPUSD", "AUDUSD", "EURUSD", "USDCAD"
+  aiTradeData: {...sama persis shape aiTradeData Gold di atas...},
+  aiModalAwal: number,        // modal simulasi TERPISAH per pair, gak digabung sama Gold atau pair lain
+  aiModalResetAt: string (YYYY-MM-DD) | null,  // sama konsepnya kayak aiModalResetAt Gold di atas, per pair sendiri
+  aiModalBeforeReset: number | null,  // sama konsepnya kayak aiModalBeforeReset Gold di atas, per pair sendiri
+  aiSettings: { master: {...sama shape aiSettings.master Gold, termasuk methodTwoEnabled...} },  // SL/TP/lot per pair independen
+  botControl: {...sama shape botControl Gold...},   // proses OS terpisah per pair, butuh restart-signal sendiri
+  ictState: {...sama shape ictState Gold...}
+}
+```
+
+Ditulis/dibaca oleh `scripts/ai-tick-currency.py <PAIR>` (1 proses per pair, parameterized - lihat komentar di file itu) lewat `instrument_doc_ref` yang nunjuk langsung ke dokumennya sendiri. Logic symbol-agnostic (indikator, Metode 1, Metode 2 ICT, manajemen posisi) di-share dari `scripts/ai_trading_core.py` — dipakai bareng sama `ai-tick.py` (Gold), bukan duplikat kode. `AI_PIP_SIZE` per pair beda dari Gold (0.01 buat JPY, 0.0001 buat non-JPY) — lihat `CURRENCY_INSTRUMENTS` dict di `ai-tick-currency.py`. Combined summary Telegram (kirim tiap ~6 jam, dipicu proses pair terakhir/USDCAD) baca Gold + 4 pair lain lewat one-time `.get()`/query (fungsi `fetch_combined_snapshot()`), BUKAN listener — biar gak nambah listening 24/7 ke instrumen lain.
 
 **Layer 0** = market entry (harga sinyal), TP default 80 pips. **Layer 1** = pending order -10 pips, TP default 100 pips. **Layer 2** = pending order -20 pips, TP default 150 pips (dan satu-satunya yang punya `deepLockAt`/`deepLockTriggerPips`/`deepLockPips`). Angka TP default itu berubah proporsional kalau `tpMode` "adaptive" pas trade dibuka.
 

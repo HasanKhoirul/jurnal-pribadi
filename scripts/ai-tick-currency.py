@@ -5,8 +5,10 @@
 #
 # Struktur & logic identik ai-tick.py (Gold) - reuse penuh dari ai_trading_core.py, cuma beda:
 #   - symbol/pip size di-resolve dari CURRENCY_INSTRUMENTS sesuai argumen command line
-#   - baca/tulis Firestore nempel di currencyInstruments.<PAIR>.* (BUKAN root aiTradeData/aiSettings/dst
-#     yang dipakai Gold), biar data 2 instrumen gak ketimpa satu sama lain
+#   - baca/tulis Firestore nempel di dokumen SENDIRI appData/{uid}/currencyPairs/<PAIR> (BUKAN root
+#     appData/{uid} yang dipakai Gold, dan BUKAN nested field kayak dulu) - Fase 2 Firestore egress fix
+#     (2026-09): tiap pair (+ Gold) listen ke dokumennya sendiri-sendiri, biar update 1 instrumen gak
+#     nge-trigger re-download SELURUH data 6 instrumen di listener instrumen lain
 #   - live price/candle dipush ke appData/public pakai field name ber-suffix _<PAIR>, biar gak collide
 #     sama punya Gold (aiLiveCandlesMt5/aiLivePriceMt5)
 
@@ -54,7 +56,7 @@ if len(sys.argv) < 2 or sys.argv[1] not in CURRENCY_INSTRUMENTS:
 
 PAIR = sys.argv[1]
 PAIR_CFG = CURRENCY_INSTRUMENTS[PAIR]
-FIELD_PREFIX = 'currencyInstruments'  # doc_ref.set({FIELD_PREFIX: {PAIR: {...}}}, merge=True) buat semua tulis
+CURRENCY_PAIRS_SUBCOLLECTION = 'currencyPairs'  # appData/{uid}/currencyPairs/<PAIR> - dokumen sendiri per pair (Fase 2)
 # Urutan sesuai dropdown web (USDJPY/GBPUSD/AUDUSD/EURUSD/USDCAD) - dipakai buat nge-stagger jadwal
 # kirim summary Telegram tiap pair (lihat maybe_send_summary), biar 5 proses independen ini gak ngirim
 # bareng & kecampur urutannya di 1 chat.
@@ -116,27 +118,16 @@ log(f"MT5 terhubung. Simbol dipakai: {SYMBOL}")
 cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
-doc_ref = db.collection('appData').document(AI_TARGET_UID)
+doc_ref = db.collection('appData').document(AI_TARGET_UID)  # root Gold - CUMA dipakai buat combined summary (one-time read) & ai_tick_log
+instrument_doc_ref = doc_ref.collection(CURRENCY_PAIRS_SUBCOLLECTION).document(PAIR)  # dokumen sendiri pair ini (Fase 2)
 public_doc_ref = db.collection('appData').document('public')
 
 
-def instrument_fields(fields):
-    # Bungkus field yg mau ditulis biar nempel ke currencyInstruments.<PAIR>.* doang, gak nyentuh
-    # data Gold atau pair currency lain. merge=True Firestore ngelakuin deep-merge nested dict,
-    # jadi sibling field (pair lain, atau field lain di dalam PAIR ini) aman gak ke-wipe.
-    return {FIELD_PREFIX: {PAIR: fields}}
-
-
-def get_instrument_data(doc_data):
-    return ((doc_data.get(FIELD_PREFIX) or {}).get(PAIR)) or {}
-
-
-# ---------- Cache dokumen utama (listener, gantiin doc_ref.get() polling tiap fast tick) ----------
-# Gold + 5 Currency nulis ke 1 doc yang sama, tapi masing2 pair CUMA nulis ke bagiannya sendiri
-# (currencyInstruments.<PAIR>.*) - jadi baca ulang tiap 10 detik sia-sia kalau gak ada yang berubah.
-# Listener bikin Firestore sendiri yang notif PAS beneran ada perubahan, jauh lebih irit daripada
-# polling terus-terusan. Slow tick (tiap 5 menit) TETAP polling manual sendiri sebagai jaring
-# pengaman kalau listener sempat putus/nyangkut - biayanya minimal karena udah jarang.
+# ---------- Cache dokumen instrumen (listener, gantiin instrument_doc_ref.get() polling tiap fast tick) ----------
+# Tiap pair listen ke dokumennya SENDIRI (bukan doc gabungan) - update pair lain / Gold gak nge-trigger
+# listener ini lagi (inti fix Fase 2, 2026-09). Listener bikin Firestore notif PAS beneran ada
+# perubahan, jauh lebih irit daripada polling terus-terusan. Slow tick (tiap 5 menit) TETAP polling
+# manual sendiri sebagai jaring pengaman kalau listener sempat putus/nyangkut - biayanya minimal.
 _doc_cache = {}
 _doc_cache_lock = threading.Lock()
 
@@ -157,9 +148,9 @@ def _on_doc_snapshot(doc_snapshot, changes, read_time):
         set_doc_cache(doc.to_dict())
 
 
-_initial_snap = doc_ref.get()
+_initial_snap = instrument_doc_ref.get()
 set_doc_cache(_initial_snap.to_dict() if _initial_snap.exists else {})
-doc_ref.on_snapshot(_on_doc_snapshot)
+instrument_doc_ref.on_snapshot(_on_doc_snapshot)
 
 
 # ---------- Telegram ----------
@@ -224,7 +215,7 @@ def push_live_price_to_public(tick):
         log(f"Gagal push live price ke appData/public: {e}")
 
 
-# Dipicu tombol restart per-pair di web (nulis currencyInstruments.<PAIR>.botControl.restartRequested).
+# Dipicu tombol restart per-pair di web (nulis botControl.restartRequested ke appData/{uid}/currencyPairs/<PAIR>).
 def handle_restart_request():
     now = datetime.now(timezone.utc)
     log("Restart diminta dari web, ambil kode terbaru...")
@@ -240,11 +231,11 @@ def handle_restart_request():
         result_msg = f'failed: {e}'
 
     try:
-        doc_ref.set(instrument_fields({'botControl': {
+        instrument_doc_ref.set({'botControl': {
             'restartRequested': False,
             'lastRestartAt': now.isoformat(),
             'lastRestartResult': result_msg,
-        }}), merge=True)
+        }}, merge=True)
     except Exception as e:
         log(f"Gagal update status botControl: {e}")
     log_ai_tick('restart' if success else 'error', result_msg)
@@ -296,8 +287,11 @@ def send_periodic_summary(ai_trade_data, tick):
 
 
 # Dikirim cuma sekali per siklus, oleh pair TERAKHIR yang giliran ngirim (USDCAD, PAIR_INDEX paling
-# besar) - biar muncul di chat setelah 5 pesan detail per-pair selesai. Gak butuh baca Firestore
-# tambahan: Gold & 5 Currency nulis ke 1 doc yang sama, jadi datanya udah ada di snapshot yang sama.
+# besar) - biar muncul di chat setelah 5 pesan detail per-pair selesai. Sejak Fase 2 (2026-09, tiap
+# instrumen punya dokumen sendiri), datanya GAK lagi otomatis ada di snapshot pair ini - dipanggil
+# dengan hasil one-time .get() terpisah (lihat maybe_send_summary), bukan dari listener. One-time read
+# ini cuma jalan tiap ~6 jam (staggered), jadi egress tambahannya nyaris nol dibanding penghematan
+# dari hilangnya listening 24/7 ke data 5 instrumen lain.
 # Floating P/L posisi terbuka SENGAJA gak digabung di sini - itu butuh harga live tiap instrumen
 # (bid/ask MT5 masing2 simbol), yang cuma dipunya proses instrumen itu sendiri.
 def send_combined_summary(gold_trade_data, currency_trade_data_by_pair):
@@ -348,7 +342,19 @@ def _latest_scheduled_summary_utc(now_utc, interval_hours):
     return slot_wib - timedelta(hours=7)
 
 
-def maybe_send_summary(ai_trade_data, bot_control, tick, now, doc_data):
+def fetch_combined_snapshot():
+    # One-time read (BUKAN listener) - cuma dipanggil tiap ~6 jam pas is_last_pair, jadi egress-nya
+    # nyaris nol. Gold dari root doc, 4 pair lain dari subcollection currencyPairs (query 1x, bukan
+    # 4x get() terpisah).
+    gold_snap = doc_ref.get()
+    gold_trade_data = (gold_snap.to_dict() or {}).get('aiTradeData', {}) if gold_snap.exists else {}
+    currency_by_pair = {}
+    for pair_snap in doc_ref.collection(CURRENCY_PAIRS_SUBCOLLECTION).stream():
+        currency_by_pair[pair_snap.id] = (pair_snap.to_dict() or {}).get('aiTradeData', {})
+    return gold_trade_data, currency_by_pair
+
+
+def maybe_send_summary(ai_trade_data, bot_control, tick, now):
     global _summary_in_flight
     if _summary_in_flight:
         return
@@ -370,15 +376,6 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now, doc_data):
     _summary_in_flight = True
     trade_data_snapshot = copy.deepcopy(ai_trade_data)
     is_last_pair = PAIR_INDEX == len(CURRENCY_INSTRUMENTS) - 1
-    combined_snapshot = None
-    if is_last_pair:
-        combined_snapshot = copy.deepcopy({
-            'gold': doc_data.get('aiTradeData', {}),
-            'currency': {
-                pair: (doc_data.get(FIELD_PREFIX, {}).get(pair, {}) or {}).get('aiTradeData', {})
-                for pair in CURRENCY_INSTRUMENTS
-            },
-        })
 
     def _worker():
         global _summary_in_flight
@@ -389,9 +386,10 @@ def maybe_send_summary(ai_trade_data, bot_control, tick, now, doc_data):
             if not manual and PAIR_INDEX > 0:
                 time.sleep(PAIR_INDEX * SUMMARY_STAGGER_SECONDS)
             send_periodic_summary(trade_data_snapshot, tick)
-            if combined_snapshot is not None:
-                send_combined_summary(combined_snapshot['gold'], combined_snapshot['currency'])
-            doc_ref.set(instrument_fields({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}), merge=True)
+            if is_last_pair:
+                gold_trade_data, currency_by_pair = fetch_combined_snapshot()
+                send_combined_summary(gold_trade_data, currency_by_pair)
+            instrument_doc_ref.set({'botControl': {'summaryRequested': False, 'lastSummaryAt': datetime.now(timezone.utc).isoformat()}}, merge=True)
             log_ai_tick('summary', 'Summary terkirim' + (' (manual)' if manual else ' (terjadwal)'))
         except Exception as e:
             log(f"Gagal kirim/update status summary: {e}")
@@ -453,8 +451,7 @@ def run_fast_tick():
     if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0 and is_market_open(now):
         push_live_price_to_public(tick)
 
-    doc_data = get_doc_cache()
-    inst = get_instrument_data(doc_data)
+    inst = get_doc_cache()
     ai_trade_data = inst.get('aiTradeData', {})
     ai_modal_awal = inst.get('aiModalAwal', 2500000)
     apply_ai_settings((inst.get('aiSettings') or {}).get('master'))
@@ -464,7 +461,7 @@ def run_fast_tick():
         handle_restart_request()
         return
 
-    maybe_send_summary(ai_trade_data, bot_control, tick, now, doc_data)
+    maybe_send_summary(ai_trade_data, bot_control, tick, now)
 
     live_kurs = get_cached_kurs(now)
     news_info = get_cached_news(now)
@@ -499,11 +496,10 @@ def run_fast_tick():
             send_telegram(f"{header}\n\n{notes_html}")
 
     if any_changed:
-        doc_ref.set(instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}), merge=True)
+        instrument_doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
         inst['aiTradeData'] = ai_trade_data
         inst['aiModalAwal'] = ai_modal_awal
-        doc_data.setdefault(FIELD_PREFIX, {})[PAIR] = inst
-        set_doc_cache(doc_data)  # update cache lokal langsung, gak perlu nunggu listener mantul balik
+        set_doc_cache(inst)  # update cache lokal langsung, gak perlu nunggu listener mantul balik
 
 
 def run_slow_tick():
@@ -520,11 +516,10 @@ def run_slow_tick():
             send_telegram(f"⚠️ <b>Bot Error ({PAIR})</b>\n\nGagal ambil data candle: {e}")
             return
 
-    snap = doc_ref.get()
-    doc_data = snap.to_dict() if snap.exists else {}
-    set_doc_cache(doc_data)  # slow tick tetep polling sendiri (murah, tiap 5 menit) - sekalian jadi
+    snap = instrument_doc_ref.get()
+    inst = snap.to_dict() if snap.exists else {}
+    set_doc_cache(inst)  # slow tick tetep polling sendiri (murah, tiap 5 menit) - sekalian jadi
     # jaring pengaman buat cache fast tick kalau-kalau listener sempat putus/nyangkut
-    inst = get_instrument_data(doc_data)
     ai_trade_data = inst.get('aiTradeData', {})
     ai_modal_awal = inst.get('aiModalAwal', 2500000)
     news_info = get_cached_news(now)
@@ -547,7 +542,7 @@ def run_slow_tick():
         sug1 = compute_ai_suggestion(candles, ai_trade_data)
         opened1 = auto_open_ai_position(ai_trade_data, sug1, ai_modal_awal)
         if opened1:
-            doc_ref.set(instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}), merge=True)
+            instrument_doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
             log_ai_tick('entry_opened', 'Entry Metode 1 berhasil dibuka.')
         else:
             log(cfg.last_signal_skip_reason or 'Gak ada sinyal Metode 1 valid tick ini.')
@@ -563,7 +558,7 @@ def run_slow_tick():
     ict_state = inst.get('ictState') or dict(ICT_STATE_DEFAULT)
     new_state, ready_sug = run_ict_state_machine(ict_state, ai_trade_data)
     if new_state != ict_state:
-        doc_ref.set(instrument_fields({'ictState': new_state}), merge=True)
+        instrument_doc_ref.set({'ictState': new_state}, merge=True)
 
     if not ready_sug:
         return
@@ -573,8 +568,8 @@ def run_slow_tick():
 
     opened2 = auto_open_ai_position(ai_trade_data, ready_sug, ai_modal_awal)
     if opened2:
-        doc_ref.set(
-            instrument_fields({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)}),
+        instrument_doc_ref.set(
+            {'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)},
             merge=True,
         )
         log_ai_tick('entry_opened_m2', 'Entry Metode 2 (ICT) berhasil dibuka.')

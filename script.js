@@ -46,6 +46,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Dokumen per-UID: expData/wealthData -> cuma bisa dibaca & ditulis kalau login asli.
     // ==========================================
     let privateUnsub = null;
+    let currencyUnsubs = [];  // 5 listener terpisah (1 per pair, Fase 2 Firestore egress fix 2026-09) - lihat attachCurrencyListeners
     let financeUnsub = null;
     let pushTimerAi = null;
     let pushTimerFinance = null;
@@ -77,10 +78,11 @@ document.addEventListener("DOMContentLoaded", () => {
     function pushAiToCloud() {
         if (!auth.currentUser) return Promise.resolve();
         // PENTING: .set() ini TANPA merge (biar fitur "Reset Data" yang nge-kosongin aiTradeData={} tetap
-        // beneran ke-kosongin di server, bukan cuma "gak ada yg di-merge") - jadi currencyInstruments WAJIB
-        // ikut disertain di sini pakai nilai terakhir yang udah ke-sync dari listener, biar gak ke-wipe
-        // tiap kali Gold nyimpen data (auto-open posisi, checkAndClose, Master Setting, dst).
-        return db.collection('appData').doc(auth.currentUser.uid).set({ aiTradeData, aiModalAwal, aiModalResetAt, aiModalBeforeReset, aiSettings, botControl, currencyInstruments })
+        // beneran ke-kosongin di server). currencyInstruments SENGAJA gak disertain lagi di sini (Fase 2
+        // Firestore egress fix, 2026-09) - data 5 pair currency sekarang di dokumen sendiri-sendiri
+        // (appData/{uid}/currencyPairs/<PAIR>), gak nempel di dokumen Gold ini lagi, jadi gak perlu
+        // ikut ke-broadcast ulang tiap kali Gold nyimpen data.
+        return db.collection('appData').doc(auth.currentUser.uid).set({ aiTradeData, aiModalAwal, aiModalResetAt, aiModalBeforeReset, aiSettings, botControl })
             .catch(err => { console.error('Gagal sync data AI ke cloud:', err); throw err; });
     }
 
@@ -125,7 +127,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 aiModalBeforeReset = d.aiModalBeforeReset || null;
                 aiSettings = d.aiSettings || defaultAiSettings;
                 botControl = d.botControl || {};
-                currencyInstruments = d.currencyInstruments || {};  // modul Currency - VPS-only compute, di sini cuma dibaca (gak ada localStorage cache, murni cloud-driven)
                 localStorage.setItem('ai_trade_data_v1', JSON.stringify(aiTradeData)); localStorage.setItem('ai_modal_awal', aiModalAwal);
                 localStorage.setItem('ai_modal_reset_at', JSON.stringify(aiModalResetAt));
                 localStorage.setItem('ai_modal_before_reset', JSON.stringify(aiModalBeforeReset));
@@ -135,6 +136,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 rerenderActiveSection();
             }
         }, err => { console.error('Gagal ambil data privat dari cloud:', err); alert('Gagal ambil data privat: ' + err.code); });
+    }
+
+    // Fase 2 Firestore egress fix (2026-09): data 5 pair currency sekarang di dokumen sendiri-sendiri
+    // (appData/{uid}/currencyPairs/<PAIR>), BUKAN nested field di dokumen Gold lagi - biar update 1 pair
+    // gak nge-trigger re-download seluruh data 6 instrumen di listener Gold/pair lain. 5 listener terpisah
+    // di sini, tapi object lokal `currencyInstruments[pairKey]` tetap sama shape-nya kayak dulu, jadi
+    // semua call-site BACA (getCurInstrument dkk) gak perlu berubah.
+    function attachCurrencyListeners(uid) {
+        detachCurrencyListeners();
+        currencyUnsubs = CURRENCY_PAIRS.map(pairKey =>
+            db.collection('appData').doc(uid).collection('currencyPairs').doc(pairKey).onSnapshot(doc => {
+                currencyInstruments[pairKey] = doc.exists ? (doc.data() || {}) : {};
+                rerenderActiveSection();
+            }, err => console.error(`Gagal ambil data currencyPairs/${pairKey} dari cloud:`, err))
+        );
+    }
+
+    function detachCurrencyListeners() {
+        currencyUnsubs.forEach(unsub => unsub());
+        currencyUnsubs = [];
     }
 
     // Migrasi 1x: expData/wealthData dulu numpang di 'appData/{uid}', sekarang pindah ke dokumen
@@ -270,9 +291,10 @@ document.addEventListener("DOMContentLoaded", () => {
         isLoggedIn = !!user;
         applyAuthState();
         rerenderActiveSection();
-        if (user) { attachPrivateListener(user.uid); attachFinanceListener(user.uid); migrateFinanceDataIfNeeded(user.uid); }
+        if (user) { attachPrivateListener(user.uid); attachCurrencyListeners(user.uid); attachFinanceListener(user.uid); migrateFinanceDataIfNeeded(user.uid); }
         else {
             if (privateUnsub) { privateUnsub(); privateUnsub = null; }
+            detachCurrencyListeners();
             if (financeUnsub) { financeUnsub(); financeUnsub = null; }
             stopAiAutoTick();
         }
@@ -2478,7 +2500,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 update.aiModalBeforeReset = null;
             }
         }
-        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: update } }, { merge: true })
+        db.collection('appData').doc(auth.currentUser.uid).collection('currencyPairs').doc(pairKey).set(update, { merge: true })
             .catch(err => alert('Gagal simpan modal: ' + err.message));
     };
 
@@ -3162,7 +3184,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('btn-reset-cur-master').onclick = () => {
         const pairKey = currentCurPair();
         if (!auth.currentUser) { alert('Login dulu biar tersimpan ke cloud.'); return; }
-        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiSettings: { master: Object.assign({}, CURRENCY_MASTER_DEFAULTS) } } } }, { merge: true })
+        db.collection('appData').doc(auth.currentUser.uid).collection('currencyPairs').doc(pairKey).set({ aiSettings: { master: Object.assign({}, CURRENCY_MASTER_DEFAULTS) } }, { merge: true })
             .then(() => { alert(`Master Setting ${pairKey} dikembalikan ke default.`); document.getElementById('cur-master-modal').style.display = 'none'; })
             .catch(err => alert('Gagal reset: ' + err.message));
     };
@@ -3219,7 +3241,7 @@ document.addEventListener("DOMContentLoaded", () => {
             newsPostMinutes: fields.newsPostMinutes, summaryIntervalHours: fields.summaryIntervalHours,
             methodTwoEnabled: document.getElementById('cur-master-method-two-enabled').value === 'on'
         };
-        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiSettings: { master } } } }, { merge: true })
+        db.collection('appData').doc(auth.currentUser.uid).collection('currencyPairs').doc(pairKey).set({ aiSettings: { master } }, { merge: true })
             .then(() => {
                 document.getElementById('cur-master-modal').style.display = 'none';
                 alert(`Master Setting ${pairKey} tersimpan & disinkronkan — otomatis kepakai bot VPS pair ini dalam ~10 detik.`);
@@ -3234,8 +3256,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!confirm(`Restart bot VPS pair ${pairKey} sekarang? Bot bakal ambil kode terbaru & jalan ulang otomatis dalam ~10 detik (cuma jalan kalau prosesnya lagi hidup).`)) return;
         if (!auth.currentUser) { alert('Login dulu.'); return; }
         const existingBotControl = getCurInstrument(pairKey).botControl || {};
-        db.collection('appData').doc(auth.currentUser.uid).set({
-            currencyInstruments: { [pairKey]: { botControl: { ...existingBotControl, restartRequested: true, requestedAt: new Date().toISOString() } } }
+        db.collection('appData').doc(auth.currentUser.uid).collection('currencyPairs').doc(pairKey).set({
+            botControl: { ...existingBotControl, restartRequested: true, requestedAt: new Date().toISOString() }
         }, { merge: true })
             .then(() => alert(`Sinyal restart ${pairKey} terkirim. Cek tab Log Aktivitas dalam ~30 detik.`))
             .catch(err => alert('Gagal kirim sinyal restart: ' + err.message));
@@ -3247,8 +3269,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!confirm(`Kirim summary posisi & P/L ${pairKey} ke Telegram sekarang?`)) return;
         if (!auth.currentUser) { alert('Login dulu.'); return; }
         const existingBotControl = getCurInstrument(pairKey).botControl || {};
-        db.collection('appData').doc(auth.currentUser.uid).set({
-            currencyInstruments: { [pairKey]: { botControl: { ...existingBotControl, summaryRequested: true, summaryRequestedAt: new Date().toISOString() } } }
+        db.collection('appData').doc(auth.currentUser.uid).collection('currencyPairs').doc(pairKey).set({
+            botControl: { ...existingBotControl, summaryRequested: true, summaryRequestedAt: new Date().toISOString() }
         }, { merge: true })
             .then(() => alert(`Sinyal summary ${pairKey} terkirim. Cek Telegram dalam ~30 detik (cuma jalan kalau proses bot lagi hidup).`))
             .catch(err => alert('Gagal kirim sinyal summary: ' + err.message));
@@ -3275,7 +3297,7 @@ document.addEventListener("DOMContentLoaded", () => {
         db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
             .add({ time: new Date().toISOString(), outcome: 'manual_reset', detail: reason, source: `browser_${pairKey}` })
             .catch(err => console.error('Gagal catat log reset:', err));
-        db.collection('appData').doc(auth.currentUser.uid).set({ currencyInstruments: { [pairKey]: { aiTradeData: {} } } }, { merge: true })
+        db.collection('appData').doc(auth.currentUser.uid).collection('currencyPairs').doc(pairKey).set({ aiTradeData: {} }, { merge: true })
             .then(() => {
                 document.getElementById('cur-reset-modal').style.display = 'none';
                 alert(`Data simulasi ${pairKey} direset. Pair lain & Gold gak kesenggol.`);
