@@ -1,0 +1,24 @@
+# Pengecek eksternal: bot VPS udah berapa lama gak kirim update ke Firestore -> alert Telegram
+# kalau kelamaan. Jalan di GitHub Actions (bukan di VPS) supaya tetap bisa teriak walau VPS-nya
+# sendiri yang mati (lihat scripts/watchdog-check.mjs buat detail logic).
+name: Watchdog Bot Mati
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install firebase-admin
+      - run: node scripts/watchdog-check.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

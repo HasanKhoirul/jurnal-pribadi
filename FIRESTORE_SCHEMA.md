@@ -33,6 +33,11 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     result: { title: string, time: string } | null,   // null = gak ada berita high-impact aktif
     checkedAt: string (ISO)
   },  // ai-tick-currency.py (5 proses) baca dari sini duluan, fallback fetch sendiri kalau cache basi/gak ada (misal Gold lg mati) - hemat 6x jadi 1x request ke API gratis publik, ngurangin resiko ke-throttle/blokir
+  watchdogState: {              // ditulis scripts/watchdog-check.mjs (GitHub Actions, jalan tiap 15 menit, LUAR VPS) - deteksi bot/VPS mati dari basi-nya aiLivePriceMt5UpdatedAt(_<PAIR>) di atas, alert Telegram kalau diam >15 menit pas jam pasar buka
+    down: boolean,
+    downSince: string (ISO) | null,
+    lastAlertAt: string (ISO) | null   // buat throttle reminder tiap 2 jam selama masih down, biar gak spam
+  },
   sportData: {
     "YYYY-MM-DD": [
       { time: string, type: string, target: string, achieved: string, totalDur: number,
@@ -58,7 +63,7 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     llmProvider: "none"|"gemini"|"claude",
     llmKey: string,
     master: {                  // diatur dari menu "🎛️ Master Setting" - dibaca ulang tiap tick oleh bot VPS (ai-tick.py) & ai-tick.mjs, gak perlu restart bot
-      riskLimitPct: number,     // default 10 - CUMA dipakai kotak insight dashboard browser (script.js), TIDAK dipakai bot (gak nge-block entry)
+      riskLimitPct: number,     // default 10 - dipakai kotak insight dashboard browser (script.js) DAN beneran ngeblok entry baru di bot (auto_open_ai_position(), sejak 7/14 Juli). Sejak 9/2026 (Pilar 2) breach check pakai closed+floating (bukan closed doang), dan tiap instrumen ikut nyumbang ke limit GABUNGAN lintas-instrumen (compute_combined_risk_status() di ai_trading_core.py, jumlah riskLimitPct semua instrumen vs total rugi closed gabungan) yang bisa ngeblok entry di SEMUA instrumen sekaligus.
       riskPeriod: "monthly"|"weekly",  // default "monthly" - "weekly" = minggu berjalan sekarang (Senin-Minggu real), bukan minggu dari bulan yang dibrowse
       slPips: number,                   // default 50 - dipakai kalau slMode "fixed"
       slMode: "fixed"|"atr",             // default "fixed" - "atr" = SL ikut ATR(14) H1 x atrMultiplier, di-clamp 30-120 pips (clamp hardcode, bukan field)
@@ -89,8 +94,10 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     lastRestartResult: string | null,     // "success" | "failed: <pesan git pull>"
     summaryRequested: boolean,   // true = ada permintaan kirim summary Telegram manual yang belum diproses
     summaryRequestedAt: string (ISO),
-    lastSummaryAt: string (ISO) | null    // dipakai bot buat cek udah lewat jadwal terdekat (00/06/12/18 WIB, dst) apa belum (summary otomatis)
-  },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary
+    lastSummaryAt: string (ISO) | null,   // dipakai bot buat cek udah lewat jadwal terdekat (00/06/12/18 WIB, dst) apa belum (summary otomatis)
+    pauseRequested: boolean,     // Pilar 1 kill-switch (2026-09) - BEDA dari restartRequested/summaryRequested: PERSISTENT, bot cuma BACA (gak pernah nge-reset sendiri jadi false), cuma tombol "▶️ Resume Semua Entry" di Monitoring yang matiin. Ngeblok entry BARU doang (Metode 1+2), TIDAK nyentuh manajemen posisi yang udah open (SL/TP/deep-lock tetep jalan). Tombol "🚨 Pause SEMUA Entry Baru" di Monitoring nulis field ini ke SEMUA 6 dokumen (root Gold + 5 currencyPairs) sekaligus dalam 1 klik
+    pauseRequestedAt: string (ISO)
+  },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary/pause
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiModalResetAt: string (YYYY-MM-DD) | null,  // kalau keisi, trade SEBELUM tanggal ini di-skip dari kalkulasi Equity Awal/Akhir (modal "berdiri sendiri") - histori kalender/detail trade tetap utuh, cuma gak ikut ke equity lagi
   aiModalBeforeReset: number | null,  // modal yang berlaku SEBELUM aiModalResetAt - dipakai biar bulan-bulan sebelum tanggal reset tetap kebaca akurat (bukan ketarik modal baru) pas di-browse ulang
