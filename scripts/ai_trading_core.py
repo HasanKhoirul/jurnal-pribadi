@@ -261,6 +261,11 @@ def market_seconds_between(start, end):
     return total
 
 
+def weekend_close_due(now):
+    # Jumat 18:00 WIB (11:00 UTC) ke atas: entry baru dilarang & posisi open ditutup sebelum weekend.
+    return now.weekday() == 4 and now.hour >= 11
+
+
 def is_high_impact_news_window_fallback(now):
     day = now.weekday()
     if day in (5, 6):
@@ -601,6 +606,8 @@ def compute_combined_risk_status(instruments):
 
 def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
     if not sug:
+        return False
+    if weekend_close_due(datetime.now(timezone.utc)):
         return False
 
     # Hard-stop risk limit - GABUNGAN Metode 1+2 (1 modal, 1 limit per instrumen, bukan 2 anggaran
@@ -986,6 +993,11 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
 
     opened_time = datetime.fromisoformat(trade['openedAt'])
     still_active = any(not_resolved(ly) for ly in layers)
+    if still_active and weekend_close_due(now):
+        if force_close_all_layers_at_market(trade, bid, ask, live_kurs, 'weekend_close', now):
+            changed = True
+            notes.append("Jumat sore, posisi ditutup sebelum weekend.")
+        still_active = False
     if still_active and market_seconds_between(opened_time, now) >= timedelta(days=3).total_seconds():
         for ly in layers:
             if ly['status'] == 'pending':

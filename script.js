@@ -1747,7 +1747,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const AI_LAYER_STATUS_LABEL = {
         pending: 'Pending (belum kefill)', open: 'Masih Open', tp: 'Kena TP', sl: 'Kena SL', be: 'Breakeven',
-        timeout: 'Timeout (3 hari)', timeout_lock: 'Timeout setelah lock', news_close: 'Ditutup (berita)', cancelled: 'Dibatalkan',
+        timeout: 'Timeout (3 hari jam market)', timeout_lock: 'Timeout setelah lock', news_close: 'Ditutup (berita)', weekend_close: 'Ditutup (sebelum weekend)', cancelled: 'Dibatalkan',
     };
     function formatAiTime(iso) { return iso ? new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '-'; }
     window.toggleAiHistDetail = function(headerEl) {
