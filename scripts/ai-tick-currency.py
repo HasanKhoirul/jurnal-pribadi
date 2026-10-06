@@ -304,7 +304,7 @@ def send_periodic_summary(ai_trade_data, tick):
 # (bid/ask MT5 masing2 simbol), yang cuma dipunya proses instrumen itu sendiri.
 def send_combined_summary(gold_trade_data, currency_trade_data_by_pair):
     def totals(trade_data_list):
-        today_pl = today_n = week_pl = week_n = all_pl = all_n = 0
+        today_pl = today_n = week_pl = week_n = month_pl = month_n = all_pl = all_n = 0
         for td in trade_data_list:
             t, n = get_today_pl(td)
             today_pl += t
@@ -312,25 +312,30 @@ def send_combined_summary(gold_trade_data, currency_trade_data_by_pair):
             t, n = get_current_week_pl(td)
             week_pl += t
             week_n += n
+            t, n = get_current_month_pl(td)
+            month_pl += t
+            month_n += n
             t, n = get_all_time_pl(td)
             all_pl += t
             all_n += n
-        return today_pl, today_n, week_pl, week_n, all_pl, all_n
+        return today_pl, today_n, week_pl, week_n, month_pl, month_n, all_pl, all_n
 
     currency_list = list(currency_trade_data_by_pair.values())
-    c_today_pl, c_today_n, c_week_pl, c_week_n, c_all_pl, c_all_n = totals(currency_list)
+    c_today_pl, c_today_n, c_week_pl, c_week_n, c_month_pl, c_month_n, c_all_pl, c_all_n = totals(currency_list)
     send_telegram(
         f"📊 <b>Total 5 Currency</b>\n\n"
         f"📅 Hari Ini: {format_rupiah(c_today_pl)} ({c_today_n} entry)\n"
         f"🗓️ Minggu Ini: {format_rupiah(c_week_pl)} ({c_week_n} entry)\n"
+        f"📆 Bulan Ini: {format_rupiah(c_month_pl)} ({c_month_n} entry)\n"
         f"📈 Keseluruhan: {format_rupiah(c_all_pl)} ({c_all_n} entry)"
     )
 
-    g_today_pl, g_today_n, g_week_pl, g_week_n, g_all_pl, g_all_n = totals([gold_trade_data] + currency_list)
+    g_today_pl, g_today_n, g_week_pl, g_week_n, g_month_pl, g_month_n, g_all_pl, g_all_n = totals([gold_trade_data] + currency_list)
     send_telegram(
         f"🌍 <b>Total Keseluruhan (Gold + 5 Currency)</b>\n\n"
         f"📅 Hari Ini: {format_rupiah(g_today_pl)} ({g_today_n} entry)\n"
         f"🗓️ Minggu Ini: {format_rupiah(g_week_pl)} ({g_week_n} entry)\n"
+        f"📆 Bulan Ini: {format_rupiah(g_month_pl)} ({g_month_n} entry)\n"
         f"📈 Keseluruhan: {format_rupiah(g_all_pl)} ({g_all_n} entry)"
     )
 
