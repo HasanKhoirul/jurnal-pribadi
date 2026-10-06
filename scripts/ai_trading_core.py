@@ -235,6 +235,32 @@ def is_market_open(now):
     return True
 
 
+def _next_weekly_at(t, weekday, hour):
+    # Waktu UTC terdekat setelah t yang jatuh di weekday (Mon=0) jam hour:00.
+    cand = t.replace(hour=hour, minute=0, second=0, microsecond=0)
+    cand += timedelta(days=(weekday - t.weekday()) % 7)
+    if cand <= t:
+        cand += timedelta(days=7)
+    return cand
+
+
+def market_seconds_between(start, end):
+    # Hitung detik market BUKA saja antara start dan end (UTC). Weekend (Jumat 21:00 - Minggu 22:00 UTC)
+    # gak dihitung, jadi timeout 3 hari gak ikut jalan waktu market tutup.
+    total = 0.0
+    t = start
+    while t < end:
+        if is_market_open(t):
+            boundary = _next_weekly_at(t, 4, 21)  # Jumat 21:00 UTC market tutup
+        else:
+            boundary = _next_weekly_at(t, 6, 22)  # Minggu 22:00 UTC market buka lagi
+        step_end = min(boundary, end)
+        if is_market_open(t):
+            total += (step_end - t).total_seconds()
+        t = step_end
+    return total
+
+
 def is_high_impact_news_window_fallback(now):
     day = now.weekday()
     if day in (5, 6):
@@ -960,7 +986,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
 
     opened_time = datetime.fromisoformat(trade['openedAt'])
     still_active = any(not_resolved(ly) for ly in layers)
-    if still_active and (now - opened_time) >= timedelta(days=3):
+    if still_active and market_seconds_between(opened_time, now) >= timedelta(days=3).total_seconds():
         for ly in layers:
             if ly['status'] == 'pending':
                 ly['status'] = 'cancelled'
@@ -975,7 +1001,7 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
             ly['status'] = 'timeout'
             ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_moved, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
             changed = True
-        notes.append("Posisi lewat 3 hari, ditutup paksa (timeout).")
+        notes.append("Posisi lewat 3 hari jam market buka, ditutup paksa (timeout).")
 
     if not changed:
         return {'changed': False, 'allResolved': False, 'notes': []}
