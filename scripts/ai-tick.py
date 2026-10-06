@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 from ai_trading_core import (
     cfg, AI_MASTER_DEFAULTS, AI_RISK_ALERT_THROTTLE_MINUTES, apply_master_settings, fmt_price,
-    fetch_candles, get_today_pl, get_current_week_pl, get_all_time_pl, format_rupiah,
+    fetch_candles, get_today_pl, get_current_week_pl, get_current_month_pl, get_all_time_pl, format_rupiah,
     find_open_ai_trade_for_group, METHOD_GROUPS, signal_type_label, compute_ai_suggestion, auto_open_ai_position,
     check_and_close_position_tick, force_close_all_layers_at_market, run_ict_state_machine,
     ICT_STATE_DEFAULT, exit_price_for, calc_layer_pl_usc, usc_to_rupiah,
@@ -261,6 +261,9 @@ def send_periodic_summary(ai_trade_data, tick):
     week_pl, week_n = get_current_week_pl(ai_trade_data)
     send_telegram(f"🗓️ <b>P/L Minggu Ini</b>\n\n{format_rupiah(week_pl)} dari {week_n} entry closed.")
 
+    month_pl, month_n = get_current_month_pl(ai_trade_data)
+    send_telegram(f"📆 <b>P/L Bulan Ini ({cfg.SYMBOL_LABEL})</b>\n\n{format_rupiah(month_pl)} dari {month_n} entry closed.")
+
     all_pl, all_n = get_all_time_pl(ai_trade_data)
     send_telegram(f"📊 <b>P/L Keseluruhan</b>\n\n{format_rupiah(all_pl)} dari {all_n} entry closed.")
 
@@ -392,7 +395,10 @@ def run_fast_tick():
             changed = force_close_all_layers_at_market(trade, tick.bid, tick.ask, live_kurs, 'news_close', now)
             if changed:
                 any_changed = True
-                msg = f"Posisi {label}ditutup paksa: berita high-impact \"{news_info['title']}\"."
+                exit_px = exit_price_for(trade['arah'], tick.bid, tick.ask)
+                closed_pl = sum(ly.get('pl', 0) for ly in trade['layers'] if ly['status'] == 'news_close')
+                msg = (f"Posisi {cfg.SYMBOL_LABEL} {label}ditutup paksa: berita high-impact \"{news_info['title']}\".\n"
+                       f"Harga tutup: {fmt_price(exit_px)}\nP/L layer yang ditutup berita: {format_rupiah(closed_pl)}")
                 log(msg)
                 log_ai_tick('news_close', msg)
                 send_telegram(f"📰 <b>Posisi Ditutup (Berita)</b>\n\n{msg}")
