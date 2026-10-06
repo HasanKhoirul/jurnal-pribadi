@@ -28,6 +28,7 @@ from ai_trading_core import (
     cfg, AI_MASTER_DEFAULTS, AI_RISK_ALERT_THROTTLE_MINUTES, apply_master_settings, fmt_price,
     fetch_candles, get_today_pl, get_current_week_pl, get_current_month_pl, get_all_time_pl, format_rupiah,
     find_open_ai_trade_for_group, METHOD_GROUPS, signal_type_label, compute_ai_suggestion, auto_open_ai_position,
+    check_mt5_connection, mt5_account_status,
     check_and_close_position_tick, force_close_all_layers_at_market, run_ict_state_machine,
     ICT_STATE_DEFAULT, exit_price_for, calc_layer_pl_usc, usc_to_rupiah,
     fetch_active_high_impact_news, fetch_live_kurs_idr, is_market_open,
@@ -232,6 +233,9 @@ def handle_restart_request():
 # Datanya (ai_trade_data) udah kebaca dari cache (get_doc_cache()) buat keperluan lain - ngirim summary ini
 # gak nambah read Firestore sama sekali, cuma format teks + kirim ke Telegram (gratis).
 def send_periodic_summary(ai_trade_data, tick):
+    st = mt5_account_status()
+    akun = f"{st['mode']}, login {st['login']}, terhubung ✅" if st['connected'] else "tidak terhubung ❌"
+    send_telegram(f"🔌 <b>Akun trading:</b> {akun}")
     for group_name, group_label in (('method1', ''), ('method2', ' — Metode 2 (ICT)')):
         if group_name == 'method2' and not cfg.AI_METHOD_TWO_ENABLED:
             continue  # metode 2 lg off - gak usah kirim pesan "gak ada posisi" yg gak relevan
@@ -357,6 +361,7 @@ _fast_tick_count = 0
 def run_fast_tick():
     global _fast_tick_count
     now = datetime.now(timezone.utc)
+    check_mt5_connection(now, send_telegram)  # harus sebelum return di bawah, biar putus MT5 tetap ke-alert
     tick = mt5.symbol_info_tick(SYMBOL)
     if tick is None:
         log(f"Gagal ambil tick MT5: {mt5.last_error()}")

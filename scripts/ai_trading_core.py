@@ -10,6 +10,7 @@
 #   3. Import MetaTrader5 duluan & mt5.initialize() di host SEBELUM manggil fetch_candles() dari sini.
 
 import math
+import os
 from datetime import datetime, timezone, timedelta
 
 import MetaTrader5 as mt5
@@ -259,6 +260,57 @@ def market_seconds_between(start, end):
             total += (step_end - t).total_seconds()
         t = step_end
     return total
+
+
+# ---------- Status akun trading (MT5) ----------
+# Alert kalau akun gak terhubung > 30 menit (biar gak ribut buat putus sebentar yg nyambung lagi sendiri).
+MT5_DOWN_ALERT_AFTER = timedelta(minutes=30)
+_mt5_down_since = None
+_mt5_down_alerted = False
+
+
+def mt5_account_status():
+    info = mt5.account_info()
+    term = mt5.terminal_info()
+    if not (term and term.connected and info):
+        return {'connected': False}
+    mode_names = {getattr(mt5, 'ACCOUNT_TRADE_MODE_DEMO', 0): 'demo',
+                  getattr(mt5, 'ACCOUNT_TRADE_MODE_REAL', 2): 'real'}
+    return {'connected': True, 'login': info.login, 'server': info.server,
+            'mode': mode_names.get(info.trade_mode, 'lainnya')}
+
+
+def check_mt5_connection(now, send_alert):
+    global _mt5_down_since, _mt5_down_alerted
+    st = mt5_account_status()
+    if st['connected']:
+        if _mt5_down_alerted:
+            send_alert("✅ <b>Akun trading terhubung lagi</b>")
+        _mt5_down_since = None
+        _mt5_down_alerted = False
+        return st
+    if _mt5_down_since is None:
+        _mt5_down_since = now
+    if not _mt5_down_alerted and now - _mt5_down_since >= MT5_DOWN_ALERT_AFTER:
+        mins = int((now - _mt5_down_since).total_seconds() // 60)
+        send_alert(f"🔌 <b>Akun trading tidak terhubung</b>\n\nSudah {mins} menit. "
+                   f"Cek login MT5 di VPS dan status akun di Exness.")
+        _mt5_down_alerted = True
+    return st
+
+
+def mt5_entry_block_reason():
+    # MT5_EXPECTED_MODE (demo/real) & MT5_LOGIN di .env. Kosong = gak dicek (perilaku lama).
+    st = mt5_account_status()
+    if not st['connected']:
+        return 'akun trading tidak terhubung'
+    expected_mode = os.environ.get('MT5_EXPECTED_MODE', '').strip().lower()
+    if expected_mode and st['mode'] != expected_mode:
+        return f"jenis akun {st['mode']}, harusnya {expected_mode}"
+    expected_login = os.environ.get('MT5_LOGIN', '').strip()
+    if expected_login and str(st['login']) != expected_login:
+        return f"login {st['login']}, harusnya {expected_login}"
+    return None
 
 
 def weekend_close_due(now):
@@ -608,6 +660,8 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
     if not sug:
         return False
     if weekend_close_due(datetime.now(timezone.utc)):
+        return False
+    if mt5_entry_block_reason():
         return False
 
     # Hard-stop risk limit - GABUNGAN Metode 1+2 (1 modal, 1 limit per instrumen, bukan 2 anggaran
