@@ -27,15 +27,20 @@ from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
 from ai_trading_core import (
-    cfg, AI_MASTER_DEFAULTS, apply_master_settings, fmt_price,
+    cfg, AI_MASTER_DEFAULTS, AI_RISK_ALERT_THROTTLE_MINUTES, apply_master_settings, fmt_price,
     fetch_candles, get_today_pl, get_current_week_pl, get_all_time_pl, format_rupiah,
     find_open_ai_trade_for_group, METHOD_GROUPS, signal_type_label, compute_ai_suggestion, auto_open_ai_position,
     check_and_close_position_tick, force_close_all_layers_at_market, run_ict_state_machine,
     ICT_STATE_DEFAULT, exit_price_for, calc_layer_pl_usc, usc_to_rupiah,
     fetch_active_high_impact_news, fetch_live_kurs_idr, is_market_open,
+    compute_floating_pl, write_risk_summary, fetch_all_instruments_snapshot, compute_combined_risk_status,
 )
 
 load_dotenv()
+
+# Cuma Gold (ai-tick.py) yang kirim alert Telegram combined risk limit - lihat komentar sama di sana.
+# 5 proses currency tetep ENFORCE block-nya sendiri-sendiri, cuma gak ngirim alert (hindari duplikat).
+SEND_COMBINED_RISK_ALERTS = False
 
 # Daftar pair currency yang didukung + config-nya. Symbol candidates ini TENTATIF - cek nama PERSIS
 # di MT5 Market Watch VPS (klik kanan -> Symbols) sebelum jalanin, update di sini kalau beda.
@@ -522,12 +527,51 @@ def run_slow_tick():
     # jaring pengaman buat cache fast tick kalau-kalau listener sempat putus/nyangkut
     ai_trade_data = inst.get('aiTradeData', {})
     ai_modal_awal = inst.get('aiModalAwal', 2500000)
+    bot_control = inst.get('botControl') or {}
     news_info = get_cached_news(now)
 
     if not market_open:
         log("Market tutup (weekend), skip.")
         log_ai_tick('market_closed', 'Weekend, market tutup.')
         return
+
+    # ---------- Kill-switch (Pilar 1 - 2026-09) ----------
+    # pauseRequested BEDA dari restartRequested/summaryRequested - PERSISTENT, bot cuma baca (gak pernah
+    # nge-reset sendiri), cuma tombol "Resume" di web yang matiin. Dicek DULUAN (murah) sebelum combined
+    # risk limit - kalau udah pasti diblok krn pause, gak perlu buang 6 reads combined snapshot.
+    paused = bool(bot_control.get('pauseRequested'))
+    if paused:
+        log_ai_tick('paused_block', 'Entry ditahan: mode pause aktif (emergency stop).')
+
+    # Floating P/L instrumen INI SENDIRI (PAIR) - ditulis ke dokumen pair ini biar dibaca cek gabungan.
+    live_tick = mt5.symbol_info_tick(SYMBOL)
+    live_kurs = get_cached_kurs(now)
+    floating_pl = compute_floating_pl(ai_trade_data, live_tick.bid, live_tick.ask, live_kurs) if live_tick else 0.0
+    if live_tick:
+        write_risk_summary(doc_ref, cfg.SYMBOL_LABEL, ai_trade_data, ai_modal_awal, floating_pl)
+
+    # ---------- Combined risk limit (gabungan 6 instrumen, Pilar 2 - 2026-09) ----------
+    # doc_ref = root appData/{uid} (Gold), tetep disimpen buat ini + fetch_combined_snapshot/ai_tick_log.
+    combined_loss, combined_limit = (0.0, 0.0) if paused else compute_combined_risk_status(fetch_all_instruments_snapshot(doc_ref))
+    combined_blocked = combined_limit > 0 and combined_loss >= combined_limit
+    if combined_blocked:
+        msg = (f"Entry SEMUA instrumen ditahan: limit risk GABUNGAN kesentuh "
+               f"(rugi {format_rupiah(combined_loss)} dari total batas gabungan {format_rupiah(combined_limit)}).")
+        log(msg)
+        log_ai_tick('combined_risk_block', msg)
+        if SEND_COMBINED_RISK_ALERTS:
+            should_alert = (cfg.combined_risk_last_alert_at is None or
+                             (now - cfg.combined_risk_last_alert_at) >= timedelta(minutes=AI_RISK_ALERT_THROTTLE_MINUTES))
+            if should_alert:
+                cfg.combined_risk_last_alert_at = now
+                send_telegram(
+                    "🚨 <b>Entry SEMUA Instrumen Diblok - Limit Risk Gabungan Kesentuh</b>\n\n"
+                    f"Rugi gabungan periode berjalan {format_rupiah(combined_loss)}, lewat total batas "
+                    f"gabungan {format_rupiah(combined_limit)} (jumlah limit tiap instrumen).\n"
+                    "Entry baru DITAHAN DI SEMUA INSTRUMEN sampai periode berikutnya atau ada limit yang dinaikkan."
+                )
+    elif SEND_COMBINED_RISK_ALERTS:
+        cfg.combined_risk_last_alert_at = None
 
     # ---------- Method 1 (trend_following / rsi_reversal) ----------
     open_m1 = find_open_ai_trade_for_group(ai_trade_data, METHOD_GROUPS['method1'])
@@ -538,9 +582,13 @@ def run_slow_tick():
         msg = f"Jam rawan berita high-impact \"{news_info['title']}\", entry Metode 1 ditahan."
         log(msg)
         log_ai_tick('news_block', msg)
+    elif paused:
+        log("Metode 1: sinyal mungkin ada, tapi entry ditahan - mode pause aktif (emergency stop).")
+    elif combined_blocked:
+        log("Metode 1: sinyal mungkin ada, tapi entry ditahan - limit risk gabungan kesentuh.")
     else:
         sug1 = compute_ai_suggestion(candles, ai_trade_data)
-        opened1 = auto_open_ai_position(ai_trade_data, sug1, ai_modal_awal)
+        opened1 = auto_open_ai_position(ai_trade_data, sug1, ai_modal_awal, floating_pl)
         if opened1:
             instrument_doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)
             log_ai_tick('entry_opened', 'Entry Metode 1 berhasil dibuka.')
@@ -565,8 +613,14 @@ def run_slow_tick():
     if news_info:
         log_ai_tick('news_block_m2', "Sinyal Metode 2 ready tapi jam rawan berita, entry ditahan.")
         return
+    if paused:
+        log_ai_tick('paused_block_m2', "Sinyal Metode 2 ready tapi mode pause aktif (emergency stop), entry ditahan.")
+        return
+    if combined_blocked:
+        log_ai_tick('combined_risk_block_m2', "Sinyal Metode 2 ready tapi limit risk gabungan kesentuh, entry ditahan.")
+        return
 
-    opened2 = auto_open_ai_position(ai_trade_data, ready_sug, ai_modal_awal)
+    opened2 = auto_open_ai_position(ai_trade_data, ready_sug, ai_modal_awal, floating_pl)
     if opened2:
         instrument_doc_ref.set(
             {'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal, 'ictState': dict(ICT_STATE_DEFAULT)},

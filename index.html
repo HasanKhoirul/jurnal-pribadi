@@ -581,8 +581,13 @@
                     <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
                         <h3 class="chart-title">🛡️ Risk Overview</h3>
                         <p style="color:#777; font-size:0.75rem; margin:8px 0 15px;">Risk exposure gabungan bulan ini (ngikut nav bulan di atas) & max drawdown sepanjang masa (all-time, TIDAK ngikut nav bulan).</p>
+                        <div id="mon-pause-banner"></div>
                         <div id="mon-risk-insight" style="margin-bottom:15px;"></div>
                         <div class="equity-dashboard" id="mon-drawdown-stats"></div>
+                        <div style="margin-top:15px; padding-top:15px; border-top:1px solid #333; display:flex; gap:10px; flex-wrap:wrap;">
+                            <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-mon-pause-all">🚨 Pause SEMUA Entry Baru</button>
+                            <button class="btn-action" style="border-color:#4caf50; color:#4caf50;" id="btn-mon-resume-all">▶️ Resume Semua Entry</button>
+                        </div>
                     </div>
 
                     <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
@@ -1111,7 +1116,7 @@
             <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting Trading Bot</h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Semua parameter ini dipakai bot VPS/MT5 (kepakai otomatis tiap tick, ~10 detik, gak perlu restart bot) dan simulasi manual di web. Ubah SL/TP/Lot cuma berlaku buat trade BARU — posisi yang lagi open tetap pakai angka lama.</p>
 
-            <h3 class="master-group-title">📊 Risk Insight (tampilan doang, gak ngeblok bot)</h3>
+            <h3 class="master-group-title">📊 Risk Limit (ngeblok entry baru otomatis kalau kesentuh, per-instrumen + gabungan)</h3>
             <div class="master-row"><label>Limit Risk (%)</label><input type="number" id="ai-master-risk-limit-pct" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Periode Risk</label><select id="ai-master-risk-period" class="master-input wide"><option value="monthly">Bulanan</option><option value="weekly">Mingguan (minggu berjalan)</option></select></div>
 
@@ -1183,7 +1188,7 @@
             <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting — <span id="cur-master-pair-label">USDJPY</span></h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Parameter khusus pair yang lagi dipilih di dropdown — independen dari Gold maupun pair currency lain. Dipakai bot VPS otomatis tiap tick, gak perlu restart.</p>
 
-            <h3 class="master-group-title">📊 Risk Insight (tampilan doang, gak ngeblok bot)</h3>
+            <h3 class="master-group-title">📊 Risk Limit (ngeblok entry baru otomatis kalau kesentuh, per-instrumen + gabungan)</h3>
             <div class="master-row"><label>Limit Risk (%)</label><input type="number" id="cur-master-risk-limit-pct" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Periode Risk</label><select id="cur-master-risk-period" class="master-input wide"><option value="monthly">Bulanan</option><option value="weekly">Mingguan (minggu berjalan)</option></select></div>
 

@@ -2946,6 +2946,12 @@ document.addEventListener("DOMContentLoaded", () => {
         renderCard(instruments, 'mon-all-equity', 'mon-all-trades', 'mon-all-winrate');
         renderCard(currencyOnly, 'mon-cur-equity', 'mon-cur-trades', 'mon-cur-winrate');
 
+        // Banner pause (Pilar 1, kill-switch) - dibaca dari botControl Gold (representatif, krn cuma
+        // tombol Pause/Resume di bawah satu2nya cara nyalain/matiin, nulis ke ke-6 instrumen sekaligus).
+        document.getElementById('mon-pause-banner').innerHTML = botControl.pauseRequested
+            ? `<div class="insight-box insight-danger" style="margin-bottom:15px;">🚨 <b>Trading SEDANG DIPAUSE</b> - semua entry baru ditahan di 6 instrumen. Klik "Resume Semua Entry" buat lanjut.</div>`
+            : '';
+
         // Risk Overview - exposure gabungan bulan ini (limit tiap instrumen dijumlah, sesuai riskLimitPct
         // masing2 dari Master Setting) + max drawdown all-time.
         const totalLimit = instruments.reduce((s, i) => s + (i.equityAwal * ((i.riskLimitPct || 10) / 100)), 0);
@@ -3067,6 +3073,39 @@ document.addEventListener("DOMContentLoaded", () => {
         monContradictionLimit = e.target.value === 'all' ? 'all' : Number(e.target.value);
         renderMonitoringDashboard();
     });
+
+    // Kill-switch global (Pilar 1) - nulis botControl.pauseRequested ke SEMUA 6 dokumen (root Gold +
+    // 5 currencyPairs) sekaligus, 1 klik = pause/resume semua instrumen. BEDA dari restartRequested/
+    // summaryRequested (one-shot) - flag ini PERSISTENT, bot cuma baca, cuma tombol ini yang matiin lagi.
+    function setGlobalPause(paused) {
+        if (!auth.currentUser) { alert('Login dulu.'); return; }
+        const uid = auth.currentUser.uid;
+        const pauseField = { pauseRequested: paused, pauseRequestedAt: new Date().toISOString() };
+        const writes = [
+            db.collection('appData').doc(uid).set(
+                { botControl: { ...botControl, ...pauseField } }, { merge: true }
+            ),
+            ...CURRENCY_PAIRS.map(p => {
+                const existing = getCurInstrument(p).botControl || {};
+                return db.collection('appData').doc(uid).collection('currencyPairs').doc(p).set(
+                    { botControl: { ...existing, ...pauseField } }, { merge: true }
+                );
+            }),
+        ];
+        Promise.all(writes)
+            .then(() => alert(paused
+                ? '🚨 Sinyal pause terkirim ke 6 instrumen. Entry baru bakal ditahan mulai siklus tick berikutnya (~5 menit). Posisi yang udah open TETAP dilindungi SL/TP normal.'
+                : '▶️ Sinyal resume terkirim ke 6 instrumen. Entry baru bakal aktif lagi mulai siklus tick berikutnya (~5 menit).'))
+            .catch(err => alert('Gagal kirim sinyal: ' + err.message));
+    }
+    document.getElementById('btn-mon-pause-all').onclick = () => {
+        if (!confirm('Pause SEMUA entry baru di 6 instrumen (Gold + 5 Currency)? Posisi yang udah open TETAP dilindungi SL/TP - ini cuma nahan entry baru sampai di-Resume manual.')) return;
+        setGlobalPause(true);
+    };
+    document.getElementById('btn-mon-resume-all').onclick = () => {
+        if (!confirm('Resume entry baru di SEMUA 6 instrumen?')) return;
+        setGlobalPause(false);
+    };
 
     // Export multi-instrumen dari Monitoring - datanya udah ke-load di memori (sama kayak yang dipakai
     // render dashboard), jadi gak nambah baca Firestore sama sekali, murni proses browser doang.

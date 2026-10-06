@@ -77,9 +77,14 @@ class Config:
         # dicegah tingkat ini.
         self.AI_LOT_SCALE_THRESHOLD3_PIPS = 500
         self.AI_LOT_SCALE_LOT3 = 0.02
-        # Flag in-memory (reset kalau proses direstart) - biar alert "entry diblok" kekirim SEKALI doang
-        # pas limit baru kesentuh, bukan spam tiap tick selama masih over-limit.
-        self.risk_limit_blocked = False
+        # Timestamp in-memory (reset kalau proses direstart) - throttle alert "entry diblok" MAKS 1x per
+        # AI_RISK_ALERT_THROTTLE_MINUTES, bukan boolean latch. Alasan ganti dari boolean (2026-09): sejak
+        # breach check ikutan floating P/L, status blocked bisa naik-turun tiap tick pas harga muter-muter
+        # deket batas limit - boolean latch bakal ngirim ulang alert tiap kali re-trigger (bisa tiap 5 menit
+        # nempel di slow tick). Keputusan blok sendiri tetap real-time akurat tiap tick, cuma pengiriman
+        # alert-nya yang di-throttle.
+        self.risk_limit_last_alert_at = None
+        self.combined_risk_last_alert_at = None
 
         # Metode 2 (ICT) - asumsi v1, sama utk semua instrumen (lihat plan Metode 2 buat rasionalnya)
         self.AI_ICT_SWING_LOOKBACK = 2
@@ -96,6 +101,10 @@ class Config:
 
 
 cfg = Config()
+
+# Batas kirim ulang alert Telegram "entry diblok" (per-instrumen ATAU gabungan) - lihat komentar
+# risk_limit_last_alert_at di Config.__init__ soal alasannya.
+AI_RISK_ALERT_THROTTLE_MINUTES = 60
 
 AI_MASTER_DEFAULTS = {
     'slPips': 50, 'slMode': 'fixed', 'atrMultiplier': 1.5, 'tpLayerPips': [80, 100, 150], 'lotSize': 0.1, 'layerStaggerPips': 10,
@@ -512,30 +521,87 @@ def get_all_time_pl(ai_trade_data):
     return total, count
 
 
-def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
+def compute_floating_pl(ai_trade_data, bid, ask, live_kurs):
+    # Jumlahin P/L layer yang MASIH OPEN (belum closed) across SEMUA trade - dipakai buat risk check
+    # real-time (2026-09), beda dari loop floating di send_periodic_summary() yang cuma ambil 1 trade
+    # per grup Metode buat notifikasi teks (sengaja gak direfactor jadi 1 - lihat plan Pilar 2).
+    total = 0.0
+    for trades in ai_trade_data.values():
+        for trade in trades:
+            if trade.get('status') == 'closed':
+                continue
+            dir_sign = 1 if trade.get('arah') == 'BUY' else -1
+            px = exit_price_for(trade.get('arah'), bid, ask)
+            for ly in trade.get('layers', []):
+                if ly.get('status') != 'open':
+                    continue
+                pips = ((px - ly['entry']) * dir_sign) / cfg.AI_PIP_SIZE
+                total += usc_to_rupiah(calc_layer_pl_usc(pips, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
+    return total
+
+
+def write_risk_summary(root_ref, label, ai_trade_data, ai_modal_awal, floating_pl):
+    # Ringkasan risiko kecil per instrumen (ditulis tiap slow tick). Cek gabungan baca ringkasan ini,
+    # BUKAN dokumen penuh (histori trade bisa ratusan KB - baca 6 dokumen penuh 6 proses tiap 5 menit
+    # bikin egress Firestore naik puluhan GB/bulan).
+    week_pl, _ = get_current_week_pl(ai_trade_data)
+    month_pl, _ = get_current_month_pl(ai_trade_data)
+    root_ref.collection('riskSummary').document(label).set({
+        'floatingPl': float(floating_pl),
+        'weekPl': float(week_pl),
+        'monthPl': float(month_pl),
+        'modal': float(ai_modal_awal or 0),
+        'limitPct': float(cfg.AI_RISK_LIMIT_PCT or 0),
+        'period': cfg.AI_RISK_PERIOD,
+    })
+
+
+def fetch_all_instruments_snapshot(root_ref):
+    # One-time read ringkasan (bukan listener), 6 dokumen kecil per call.
+    return [{'label': s.id, **(s.to_dict() or {})} for s in root_ref.collection('riskSummary').stream()]
+
+
+def compute_combined_risk_status(instruments):
+    combined_limit = 0.0
+    combined_loss = 0.0
+    for inst in instruments:
+        period_pl = inst['weekPl'] if inst['period'] == 'weekly' else inst['monthPl']
+        total_pl = period_pl + inst['floatingPl']
+        combined_limit += inst['modal'] * (inst['limitPct'] / 100)
+        if total_pl < 0:
+            combined_loss += abs(total_pl)
+    return combined_loss, combined_limit
+
+
+def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
     if not sug:
         return False
 
     # Hard-stop risk limit - GABUNGAN Metode 1+2 (1 modal, 1 limit per instrumen, bukan 2 anggaran
-    # terpisah). Sebelumnya riskLimitPct cuma nge-render warna di dashboard, gak beneran ngeblok apa2.
+    # terpisah), dan sejak 2026-09 GABUNGAN closed+floating (bukan closed doang) - posisi yang masih
+    # open & udah rugi besar sekarang ikut kehitung real-time, gak nunggu closed dulu baru keblok.
     if cfg.AI_RISK_LIMIT_PCT and ai_modal_awal:
         period_pl, _ = (get_current_week_pl(ai_trade_data) if cfg.AI_RISK_PERIOD == 'weekly'
                          else get_current_month_pl(ai_trade_data))
+        total_pl = period_pl + floating_pl
         risk_limit = ai_modal_awal * (cfg.AI_RISK_LIMIT_PCT / 100)
         period_label = 'minggu' if cfg.AI_RISK_PERIOD == 'weekly' else 'bulan'
-        if period_pl < 0 and abs(period_pl) >= risk_limit:
+        if total_pl < 0 and abs(total_pl) >= risk_limit:
             cfg.log_fn(f"Entry diblok: limit risk {cfg.AI_RISK_LIMIT_PCT}%/{period_label} kesentuh "
-                       f"(rugi {format_rupiah(abs(period_pl))} dari batas {format_rupiah(risk_limit)}).")
-            if not cfg.risk_limit_blocked:
-                cfg.risk_limit_blocked = True
+                       f"(rugi closed+floating {format_rupiah(abs(total_pl))} dari batas {format_rupiah(risk_limit)}).")
+            now = datetime.now(timezone.utc)
+            should_alert = (cfg.risk_limit_last_alert_at is None or
+                             (now - cfg.risk_limit_last_alert_at) >= timedelta(minutes=AI_RISK_ALERT_THROTTLE_MINUTES))
+            if should_alert:
+                cfg.risk_limit_last_alert_at = now
                 cfg.send_telegram_fn(
                     f"🚨 <b>Entry Diblok - Limit Risk Kesentuh ({cfg.SYMBOL_LABEL})</b>\n\n"
-                    f"Rugi {period_label} ini {format_rupiah(abs(period_pl))}, lewat batas "
+                    f"Rugi closed+floating {period_label} ini {format_rupiah(abs(total_pl))}, lewat batas "
                     f"{cfg.AI_RISK_LIMIT_PCT}% modal ({format_rupiah(risk_limit)}).\n"
                     f"Entry baru DITAHAN sampai {period_label} berikutnya atau limit dinaikkan."
                 )
             return False
-        cfg.risk_limit_blocked = False
+        cfg.risk_limit_last_alert_at = None
 
     date_str = today_wib_date_str()
     ai_trade_data.setdefault(date_str, [])
@@ -582,7 +648,31 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal):
         f"<b>TP3:</b> <code>{fmt_price(layers[2]['tp'])}</code>\n\n"
         f"📝 <i>{sug['reasonText']}</i>"
     )
+    mirror_layers_as_orders_dry_run(sug, layers)
     return True
+
+
+def mirror_layers_as_orders_dry_run(sug, layers):
+    # Dry-run: cuma bentuk request order MT5 & log. send_with_retry(dry_run=True) hardcoded, belum ada jalur kirim.
+    try:
+        import mt5_executor as ex
+        info = mt5.symbol_info(cfg.SYMBOL)
+        method = next(m for m, types in METHOD_GROUPS.items() if sug['signalType'] in types)
+        magic = ex.magic_for(cfg.SYMBOL_LABEL, method)
+        expires_at = datetime.now(timezone.utc) + ex.PENDING_EXPIRY
+        for i, layer in enumerate(layers):
+            lot = ex.normalize_lot(layer['lot'], info.volume_min, info.volume_step, info.volume_max)
+            if lot is None:
+                cfg.log_fn(f"[DRY-RUN order L{i+1}] lot {layer['lot']} di bawah volume minimum broker, order di-skip.")
+                continue
+            if i == 0:
+                make = lambda: ex.build_market_order(cfg.SYMBOL, sug['arah'], lot, layer['sl'], layer['tp'], magic, f"L{i+1}")
+            else:
+                make = lambda: ex.build_limit_order(cfg.SYMBOL, sug['arah'], lot, layer['entry'], layer['sl'], layer['tp'], magic, f"L{i+1}", expires_at)
+            result = ex.send_with_retry(make, dry_run=True)
+            cfg.log_fn(f"[DRY-RUN order L{i+1}] {result['final']['request']}")
+    except Exception as e:
+        cfg.log_fn(f"[DRY-RUN order] gagal bentuk request: {e}")
 
 
 # ---------- Metode 2: ICT/SMC Liquidity Sweep ----------
