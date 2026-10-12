@@ -35,6 +35,7 @@ from ai_trading_core import (
     ICT_STATE_DEFAULT, exit_price_for, calc_layer_pl_usc, usc_to_rupiah,
     fetch_active_high_impact_news, fetch_live_kurs_idr, is_market_open,
     compute_floating_pl, write_risk_summary, fetch_all_instruments_snapshot, compute_combined_risk_status,
+    order_mode, sync_all_with_broker, cancel_pending_for_pause, emergency_close_all,
 )
 
 load_dotenv()
@@ -258,7 +259,7 @@ def handle_restart_request():
 
 def send_periodic_summary(ai_trade_data, tick):
     st = mt5_account_status()
-    akun = f"{st['mode']}, login {st['login']}, terhubung ✅" if st['connected'] else "tidak terhubung ❌"
+    akun = f"{st['mode']}, login {st['login']}, terhubung ✅, order: {order_mode()}" if st['connected'] else "tidak terhubung ❌"
     send_telegram(f"🔌 <b>Akun trading ({PAIR}):</b> {akun}")
     for group_name, group_label in (('method1', ''), ('method2', ' — Metode 2 (ICT)')):
         if group_name == 'method2' and not cfg.AI_METHOD_TWO_ENABLED:
@@ -485,6 +486,17 @@ def run_fast_tick():
     news_info = get_cached_news(now)
 
     any_changed = False
+    # Tombol "Tutup Semua Posisi" di web (one-shot, di-reset bot setelah diproses).
+    if bot_control.get('closeAllRequested'):
+        n_closed = emergency_close_all(ai_trade_data, tick.bid, tick.ask, live_kurs, now)
+        any_changed = True
+        bot_control['closeAllRequested'] = False
+        instrument_doc_ref.set({'botControl': {'closeAllRequested': False, 'lastCloseAllAt': now.isoformat()}}, merge=True)
+        msg = f"Tutup darurat dari web: {n_closed} posisi {PAIR} ditutup di harga sekarang."
+        log(msg)
+        log_ai_tick('emergency_close', msg)
+        send_telegram(f"🛑 <b>Tutup Darurat</b>\n\n{msg}")
+
     for group_name, signal_types in METHOD_GROUPS.items():
         open_info = find_open_ai_trade_for_group(ai_trade_data, signal_types)
         if not open_info:
@@ -515,6 +527,19 @@ def run_fast_tick():
             header = '🔒 <b>Trade Selesai</b>' if result['allResolved'] else '📊 <b>Update Posisi</b>'
             notes_html = f"[{PAIR}] " + label + ('\n'.join(result['notes']) or detail)
             send_telegram(f"{header}\n\n{notes_html}")
+
+    broker_notes = []
+    if bot_control.get('pauseRequested'):
+        changed, notes = cancel_pending_for_pause(ai_trade_data, now)
+        any_changed = any_changed or changed
+        broker_notes += notes
+    # Samain posisi/order broker ke simulasi (tutup, batalkan pending, geser SL). Cuma jalan kalau ORDER_MODE live.
+    changed, notes = sync_all_with_broker(ai_trade_data, live_kurs, now)
+    any_changed = any_changed or changed
+    broker_notes += notes
+    if broker_notes:
+        log(' '.join(broker_notes))
+        send_telegram(f"🔁 <b>Update Posisi ({PAIR})</b>\n\n" + '\n'.join(broker_notes))
 
     if any_changed:
         instrument_doc_ref.set({'aiTradeData': ai_trade_data, 'aiModalAwal': ai_modal_awal}, merge=True)

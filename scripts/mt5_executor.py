@@ -1,5 +1,4 @@
 import math
-from datetime import timedelta
 
 import MetaTrader5 as mt5
 
@@ -9,7 +8,6 @@ ABORT_RETCODES = {
     mt5.TRADE_RETCODE_NO_MONEY, mt5.TRADE_RETCODE_MARKET_CLOSED, mt5.TRADE_RETCODE_TRADE_DISABLED,
     mt5.TRADE_RETCODE_INVALID_STOPS, mt5.TRADE_RETCODE_INVALID_VOLUME, mt5.TRADE_RETCODE_INVALID,
 }
-PENDING_EXPIRY = timedelta(days=3)
 MAGIC_BASE = 20260000
 INSTRUMENT_ORDER = ['XAUUSD', 'USDJPY', 'GBPUSD', 'AUDUSD', 'EURUSD', 'USDCAD']
 METHOD_ORDER = {'method1': 1, 'method2': 2}
@@ -37,6 +35,23 @@ def classify_retcode(retcode):
     return 'abort'
 
 
+def filling_for(symbol):
+    # Broker beda-beda soal mode filling (Exness kebanyakan FOK). Salah pilih = order ditolak (retcode 10030).
+    info = mt5.symbol_info(symbol)
+    flags = getattr(info, 'filling_mode', 0) if info else 0
+    if flags & 1:
+        return mt5.ORDER_FILLING_FOK
+    if flags & 2:
+        return mt5.ORDER_FILLING_IOC
+    return mt5.ORDER_FILLING_RETURN
+
+
+def deviation_points(symbol, pips, pip_size):
+    info = mt5.symbol_info(symbol)
+    point = info.point if info and info.point else pip_size
+    return max(1, int(round(pips * pip_size / point)))
+
+
 def build_market_order(symbol, side, lot, sl_price, tp_price, magic, comment, deviation=20):
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
@@ -54,11 +69,13 @@ def build_market_order(symbol, side, lot, sl_price, tp_price, magic, comment, de
         'magic': magic,
         'comment': comment,
         'type_time': mt5.ORDER_TIME_GTC,
-        'type_filling': mt5.ORDER_FILLING_IOC,
+        'type_filling': filling_for(symbol),
     }
 
 
-def build_limit_order(symbol, side, lot, price, sl_price, tp_price, magic, comment, expires_at):
+def build_limit_order(symbol, side, lot, price, sl_price, tp_price, magic, comment):
+    # GTC (bukan expiry broker) - gak semua simbol dukung ORDER_TIME_SPECIFIED. Pembatalan ngikut simulasi
+    # (timeout 3 hari, L1 kena SL/TP, pause, dst), lewat sinkron broker tiap fast tick.
     is_buy = side == 'BUY'
     return {
         'action': mt5.TRADE_ACTION_PENDING,
@@ -70,10 +87,33 @@ def build_limit_order(symbol, side, lot, price, sl_price, tp_price, magic, comme
         'tp': float(tp_price),
         'magic': magic,
         'comment': comment,
-        'type_time': mt5.ORDER_TIME_SPECIFIED,
-        'expiration': int(expires_at.timestamp()),
-        'type_filling': mt5.ORDER_FILLING_IOC,
+        'type_time': mt5.ORDER_TIME_GTC,
+        'type_filling': filling_for(symbol),  # akun market execution (Exness) nolak mode RETURN
     }
+
+
+def build_close_position(position, deviation=20):
+    tick = mt5.symbol_info_tick(position.symbol)
+    if tick is None:
+        raise RuntimeError(f"tick {position.symbol} tidak tersedia")
+    is_buy = position.type == mt5.POSITION_TYPE_BUY
+    return {
+        'action': mt5.TRADE_ACTION_DEAL,
+        'symbol': position.symbol,
+        'volume': float(position.volume),
+        'type': mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY,
+        'position': int(position.ticket),
+        'price': tick.bid if is_buy else tick.ask,
+        'deviation': deviation,
+        'magic': position.magic,
+        'comment': 'close',
+        'type_time': mt5.ORDER_TIME_GTC,
+        'type_filling': filling_for(position.symbol),
+    }
+
+
+def build_remove_order(order_ticket):
+    return {'action': mt5.TRADE_ACTION_REMOVE, 'order': int(order_ticket)}
 
 
 def send_order(request, dry_run=True):
@@ -88,6 +128,7 @@ def send_order(request, dry_run=True):
         'retcode': result.retcode if result is not None else None,
         'comment': result.comment if result is not None else 'order_send returned None',
         'ticket': result.order if result is not None else None,
+        'price': getattr(result, 'price', None),
         'request': request,
     }
 
@@ -109,6 +150,31 @@ def send_with_retry(make_request, dry_run=True, max_retries=2):
 def open_positions_by_magic(symbol, magic):
     positions = mt5.positions_get(symbol=symbol) or []
     return [p for p in positions if p.magic == magic]
+
+
+def find_position(ticket):
+    positions = mt5.positions_get(ticket=int(ticket)) or []
+    return positions[0] if positions else None
+
+
+def find_order(ticket):
+    orders = mt5.orders_get(ticket=int(ticket)) or []
+    return orders[0] if orders else None
+
+
+def positions_and_orders_by_magics(symbol, magics):
+    positions = [p for p in (mt5.positions_get(symbol=symbol) or []) if p.magic in magics]
+    orders = [o for o in (mt5.orders_get(symbol=symbol) or []) if o.magic in magics]
+    return positions, orders
+
+
+def position_deals(position_id):
+    return list(mt5.history_deals_get(position=int(position_id)) or [])
+
+
+def closing_deal(deals):
+    outs = [d for d in deals if d.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_OUT_BY)]
+    return outs[-1] if outs else None
 
 
 def build_modify_sl(symbol, position_ticket, new_sl, new_tp):

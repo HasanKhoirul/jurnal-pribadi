@@ -96,7 +96,10 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
     summaryRequestedAt: string (ISO),
     lastSummaryAt: string (ISO) | null,   // dipakai bot buat cek udah lewat jadwal terdekat (00/06/12/18 WIB, dst) apa belum (summary otomatis)
     pauseRequested: boolean,     // Pilar 1 kill-switch (2026-09) - BEDA dari restartRequested/summaryRequested: PERSISTENT, bot cuma BACA (gak pernah nge-reset sendiri jadi false), cuma tombol "▶️ Resume Semua Entry" di Monitoring yang matiin. Ngeblok entry BARU doang (Metode 1+2), TIDAK nyentuh manajemen posisi yang udah open (SL/TP/deep-lock tetep jalan). Tombol "🚨 Pause SEMUA Entry Baru" di Monitoring nulis field ini ke SEMUA 6 dokumen (root Gold + 5 currencyPairs) sekaligus dalam 1 klik
-    pauseRequestedAt: string (ISO)
+    pauseRequestedAt: string (ISO),
+    closeAllRequested: boolean,  // tombol "🛑 Tutup SEMUA Posisi Sekarang" di Monitoring (2026-10) - ONE-SHOT, bot nutup semua posisi open (simulasi + broker) & batalkan pending, lalu reset ke false. Tombolnya sekalian nyalain pauseRequested
+    closeAllRequestedAt: string (ISO),
+    lastCloseAllAt: string (ISO)  // ditulis bot pas selesai proses closeAllRequested
   },                            // PENTING: web nulis field ini pakai spread (...botControl) biar gak saling nge-wipe field restart/summary/pause
   aiModalAwal: number,        // modal awal simulasi Trading AI
   aiModalResetAt: string (YYYY-MM-DD) | null,  // kalau keisi, trade SEBELUM tanggal ini di-skip dari kalkulasi Equity Awal/Akhir (modal "berdiri sendiri") - histori kalender/detail trade tetap utuh, cuma gak ikut ke equity lagi
@@ -122,12 +125,18 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
             entry: number,                             // harga entry KHUSUS layer ini (layer0=sinyal, layer1=-10p, layer2=-20p dari sinyal, arah tergantung BUY/SELL)
             tp: number, sl: number,                     // harga TP/SL layer ini (SL bisa berubah karena trailing)
             lot: 0.1,
-            status: "pending"|"open"|"tp"|"sl"|"be"|"timeout"|"timeout_lock"|"news_close"|"cancelled",
+            status: "pending"|"open"|"tp"|"sl"|"be"|"timeout"|"timeout_lock"|"news_close"|"weekend_close"|"emergency_close"|"broker_closed"|"slippage_close"|"cancelled",
             pl: number,                                 // P/L (Rp) realized kalau status !== open/pending
             slMoved: boolean,                           // udah kena trailing lock atau belum
             deepLockAt: string (ISO) | undefined,       // cuma ada di layer terakhir (index 2), waktu SL dikunci
             deepLockTriggerPips: number | undefined,    // cuma ada di layer terakhir KALAU tpMode "adaptive" pas dibuka - dibekukan, dipakai gantiin AI_DEEP_LOCK_TRIGGER_PIPS global buat trade ini. Kalau gak ada (trade lama/mode fixed), pakai konstanta global
-            deepLockPips: number | undefined            // sama kayak di atas, gantiin AI_DEEP_LOCK_PIPS
+            deepLockPips: number | undefined,           // sama kayak di atas, gantiin AI_DEEP_LOCK_PIPS
+            // Order broker (2026-10, cuma ada kalau ORDER_MODE live - lihat order_mode() di ai_trading_core.py):
+            ticket: number | undefined,                 // tiket order/posisi MT5 (posisi hasil limit order pakai tiket yang sama)
+            brokerEntry: number | undefined,            // harga fill asli L1 di broker
+            brokerError: string | undefined,            // retcode + pesan kalau order layer ini ditolak broker
+            brokerDone: boolean | undefined,            // posisi/order broker layer ini udah selesai (ditutup/dibatalkan), gak disinkron lagi
+            brokerProfit: number | undefined            // profit bersih broker (mata uang akun: profit+komisi+swap+fee), buat dibanding P/L simulasi
           }
         ]
       }

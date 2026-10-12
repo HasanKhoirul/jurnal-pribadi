@@ -86,6 +86,7 @@ class Config:
         # alert-nya yang di-throttle.
         self.risk_limit_last_alert_at = None
         self.combined_risk_last_alert_at = None
+        self.account_block_last_alert_at = None
 
         # Metode 2 (ICT) - asumsi v1, sama utk semua instrumen (lihat plan Metode 2 buat rasionalnya)
         self.AI_ICT_SWING_LOOKBACK = 2
@@ -661,7 +662,14 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
         return False
     if weekend_close_due(datetime.now(timezone.utc)):
         return False
-    if mt5_entry_block_reason():
+    block = mt5_entry_block_reason()
+    if block:
+        cfg.log_fn(f"Entry diblok: {block}.")
+        now = datetime.now(timezone.utc)
+        if cfg.account_block_last_alert_at is None or (now - cfg.account_block_last_alert_at) >= timedelta(minutes=AI_RISK_ALERT_THROTTLE_MINUTES):
+            cfg.account_block_last_alert_at = now
+            cfg.send_telegram_fn(f"🚫 <b>Entry {cfg.SYMBOL_LABEL} diblok: {block}</b>\n\n"
+                                 f"Ada sinyal tapi gak dibuka. Cek login MT5 di VPS dan isi .env.")
         return False
 
     # Hard-stop risk limit - GABUNGAN Metode 1+2 (1 modal, 1 limit per instrumen, bukan 2 anggaran
@@ -716,12 +724,13 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
             layer['tpPipsFixedEquivalent'] = sug.get('l3TpFixedEquivalent')
             layer['tpPipsAtrRaw'] = sug.get('l3TpAtrRawPips')
         layers.append(layer)
-    ai_trade_data[date_str].append({
+    trade = {
         'arah': sug['arah'], 'tf': sug['tf'], 'entry': sug['entry'], 'sl': layers[0]['sl'],
         'layers': layers, 'alasan': sug['reasonText'], 'signalType': sug['signalType'],
         'status': 'open', 'pl': 0,
         'openedAt': datetime.now(timezone.utc).isoformat(), 'closedAt': None,
-    })
+    }
+    ai_trade_data[date_str].append(trade)
     cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {fmt_price(sug['entry'])} "
                f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}, lot {lot_used}).")
     cfg.send_telegram_fn(
@@ -735,31 +744,289 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
         f"<b>TP3:</b> <code>{fmt_price(layers[2]['tp'])}</code>\n\n"
         f"📝 <i>{sug['reasonText']}</i>"
     )
-    mirror_layers_as_orders_dry_run(sug, layers)
+    place_broker_orders(sug, trade)
     return True
 
 
-def mirror_layers_as_orders_dry_run(sug, layers):
-    # Dry-run: cuma bentuk request order MT5 & log. send_with_retry(dry_run=True) hardcoded, belum ada jalur kirim.
+# ---------- Order ke broker (MT5) ----------
+# Simulasi tetap jadi acuan (P/L, Telegram, web). Order broker NGIKUT simulasi: entry dikirim pas simulasi
+# buka posisi, lalu tiap fast tick sync_all_with_broker() nyamain broker ke simulasi (tutup, batalkan, geser
+# SL). Satu-satunya arah sebaliknya: kalau broker duluan nutup (SL/TP kesentuh di antara 2 tick 10 detik),
+# layer simulasi ikut ditutup pakai harga deal broker.
+# Mode dari .env ORDER_MODE: live / dry-run / off. Kosong = live kalau akun demo, dry-run kalau bukan -
+# akun real WAJIB ORDER_MODE=live eksplisit.
+MAX_SLIPPAGE_PIPS = 5
+BROKER_RETRY_SECONDS = 60
+_broker_last_attempt = {}
+_broker_alerted = set()
+
+
+def order_mode():
+    m = os.environ.get('ORDER_MODE', '').strip().lower()
+    if m in ('live', 'dry-run', 'off'):
+        return m
+    st = mt5_account_status()
+    return 'live' if st.get('connected') and st.get('mode') == 'demo' else 'dry-run'
+
+
+def _method_of(signal_type):
+    return next(m for m, types in METHOD_GROUPS.items() if signal_type in types)
+
+
+def _deviation(ex):
+    return ex.deviation_points(cfg.SYMBOL, MAX_SLIPPAGE_PIPS, cfg.AI_PIP_SIZE)
+
+
+def _broker_alert_once(key, text):
+    if key in _broker_alerted:
+        return
+    _broker_alerted.add(key)
+    cfg.send_telegram_fn(text)
+
+
+def _broker_due(key, now):
+    # Retry aksi broker yang gagal maks 1x per BROKER_RETRY_SECONDS, biar gak nembak MT5 tiap 10 detik.
+    last = _broker_last_attempt.get(key)
+    if last is not None and (now - last).total_seconds() < BROKER_RETRY_SECONDS:
+        return False
+    _broker_last_attempt[key] = now
+    return True
+
+
+def place_broker_orders(sug, trade):
+    mode = order_mode()
+    if mode == 'off':
+        return
+    dry = mode != 'live'
     try:
         import mt5_executor as ex
         info = mt5.symbol_info(cfg.SYMBOL)
-        method = next(m for m, types in METHOD_GROUPS.items() if sug['signalType'] in types)
-        magic = ex.magic_for(cfg.SYMBOL_LABEL, method)
-        expires_at = datetime.now(timezone.utc) + ex.PENDING_EXPIRY
-        for i, layer in enumerate(layers):
+        magic = ex.magic_for(cfg.SYMBOL_LABEL, _method_of(sug['signalType']))
+        deviation = _deviation(ex)
+        for i, layer in enumerate(trade['layers']):
             lot = ex.normalize_lot(layer['lot'], info.volume_min, info.volume_step, info.volume_max)
             if lot is None:
-                cfg.log_fn(f"[DRY-RUN order L{i+1}] lot {layer['lot']} di bawah volume minimum broker, order di-skip.")
+                cfg.log_fn(f"[order L{i+1}] lot {layer['lot']} di bawah minimum broker, di-skip.")
+                if i == 0:
+                    return
                 continue
+            comment = f"{cfg.SYMBOL_LABEL} L{i+1}"
             if i == 0:
-                make = lambda: ex.build_market_order(cfg.SYMBOL, sug['arah'], lot, layer['sl'], layer['tp'], magic, f"L{i+1}")
+                make = lambda: ex.build_market_order(cfg.SYMBOL, sug['arah'], lot, layer['sl'], layer['tp'], magic, comment, deviation)
             else:
-                make = lambda: ex.build_limit_order(cfg.SYMBOL, sug['arah'], lot, layer['entry'], layer['sl'], layer['tp'], magic, f"L{i+1}", expires_at)
-            result = ex.send_with_retry(make, dry_run=True)
-            cfg.log_fn(f"[DRY-RUN order L{i+1}] {result['final']['request']}")
+                make = lambda: ex.build_limit_order(cfg.SYMBOL, sug['arah'], lot, layer['entry'], layer['sl'], layer['tp'], magic, comment)
+            result = ex.send_with_retry(make, dry_run=dry)
+            final = result['final']
+            if dry:
+                cfg.log_fn(f"[DRY-RUN order L{i+1}] {final['request']}")
+                continue
+            if result['action'] != 'ok':
+                err = f"{final.get('retcode')} {final.get('comment')}"
+                layer['brokerError'] = err
+                cfg.log_fn(f"[order L{i+1}] GAGAL: {err}")
+                cfg.send_telegram_fn(f"⚠️ <b>Order L{i+1} {cfg.SYMBOL_LABEL} gagal ke broker</b>\n\n{err}\n"
+                                     f"Simulasi tetap jalan seperti biasa.")
+                if i == 0:
+                    return  # L1 gagal: L2/L3 jangan dipasang tanpa L1
+                continue
+            layer['ticket'] = final['ticket']
+            cfg.log_fn(f"[order L{i+1}] terkirim, tiket {final['ticket']}.")
+            if i == 0:
+                requested = final['request']['price']
+                fill = final.get('price') or requested
+                layer['brokerEntry'] = fill
+                slip = abs(fill - requested) / cfg.AI_PIP_SIZE
+                if slip > MAX_SLIPPAGE_PIPS:
+                    _cancel_trade_for_slippage(trade, slip)
+                    return
     except Exception as e:
-        cfg.log_fn(f"[DRY-RUN order] gagal bentuk request: {e}")
+        cfg.log_fn(f"[order] error saat kirim order: {e}")
+
+
+def _cancel_trade_for_slippage(trade, slip):
+    # L1 kena slippage lewat batas: L2/L3 gak dipasang, simulasi ditutup, posisi broker L1 ditutup
+    # di fast tick berikutnya lewat sync (layer-nya udah gak aktif di simulasi).
+    for ly in trade['layers']:
+        if ly['status'] == 'open':
+            ly['status'] = 'slippage_close'
+        elif ly['status'] == 'pending':
+            ly['status'] = 'cancelled'
+        ly['pl'] = 0
+    trade['pl'] = 0
+    trade['status'] = 'closed'
+    trade['closedAt'] = datetime.now(timezone.utc).isoformat()
+    cfg.log_fn(f"[order L1] slippage {slip:.1f} pips > {MAX_SLIPPAGE_PIPS}, posisi dibatalkan.")
+    cfg.send_telegram_fn(f"⚠️ <b>Entry {cfg.SYMBOL_LABEL} dibatalkan: slippage {slip:.1f} pips</b>\n\n"
+                         f"Batas {MAX_SLIPPAGE_PIPS} pips. Posisi di broker langsung ditutup.")
+
+
+def _resolve_layer_from_deal(trade, idx, deal, live_kurs):
+    ly = trade['layers'][idx]
+    dir_sign = 1 if trade['arah'] == 'BUY' else -1
+    pips = ((deal.price - ly['entry']) * dir_sign) / cfg.AI_PIP_SIZE
+    if deal.reason == mt5.DEAL_REASON_TP:
+        status = 'tp'
+    elif deal.reason == mt5.DEAL_REASON_SL:
+        status = 'be' if pips >= 0 else 'sl'
+    else:
+        status = 'broker_closed'
+    ly['status'] = status
+    ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
+    notes = [f"Layer {idx + 1} ditutup broker duluan ({status.upper()}, {pips:.1f} pips)."]
+    if idx == 0 and status == 'tp':
+        for other in trade['layers'][1:]:
+            if other['status'] == 'open' and not other['slMoved']:
+                other['sl'] = other['entry'] + dir_sign * pip_to_price(cfg.AI_LOCK_PIPS_AFTER_TP1)
+                other['slMoved'] = True
+    if idx == 0 and status != 'broker_closed':
+        cancel_pending_siblings(trade)
+    return notes
+
+
+def _finalize_trade(trade, now):
+    active = [ly for ly in trade['layers'] if ly['status'] in ('open', 'pending')]
+    trade['pl'] = sum(ly.get('pl', 0) for ly in trade['layers'] if ly['status'] not in ('open', 'pending'))
+    if not active and trade.get('status') != 'closed':
+        trade['status'] = 'closed'
+        trade['closedAt'] = now.isoformat()
+
+
+def _needs_broker_sync(trade):
+    return any(ly.get('ticket') and not ly.get('brokerDone') for ly in trade.get('layers', []))
+
+
+def sync_all_with_broker(ai_trade_data, live_kurs, now):
+    # Return (changed, notes). Gak nambah baca/tulis Firestore - cuma panggilan ke MT5 lokal.
+    if order_mode() != 'live':
+        return False, []
+    import mt5_executor as ex
+    changed, notes = False, []
+    for trades in ai_trade_data.values():
+        for trade in trades:
+            if not _needs_broker_sync(trade):
+                continue
+            try:
+                c, n = _sync_trade(ex, trade, live_kurs, now)
+            except Exception as e:
+                cfg.log_fn(f"[sync broker] error: {e}")
+                continue
+            if c:
+                _finalize_trade(trade, now)
+                changed = True
+            notes += n
+    return changed, notes
+
+
+def _sync_trade(ex, trade, live_kurs, now):
+    changed, notes = False, []
+    tol = cfg.AI_PIP_SIZE / 2
+    for idx, ly in enumerate(trade['layers']):
+        ticket = ly.get('ticket')
+        if not ticket or ly.get('brokerDone'):
+            continue
+        sim_active = ly['status'] in ('open', 'pending')
+
+        pos = ex.find_position(ticket)
+        if pos is not None:
+            if not sim_active:
+                if _broker_due(('close', ticket), now):
+                    res = ex.send_with_retry(lambda: ex.build_close_position(pos, _deviation(ex)), dry_run=False)
+                    if res['action'] == 'ok':
+                        cfg.log_fn(f"[sync broker] L{idx+1} tiket {ticket} ditutup (simulasi: {ly['status']}).")
+                    else:
+                        err = f"{res['final'].get('retcode')} {res['final'].get('comment')}"
+                        cfg.log_fn(f"[sync broker] gagal tutup L{idx+1} tiket {ticket}: {err}")
+                        _broker_alert_once(('close', ticket), f"⚠️ <b>Gagal tutup posisi {cfg.SYMBOL_LABEL} L{idx+1} di broker</b>\n\n"
+                                                              f"{err}\nDicoba lagi tiap menit. Cek MT5.")
+                continue  # brokerDone diisi pas deal penutupnya kebaca di tick berikutnya
+            if ly['status'] == 'pending':
+                ly['status'] = 'open'
+                changed = True
+                notes.append(f"Layer {idx + 1} kefill di broker.")
+            if abs(pos.sl - ly['sl']) > tol and _broker_due(('sl', ticket), now):
+                res = ex.modify_sl_verified(lambda: ex.build_modify_sl(cfg.SYMBOL, ticket, ly['sl'], ly['tp']),
+                                            cfg.SYMBOL, ticket, ly['sl'], tol, dry_run=False)
+                if res['action'] == 'ok':
+                    cfg.log_fn(f"[sync broker] SL L{idx+1} digeser ke {fmt_price(ly['sl'])}.")
+                else:
+                    cfg.log_fn(f"[sync broker] gagal geser SL L{idx+1}: {res['action']}")
+                    _broker_alert_once(('sl', ticket, ly['sl']), f"⚠️ <b>Gagal geser SL {cfg.SYMBOL_LABEL} L{idx+1} di broker</b>\n\n"
+                                                                 f"Target SL {fmt_price(ly['sl'])}. Bot tetap tutup posisi kalau harga sampai SL simulasi.")
+            continue
+
+        order = ex.find_order(ticket)
+        if order is not None:
+            if not sim_active and _broker_due(('remove', ticket), now):
+                res = ex.send_with_retry(lambda: ex.build_remove_order(ticket), dry_run=False)
+                if res['action'] == 'ok':
+                    ly['brokerDone'] = True
+                    changed = True
+                    cfg.log_fn(f"[sync broker] order pending L{idx+1} tiket {ticket} dibatalkan.")
+                else:
+                    cfg.log_fn(f"[sync broker] gagal batalkan order L{idx+1}: {res['final'].get('retcode')}")
+            continue
+
+        deals = ex.position_deals(ticket)
+        out = ex.closing_deal(deals)
+        if out is not None:
+            if sim_active:
+                notes += _resolve_layer_from_deal(trade, idx, out, live_kurs)
+            ly['brokerDone'] = True
+            ly['brokerProfit'] = round(sum(ex.net_pl_by_position(deals).values()), 2)
+            changed = True
+        elif ly['status'] != 'open':
+            # Order pending hilang tanpa pernah kefill (dibatalkan/kedaluwarsa di broker), atau simulasi
+            # udah tutup & broker gak punya jejak apa-apa. Layer 'open' tanpa jejak dibiarkan, dicek lagi
+            # tick berikutnya (histori deal kadang telat kebaca).
+            if ly['status'] == 'pending':
+                ly['status'] = 'cancelled'
+                ly['pl'] = 0
+                notes.append(f"Layer {idx + 1} pending hilang di broker, ikut dibatalkan.")
+            ly['brokerDone'] = True
+            changed = True
+    return changed, notes
+
+
+def cancel_pending_for_pause(ai_trade_data, now):
+    # Pause aktif: order pending (layer 2/3 yang belum kefill) dibatalkan, posisi yang udah open tetap jalan.
+    changed, notes = False, []
+    for trades in ai_trade_data.values():
+        for trade in trades:
+            if trade.get('status') != 'open':
+                continue
+            if any(ly['status'] == 'pending' for ly in trade.get('layers', [])):
+                cancel_pending_siblings(trade)
+                _finalize_trade(trade, now)
+                changed = True
+                notes.append(f"{signal_type_label(trade.get('signalType'))}: order pending dibatalkan (pause aktif).")
+    return changed, notes
+
+
+def emergency_close_all(ai_trade_data, bid, ask, live_kurs, now):
+    # Tombol "Tutup Semua Posisi" di web. Simulasi ditutup di harga sekarang; posisi broker yang tercatat
+    # ditutup lewat sync_all_with_broker(). Posisi/order broker milik bot yang GAK tercatat di simulasi
+    # juga disapu di sini.
+    closed = 0
+    for trades in ai_trade_data.values():
+        for trade in trades:
+            if trade.get('status') == 'open' and force_close_all_layers_at_market(trade, bid, ask, live_kurs, 'emergency_close', now):
+                _finalize_trade(trade, now)
+                closed += 1
+    if order_mode() == 'live':
+        try:
+            import mt5_executor as ex
+            tracked = {ly.get('ticket') for trades in ai_trade_data.values() for t in trades for ly in t.get('layers', [])}
+            magics = {ex.magic_for(cfg.SYMBOL_LABEL, m) for m in METHOD_GROUPS}
+            positions, orders = ex.positions_and_orders_by_magics(cfg.SYMBOL, magics)
+            for p in positions:
+                if p.ticket not in tracked:
+                    ex.send_with_retry(lambda: ex.build_close_position(p, _deviation(ex)), dry_run=False)
+            for o in orders:
+                if o.ticket not in tracked:
+                    ex.send_with_retry(lambda: ex.build_remove_order(o.ticket), dry_run=False)
+        except Exception as e:
+            cfg.log_fn(f"[tutup darurat] error sapu posisi broker: {e}")
+    return closed
 
 
 # ---------- Metode 2: ICT/SMC Liquidity Sweep ----------
