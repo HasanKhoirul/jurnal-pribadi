@@ -1545,11 +1545,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const AI_LOG_OUTCOME_LABEL = {
-        entry_opened: { emoji: '✅', label: 'Entry Dibuka' }, position_updated: { emoji: '✅', label: 'Posisi Update' }, position_closed: { emoji: '✅', label: 'Posisi Selesai' }, news_close: { emoji: '✅', label: 'Ditutup (Berita)' },
+        entry_opened: { emoji: '✅', label: 'Entry Dibuka' }, position_updated: { emoji: '✅', label: 'Posisi Update' }, position_closed: { emoji: '✅', label: 'Posisi Selesai' }, news_close: { emoji: '✅', label: 'Ditutup (Berita)' }, emergency_close: { emoji: '🛑', label: 'Tutup Darurat' },
         waiting: { emoji: '⚪', label: 'Nunggu' }, no_signal: { emoji: '⚪', label: 'Gak Ada Sinyal' }, market_closed: { emoji: '⚪', label: 'Market Tutup' }, news_block: { emoji: '⚪', label: 'Ditahan (Berita)' },
         error: { emoji: '❌', label: 'Gagal' }, manual_reset: { emoji: '🗑️', label: 'Reset Manual' }
     };
-    const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close', 'restart']);
+    const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close', 'emergency_close', 'restart']);
     const AI_LOG_FAIL_SET = new Set(['error']);
     function categorizeAiLog(outcome) { return AI_LOG_SUCCESS_SET.has(outcome) ? 'success' : AI_LOG_FAIL_SET.has(outcome) ? 'fail' : 'nihil'; }
 
@@ -1748,6 +1748,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const AI_LAYER_STATUS_LABEL = {
         pending: 'Pending (belum kefill)', open: 'Masih Open', tp: 'Kena TP', sl: 'Kena SL', be: 'Breakeven',
         timeout: 'Timeout (3 hari jam market)', timeout_lock: 'Timeout setelah lock', news_close: 'Ditutup (berita)', weekend_close: 'Ditutup (sebelum weekend)', cancelled: 'Dibatalkan',
+        emergency_close: 'Ditutup darurat (tombol web)', broker_closed: 'Ditutup broker', slippage_close: 'Dibatalkan (slippage > 5 pip)',
     };
     function formatAiTime(iso) { return iso ? new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '-'; }
     window.toggleAiHistDetail = function(headerEl) {
@@ -3077,34 +3078,45 @@ document.addEventListener("DOMContentLoaded", () => {
     // Kill-switch global (Pilar 1) - nulis botControl.pauseRequested ke SEMUA 6 dokumen (root Gold +
     // 5 currencyPairs) sekaligus, 1 klik = pause/resume semua instrumen. BEDA dari restartRequested/
     // summaryRequested (one-shot) - flag ini PERSISTENT, bot cuma baca, cuma tombol ini yang matiin lagi.
+    // closeAllRequested sengaja gak ikut disalin dari state lama - kalau web belum nerima reset dari bot,
+    // klik Pause/Resume bisa nyalain tutup darurat lagi tanpa sengaja.
+    function writeBotControlAll(fields) {
+        const uid = auth.currentUser.uid;
+        const merged = (existing) => {
+            const { closeAllRequested, ...rest } = existing || {};
+            return { botControl: { ...rest, ...fields } };
+        };
+        return Promise.all([
+            db.collection('appData').doc(uid).set(merged(botControl), { merge: true }),
+            ...CURRENCY_PAIRS.map(p => db.collection('appData').doc(uid).collection('currencyPairs').doc(p)
+                .set(merged(getCurInstrument(p).botControl), { merge: true })),
+        ]);
+    }
     function setGlobalPause(paused) {
         if (!auth.currentUser) { alert('Login dulu.'); return; }
-        const uid = auth.currentUser.uid;
-        const pauseField = { pauseRequested: paused, pauseRequestedAt: new Date().toISOString() };
-        const writes = [
-            db.collection('appData').doc(uid).set(
-                { botControl: { ...botControl, ...pauseField } }, { merge: true }
-            ),
-            ...CURRENCY_PAIRS.map(p => {
-                const existing = getCurInstrument(p).botControl || {};
-                return db.collection('appData').doc(uid).collection('currencyPairs').doc(p).set(
-                    { botControl: { ...existing, ...pauseField } }, { merge: true }
-                );
-            }),
-        ];
-        Promise.all(writes)
+        writeBotControlAll({ pauseRequested: paused, pauseRequestedAt: new Date().toISOString() })
             .then(() => alert(paused
-                ? '🚨 Sinyal pause terkirim ke 6 instrumen. Entry baru bakal ditahan mulai siklus tick berikutnya (~5 menit). Posisi yang udah open TETAP dilindungi SL/TP normal.'
+                ? '🚨 Sinyal pause terkirim ke 6 instrumen. Entry baru bakal ditahan mulai siklus tick berikutnya (~5 menit). Posisi yang udah open TETAP dilindungi SL/TP normal, order pending (layer 2/3 yang belum kefill) dibatalkan.'
                 : '▶️ Sinyal resume terkirim ke 6 instrumen. Entry baru bakal aktif lagi mulai siklus tick berikutnya (~5 menit).'))
             .catch(err => alert('Gagal kirim sinyal: ' + err.message));
     }
     document.getElementById('btn-mon-pause-all').onclick = () => {
-        if (!confirm('Pause SEMUA entry baru di 6 instrumen (Gold + 5 Currency)? Posisi yang udah open TETAP dilindungi SL/TP - ini cuma nahan entry baru sampai di-Resume manual.')) return;
+        if (!confirm('Pause SEMUA entry baru di 6 instrumen (Gold + 5 Currency)? Posisi yang udah open TETAP dilindungi SL/TP, order pending (layer 2/3 yang belum kefill) dibatalkan. Entry baru ditahan sampai di-Resume manual.')) return;
         setGlobalPause(true);
     };
     document.getElementById('btn-mon-resume-all').onclick = () => {
         if (!confirm('Resume entry baru di SEMUA 6 instrumen?')) return;
         setGlobalPause(false);
+    };
+    // Tutup darurat: semua posisi open (simulasi + broker) ditutup di harga sekarang, order pending
+    // dibatalkan, dan sekalian pause biar bot gak langsung entry lagi. closeAllRequested one-shot, di-reset bot.
+    document.getElementById('btn-mon-close-all').onclick = () => {
+        if (!auth.currentUser) { alert('Login dulu.'); return; }
+        if (!confirm('TUTUP SEMUA posisi di 6 instrumen SEKARANG di harga pasar, batalkan order pending, dan pause entry baru?\n\nIni gak bisa dibatalkan.')) return;
+        const at = new Date().toISOString();
+        writeBotControlAll({ closeAllRequested: true, closeAllRequestedAt: at, pauseRequested: true, pauseRequestedAt: at })
+            .then(() => alert('🛑 Perintah tutup darurat terkirim ke 6 instrumen. Posisi ditutup dalam ~10 detik, cek Telegram. Entry baru di-pause sampai klik "Resume Semua Entry".'))
+            .catch(err => alert('Gagal kirim perintah: ' + err.message));
     };
 
     // Export multi-instrumen dari Monitoring - datanya udah ke-load di memori (sama kayak yang dipakai
