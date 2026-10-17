@@ -11,10 +11,23 @@
 
 import math
 import os
+import statistics
+from collections import deque
 from datetime import datetime, timezone, timedelta
 
 import MetaTrader5 as mt5
 import requests
+
+# Filter entry jam istirahat/rollover (2026-10): harga gak gerak > STALE_TICK_SECONDS = market lagi jeda
+# (mis. istirahat harian Gold), spread > SPREAD_MAX_MULT x median 24 jam = spread lagi melebar (rollover).
+STALE_TICK_SECONDS = 120
+SPREAD_MAX_MULT = 3
+SPREAD_MIN_SAMPLES = 60
+SPREAD_SAMPLE_MAX = 1440  # 1 sampel/menit = 24 jam
+MARKET_BLOCK_LOG_MINUTES = 30
+# Metode 2 (ICT): entry di harga OB. Kalau harga belum di sana, L1 jadi order tunggu (limit) - batal kalau
+# gak kefill dalam sekian jam atau harga keburu sampai TP1 tanpa nyentuh entry.
+ICT_LIMIT_EXPIRY_HOURS = 4
 
 
 class Config:
@@ -87,6 +100,15 @@ class Config:
         self.risk_limit_last_alert_at = None
         self.combined_risk_last_alert_at = None
         self.account_block_last_alert_at = None
+        self.market_block_last_log_at = None
+
+        # Sampel tick di memori buat filter jam istirahat/spread (record_tick_sample). Hilang pas restart,
+        # sengaja gak disimpan ke Firestore biar gak nambah write.
+        self.spread_samples = deque(maxlen=SPREAD_SAMPLE_MAX)
+        self.spread_last_sample_at = None
+        self.tick_last_key = None
+        self.tick_last_change_at = None
+        self.tick_last_spread = None
 
         # Metode 2 (ICT) - asumsi v1, sama utk semua instrumen (lihat plan Metode 2 buat rasionalnya)
         self.AI_ICT_SWING_LOOKBACK = 2
@@ -311,6 +333,34 @@ def mt5_entry_block_reason():
     expected_login = os.environ.get('MT5_LOGIN', '').strip()
     if expected_login and str(st['login']) != expected_login:
         return f"login {st['login']}, harusnya {expected_login}"
+    return None
+
+
+def record_tick_sample(tick, now):
+    # Dipanggil host tiap fast tick. Catat kapan harga terakhir berubah (jam lokal, bukan tick.time,
+    # biar gak tergantung zona waktu server broker) + 1 sampel spread per menit.
+    key = (getattr(tick, 'time_msc', None), tick.bid, tick.ask)
+    if key != cfg.tick_last_key:
+        cfg.tick_last_key = key
+        cfg.tick_last_change_at = now
+    spread = tick.ask - tick.bid
+    cfg.tick_last_spread = spread
+    if spread > 0 and (cfg.spread_last_sample_at is None or now - cfg.spread_last_sample_at >= timedelta(minutes=1)):
+        cfg.spread_samples.append(spread)
+        cfg.spread_last_sample_at = now
+
+
+def market_entry_block_reason(now):
+    if cfg.tick_last_change_at is None:
+        return None
+    idle = (now - cfg.tick_last_change_at).total_seconds()
+    if idle > STALE_TICK_SECONDS:
+        return f"harga tidak bergerak {int(idle // 60)} menit (jam istirahat market)"
+    if len(cfg.spread_samples) >= SPREAD_MIN_SAMPLES and cfg.tick_last_spread:
+        normal = statistics.median(cfg.spread_samples)
+        if normal > 0 and cfg.tick_last_spread > normal * SPREAD_MAX_MULT:
+            return (f"spread melebar {cfg.tick_last_spread / cfg.AI_PIP_SIZE:.1f} pip, "
+                    f"normalnya {normal / cfg.AI_PIP_SIZE:.1f} pip")
     return None
 
 
@@ -671,6 +721,26 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
             cfg.send_telegram_fn(f"🚫 <b>Entry {cfg.SYMBOL_LABEL} diblok: {block}</b>\n\n"
                                  f"Ada sinyal tapi gak dibuka. Cek login MT5 di VPS dan isi .env.")
         return False
+    now = datetime.now(timezone.utc)
+    tick = mt5.symbol_info_tick(cfg.SYMBOL)
+    if tick is not None:
+        record_tick_sample(tick, now)  # spread detik ini, bukan sisa fast tick sebelumnya
+    market_block = market_entry_block_reason(now)
+    if market_block:
+        # Berlaku buat simulasi & broker (sama-sama gak dibuka). Gak kirim Telegram, cuma log - log Firestore di-throttle.
+        cfg.last_signal_skip_reason = f"Sinyal ada tapi entry ditunda: {market_block}."
+        cfg.log_fn(cfg.last_signal_skip_reason)
+        if cfg.market_block_last_log_at is None or now - cfg.market_block_last_log_at >= timedelta(minutes=MARKET_BLOCK_LOG_MINUTES):
+            cfg.market_block_last_log_at = now
+            cfg.log_ai_tick_fn('market_block', cfg.last_signal_skip_reason)
+        return False
+    if sug['signalType'] == 'ict_liquidity_sweep' and tick is not None:
+        sug = apply_ict_entry_mode(sug, tick.bid, tick.ask)
+        if not sug:
+            cfg.last_signal_skip_reason = 'Sinyal Metode 2 batal: harga udah lewat SL.'
+            cfg.log_fn(cfg.last_signal_skip_reason)
+            return False
+    is_limit = sug.get('entryMode') == 'limit'
 
     # Hard-stop risk limit - GABUNGAN Metode 1+2 (1 modal, 1 limit per instrumen, bukan 2 anggaran
     # terpisah), dan sejak 2026-09 GABUNGAN closed+floating (bukan closed doang) - posisi yang masih
@@ -712,7 +782,7 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
             'tp': layer_entry + sug['dirSign'] * pip_to_price(tp_pips),
             'sl': layer_entry - sug['dirSign'] * pip_to_price(sug['slPipsUsed']),
             'lot': lot_used,
-            'status': 'open' if i == 0 else 'pending',
+            'status': 'open' if i == 0 and not is_limit else 'pending',
             'pl': 0,
             'slMoved': False,
         }
@@ -730,12 +800,21 @@ def auto_open_ai_position(ai_trade_data, sug, ai_modal_awal, floating_pl=0.0):
         'status': 'open', 'pl': 0,
         'openedAt': datetime.now(timezone.utc).isoformat(), 'closedAt': None,
     }
+    if is_limit:
+        trade['entryMode'] = 'limit'
+        trade['entryExpiresAt'] = (now + timedelta(hours=ICT_LIMIT_EXPIRY_HOURS)).isoformat()
     ai_trade_data[date_str].append(trade)
-    cfg.log_fn(f"Entry baru dibuka: {sug['arah']} @ {fmt_price(sug['entry'])} "
+    cfg.log_fn(f"{'Order tunggu dipasang' if is_limit else 'Entry baru dibuka'}: {sug['arah']} @ {fmt_price(sug['entry'])} "
                f"(layer2/3 pending di {fmt_price(layers[1]['entry'])} / {fmt_price(layers[2]['entry'])}, lot {lot_used}).")
+    if is_limit:
+        head = (f"🟡 <b>ORDER TUNGGU {sug['arah']} {cfg.SYMBOL_LABEL} — {signal_type_label(sug['signalType'])}</b>\n\n"
+                f"<b>Entry kalau harga sampai:</b> <code>{fmt_price(sug['entry'])}</code>\n"
+                f"<i>Batal kalau {ICT_LIMIT_EXPIRY_HOURS} jam gak kesentuh atau harga keburu sampai TP1.</i>\n")
+    else:
+        head = (f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL} — {signal_type_label(sug['signalType'])}</b>\n\n"
+                f"<b>Entry:</b> <code>{fmt_price(sug['entry'])}</code>\n")
     cfg.send_telegram_fn(
-        f"🟢 <b>SINYAL {sug['arah']} {cfg.SYMBOL_LABEL} — {signal_type_label(sug['signalType'])}</b>\n\n"
-        f"<b>Entry:</b> <code>{fmt_price(sug['entry'])}</code>\n"
+        head +
         f"<b>SL:</b> <code>{fmt_price(layers[0]['sl'])}</code> ({sug['slPipsUsed']} pips)\n"
         f"<b>Lot:</b> <code>{lot_used}</code> x3 layer"
         f"{' (⚠️ mengecil, SL lebar)' if lot_used < cfg.AI_LOT_SIZE else ''}\n\n"
@@ -811,7 +890,8 @@ def place_broker_orders(sug, trade):
                     return
                 continue
             comment = f"{cfg.SYMBOL_LABEL} L{i+1}"
-            if i == 0:
+            market_l1 = i == 0 and layer['status'] == 'open'
+            if market_l1:
                 make = lambda: ex.build_market_order(cfg.SYMBOL, sug['arah'], lot, layer['sl'], layer['tp'], magic, comment, deviation)
             else:
                 make = lambda: ex.build_limit_order(cfg.SYMBOL, sug['arah'], lot, layer['entry'], layer['sl'], layer['tp'], magic, comment)
@@ -831,7 +911,7 @@ def place_broker_orders(sug, trade):
                 continue
             layer['ticket'] = final['ticket']
             cfg.log_fn(f"[order L{i+1}] terkirim, tiket {final['ticket']}.")
-            if i == 0:
+            if market_l1:
                 requested = final['request']['price']
                 fill = final.get('price') or requested
                 layer['brokerEntry'] = fill
@@ -995,7 +1075,10 @@ def cancel_pending_for_pause(ai_trade_data, now):
             if trade.get('status') != 'open':
                 continue
             if any(ly['status'] == 'pending' for ly in trade.get('layers', [])):
-                cancel_pending_siblings(trade)
+                for ly in trade['layers']:  # termasuk L1 order tunggu ICT
+                    if ly['status'] == 'pending':
+                        ly['status'] = 'cancelled'
+                        ly['pl'] = 0
                 _finalize_trade(trade, now)
                 changed = True
                 notes.append(f"{signal_type_label(trade.get('signalType'))}: order pending dibatalkan (pause aktif).")
@@ -1109,6 +1192,25 @@ def detect_ltf_choch(ltf_candles, ict_state):
     return None
 
 
+def _ict_tp_pips(sl_pips):
+    return ([round(sl_pips * (tp / cfg.AI_SL_PIPS)) for tp in cfg.AI_TP_LAYERS_PIPS]
+            if cfg.AI_SL_PIPS > 0 else list(cfg.AI_TP_LAYERS_PIPS))
+
+
+def apply_ict_entry_mode(sug, bid, ask):
+    # Harga sekarang udah sama/lebih bagus dari OB -> masuk market di harga sekarang (SL tetap di level sweep,
+    # pips SL/TP dihitung ulang). Belum sampai -> L1 order tunggu di harga OB. Dulu L1 langsung dianggap
+    # kefill di harga OB walau harga masih jauh (beda 60-100 pip Gold vs broker, cek 17 Okt).
+    market = ask if sug['arah'] == 'BUY' else bid
+    better = market <= sug['entry'] if sug['arah'] == 'BUY' else market >= sug['entry']
+    if not better:
+        return dict(sug, entryMode='limit')
+    sl_pips = ((market - sug['sl']) * sug['dirSign']) / cfg.AI_PIP_SIZE
+    if sl_pips <= 0:
+        return None  # harga udah lewat SL, setup batal
+    return dict(sug, entry=market, slPipsUsed=round(sl_pips), tpPipsUsed=_ict_tp_pips(sl_pips), entryMode='market')
+
+
 def build_ict_ready_suggestion(ltf_candles, choch, ict_state):
     direction = ict_state['direction']
     dir_sign = 1 if direction == 'BUY' else -1
@@ -1137,10 +1239,7 @@ def build_ict_ready_suggestion(ltf_candles, choch, ict_state):
     if sl_pips_used <= 0:
         return None
 
-    tp_pips_used = (
-        [round(sl_pips_used * (tp / cfg.AI_SL_PIPS)) for tp in cfg.AI_TP_LAYERS_PIPS]
-        if cfg.AI_SL_PIPS > 0 else list(cfg.AI_TP_LAYERS_PIPS)
-    )
+    tp_pips_used = _ict_tp_pips(sl_pips_used)
     reason = (
         f"[Metode 2 - ICT] Sweep {direction} @ {fmt_price(ict_state['sweepLevel'])}, CHoCH M15 confirmed, "
         f"entry OB midpoint {fmt_price(entry)}, SL {sl_pips_used:.0f} pips."
@@ -1311,6 +1410,18 @@ def check_and_close_position_tick(trade, bid, ask, live_kurs, now):
                     ly['pl'] = usc_to_rupiah(calc_layer_pl_usc(pips_at_close, ly.get('lot', cfg.AI_LOT_SIZE)), live_kurs)
                     changed = True
                     notes.append(f"Layer terakhir timeout {cfg.AI_DEEP_LOCK_TIMEOUT_MINUTES} menit setelah lock, ditutup ({pips_at_close:.1f} pips).")
+
+    if trade.get('entryExpiresAt') and all(ly['status'] == 'pending' for ly in layers):
+        px = exit_price_for(trade['arah'], bid, ask)
+        tp1_passed = px >= layers[0]['tp'] if trade['arah'] == 'BUY' else px <= layers[0]['tp']
+        expired = now >= datetime.fromisoformat(trade['entryExpiresAt'])
+        if tp1_passed or expired:
+            for ly in layers:
+                ly['status'] = 'cancelled'
+                ly['pl'] = 0
+            changed = True
+            notes.append("Order tunggu gak kefill: " + ("harga keburu sampai TP1." if tp1_passed
+                         else f"lewat {ICT_LIMIT_EXPIRY_HOURS} jam.") + " Dibatalkan.")
 
     opened_time = datetime.fromisoformat(trade['openedAt'])
     still_active = any(not_resolved(ly) for ly in layers)

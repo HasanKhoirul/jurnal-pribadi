@@ -119,6 +119,8 @@ Project Firebase: `jurnal-pribadi`. Auth: Firebase Authentication (email/passwor
         status: "open"|"closed",                     // status TRADE keseluruhan
         pl: number,                                   // total P/L (Rp), terisi kalau closed
         openedAt: string (ISO), closedAt: string|null,
+        entryMode?: "limit",        // Metode 2 (ICT) kalau harga belum sampai OB: L1-L3 order tunggu (status pending)
+        entryExpiresAt?: string (ISO), // order tunggu batal kalau lewat jam ini (ICT_LIMIT_EXPIRY_HOURS=4) atau harga duluan sampai TP1
         layers: [                                     // selalu 3 layer, index 0/1/2
           {
             tpPips: number,                             // jarak TP layer ini - fixed (80/100/150) atau hasil hitungan adaptif, tergantung tpMode SAAT TRADE DIBUKA (dibekukan, gak berubah walau tpMode diganti belakangan)
@@ -181,7 +183,7 @@ Ditulis/dibaca oleh `scripts/ai-tick-currency.py <PAIR>` (1 proses per pair, par
 ```
 {
   time: string (ISO),
-  outcome: "entry_opened"|"entry_opened_m2"|"position_updated"|"position_closed"|"news_close"|"news_block"|"news_block_m2"|"waiting"|"waiting_m2"|"no_signal"|"market_closed"|"error"|"manual_reset"|"restart"|"summary"|"ict_sweep"|"ict_ready"|"ict_timeout",
+  outcome: "entry_opened"|"entry_opened_m2"|"position_updated"|"position_closed"|"news_close"|"news_block"|"news_block_m2"|"waiting"|"waiting_m2"|"no_signal"|"market_closed"|"error"|"manual_reset"|"restart"|"summary"|"ict_sweep"|"ict_ready"|"ict_timeout"|"market_block",
   detail: string,           // penjelasan spesifik (alasan skip, judul berita, dst.)
   source: "browser"|"server"|"server_<PAIR>"   // server_<PAIR> (misal "server_USDJPY") ditulis ai-tick-currency.py - subcollection ini SATU buat semua instrumen (Gold + 5 pair), difilter di JS by source (bukan query .where(), butuh composite index yang gak ada)
 }

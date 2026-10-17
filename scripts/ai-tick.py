@@ -28,7 +28,7 @@ from ai_trading_core import (
     cfg, AI_MASTER_DEFAULTS, AI_RISK_ALERT_THROTTLE_MINUTES, apply_master_settings, fmt_price,
     fetch_candles, get_today_pl, get_current_week_pl, get_current_month_pl, get_all_time_pl, format_rupiah,
     find_open_ai_trade_for_group, METHOD_GROUPS, signal_type_label, compute_ai_suggestion, auto_open_ai_position,
-    check_mt5_connection, mt5_account_status,
+    check_mt5_connection, mt5_account_status, record_tick_sample,
     check_and_close_position_tick, force_close_all_layers_at_market, run_ict_state_machine,
     ICT_STATE_DEFAULT, exit_price_for, calc_layer_pl_usc, usc_to_rupiah,
     fetch_active_high_impact_news, fetch_live_kurs_idr, is_market_open,
@@ -367,6 +367,7 @@ def run_fast_tick():
     if tick is None:
         log(f"Gagal ambil tick MT5: {mt5.last_error()}")
         return
+    record_tick_sample(tick, now)
 
     _fast_tick_count += 1
     if _fast_tick_count % AI_LIVE_PRICE_PUSH_EVERY_N_TICKS == 0 and is_market_open(now):
