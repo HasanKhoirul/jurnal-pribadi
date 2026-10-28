@@ -17,6 +17,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let modalAwal = parseFloat(localStorage.getItem('xauusd_modal')) || 2500000;
     let expData = JSON.parse(localStorage.getItem('expense_data_v1')) || {};
     let sportData = JSON.parse(localStorage.getItem('sport_data_v1')) || {};
+    let workData = JSON.parse(localStorage.getItem('work_data_v1')) || { tasks: {} };
+    let workUnsub = null;
     const defaultWealthHistory = { items: [], realMoney: 0 };
     if(!localStorage.getItem('wealth_data_v1')) { localStorage.setItem('wealth_data_v1', JSON.stringify(defaultWealthHistory)); }
     let wealthData = JSON.parse(localStorage.getItem('wealth_data_v1'));
@@ -39,6 +41,27 @@ document.addEventListener("DOMContentLoaded", () => {
     // Candle/harga live per pair (dari appData/public, field di-suffix nama pair) - dipakai chart & trend summary tab Currency.
     let currencyLiveCandles = {}; let currencyLiveCandlesUpdatedAt = {};
     let currencyLivePrice = {}; let currencyLivePriceUpdatedAt = {};
+    let aiLivePriceMt5 = null; let aiLivePriceMt5UpdatedAt = null; // harga tick terkini dari bot VPS/MT5 (di-throttle bot ~30 detik biar irit kuota Firestore, eksekusi SL/TP tetap tiap ~10 detik gak kepengaruh). Dideklarasikan di atas (bareng currencyLivePriceUpdatedAt) karena Status Bot di renderHome() makenya sejak render pertama kali, sebelum login.
+    const STATUS_BOT_STALE_MINUTES = 15; // sama kayak threshold watchdog - dipakai Status Bot Pusat Kendali
+
+    // Ikon garis tipis buat kartu Pusat Kendali - beberapa SENGAJA sama persis sama ikon sidebar
+    // halaman terkait (Olahraga/Belanja/Kekayaan/XAUUSD/Gold/Currency), biar konsisten satu konsep satu ikon.
+    // Dideklarasikan di atas (bukan deket renderHome()) karena renderHome() dipanggil lebih dulu saat
+    // init - kalau PK_ICONS dideklarasikan di bawah situ, kena "Cannot access before initialization".
+    const PK_ICONS = {
+        lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+        heart: '<path d="M12 20s-7-4.4-9.5-8.5C1 8 2.8 4.8 6 4.8c2 0 3.3 1.1 4 2.2.7-1.1 2-2.2 4-2.2 3.2 0 5 3.2 3.5 6.7C19 15.6 12 20 12 20z"/>',
+        checklist: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+        pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+        cart: '<circle cx="9" cy="20" r="1.2" fill="currentColor" stroke="none"/><circle cx="18" cy="20" r="1.2" fill="currentColor" stroke="none"/><path d="M3 4h2l2.3 12a1.5 1.5 0 0 0 1.5 1.2h8.5a1.5 1.5 0 0 0 1.5-1.2L21 8H6.2"/>',
+        wallet: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="17" cy="14.5" r="1" fill="currentColor" stroke="none"/>',
+        barChart: '<path d="M4 20V13"/><path d="M10 20V4"/><path d="M16 20v-9"/><path d="M20 20v-5"/>',
+        goldBars: '<path d="M2.5 19.5 4 14.5h6l1.5 5Z"/><path d="M12.5 19.5 14 14.5h6l1.5 5Z"/><path d="M7.5 12 9 7h6l1.5 5Z"/>',
+        coins: '<circle cx="9" cy="9" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.4 18"/><path d="M8 7h1v4"/><path d="M16.7 13.9l.7.7-2.8 2.8"/>',
+        server: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="7" cy="7.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="7" cy="16.5" r="0.9" fill="currentColor" stroke="none"/><path d="M11 7.5h6"/><path d="M11 16.5h6"/>',
+        rank: '<path d="M5 20v-4"/><path d="M12 20v-9"/><path d="M19 20V4"/>',
+    };
+    function pkIco(name) { return `<span class="pk-card-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${PK_ICONS[name]}</svg></span>`; }
 
     // ==========================================
     // MODULE CLOUD SYNC (FIREBASE)
@@ -207,6 +230,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         else if (targetId === 'view-ai-currency' && isLoggedIn) renderCurrencyDashboard();
         else if (targetId === 'view-monitoring' && isLoggedIn) renderMonitoringDashboard();
+        else if (targetId === 'view-work' && isLoggedIn) renderWork();
     }
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -244,6 +268,67 @@ document.addEventListener("DOMContentLoaded", () => {
         else sidebar.classList.toggle('collapsed');
     });
 
+    // Lebar sidebar bisa digeser (desktop). Disimpan di localStorage, dipasang ulang di <head> sebelum render.
+    const sidebarResizer = document.getElementById('sidebar-resizer');
+    const SIDEBAR_MIN_W = 200, SIDEBAR_MAX_W = 420;
+    sidebarResizer.addEventListener('pointerdown', (e) => {
+        if (window.innerWidth <= 768) return;
+        e.preventDefault();
+        sidebarResizer.setPointerCapture(e.pointerId);
+        document.body.classList.add('sidebar-resizing');
+        const left = sidebar.getBoundingClientRect().left;
+        const onMove = (ev) => {
+            const w = Math.round(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, ev.clientX - left)));
+            document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+        };
+        const onUp = () => {
+            document.body.classList.remove('sidebar-resizing');
+            sidebarResizer.removeEventListener('pointermove', onMove);
+            const w = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width'), 10);
+            try { if (w) localStorage.setItem('sidebar_w', w); } catch (err) { /* abaikan */ }
+            window.dispatchEvent(new Event('resize'));
+        };
+        sidebarResizer.addEventListener('pointermove', onMove);
+        sidebarResizer.addEventListener('pointerup', onUp, { once: true });
+    });
+    sidebarResizer.addEventListener('dblclick', () => {
+        document.documentElement.style.removeProperty('--sidebar-width');
+        try { localStorage.removeItem('sidebar_w'); } catch (err) { /* abaikan */ }
+        window.dispatchEvent(new Event('resize'));
+    });
+
+    // Mode terang/gelap. Atribut data-theme dipasang di <head> (anti kedip), tombol di top bar.
+    function isLightTheme() { return document.documentElement.getAttribute('data-theme') === 'light'; }
+    function chartGridColor() { return isLightTheme() ? '#e2e5ea' : '#333'; }
+    // Chart.js: mode gelap balikin ke default bawaan library (tampilan lama gak berubah).
+    function applyChartDefaults() {
+        if (!(window.Chart && Chart.defaults)) return;
+        const light = isLightTheme();
+        Chart.defaults.color = light ? '#4a505b' : '#666';
+        Chart.defaults.borderColor = light ? '#e2e5ea' : 'rgba(0,0,0,0.1)';
+    }
+    // Grafik candle (Lightweight Charts). JANGAN dipanggil saat init - aiChart/curChart dideklarasi di bawah (TDZ).
+    function applyChartTheme() {
+        const light = isLightTheme();
+        applyChartDefaults();
+        [typeof aiChart !== 'undefined' ? aiChart : null, typeof curChart !== 'undefined' ? curChart : null].forEach(chart => {
+            if (!chart) return;
+            chart.applyOptions({
+                layout: { background: { color: light ? '#ffffff' : '#1e1e1e' }, textColor: light ? '#4a505b' : '#ccc' },
+                grid: { vertLines: { color: light ? '#eceef2' : '#333' }, horzLines: { color: light ? '#eceef2' : '#333' } },
+            });
+        });
+    }
+    applyChartDefaults();
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+        const light = !isLightTheme();
+        if (light) document.documentElement.setAttribute('data-theme', 'light');
+        else document.documentElement.removeAttribute('data-theme');
+        try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch (err) { /* abaikan */ }
+        applyChartTheme();
+        rerenderActiveSection();
+    });
+
     let isLoggedIn = false;
 
     function resetActivityTimer() { if(isLoggedIn) localStorage.setItem('lastActivity', Date.now()); }
@@ -253,24 +338,42 @@ document.addEventListener("DOMContentLoaded", () => {
         if(isLoggedIn) {
             const lastAct = parseInt(localStorage.getItem('lastActivity') || '0');
             if(Date.now() - lastAct > 30 * 60 * 1000) {
-                auth.signOut(); alert("Sesi habis (30 menit tanpa aktivitas). Silakan login kembali.");
+                auth.signOut(); showToast("Sesi habis (30 menit tanpa aktivitas). Silakan login kembali.", 'info');
             }
         }
     }
+
+    // Toast non-blocking, ganti alert() biar gak munculin popup native browser.
+    function showToast(msg, type, duration) {
+        type = type || 'ok'; duration = duration || 4200;
+        const root = document.getElementById('custom-toast');
+        if (!root) { alert(msg); return; }
+        const icons = {
+            ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+            err: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>',
+            info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+        };
+        const el = document.createElement('div');
+        el.className = 'toast-item ' + type;
+        el.innerHTML = '<span class="toast-ic">' + (icons[type] || icons.ok) + '</span><span class="toast-msg"></span>';
+        el.querySelector('.toast-msg').textContent = msg;
+        root.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('show'));
+        setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 200); }, duration);
+    }
+    window.showToast = showToast;
     setInterval(checkInactivity, 60000); checkInactivity();
 
     function applyAuthState() {
-        const btnLogin = document.getElementById('btn-login');
-        const btnUpload = document.getElementById('btn-upload-cloud');
+        // Tampilan tombol "Masuk" vs kotak akun (nama+menu) diatur CSS lewat body.locked-mode,
+        // sama kayak mekanisme ikon gembok di menu yang udah ada.
         if (isLoggedIn) {
             document.body.classList.remove('locked-mode');
-            btnLogin.innerHTML = '🔓 Logout'; btnLogin.style.borderColor = '#ff1744'; btnLogin.style.color = '#ff1744';
-            if (btnUpload) btnUpload.style.display = 'block';
             resetActivityTimer();
         } else {
             document.body.classList.add('locked-mode');
-            btnLogin.innerHTML = '🔒 Login System'; btnLogin.style.borderColor = '#ffd700'; btnLogin.style.color = '#ffd700';
-            if (btnUpload) btnUpload.style.display = 'none';
+            const menu = document.getElementById('acct-menu');
+            if (menu) menu.classList.remove('open');
         }
     }
     applyAuthState();
@@ -291,36 +394,54 @@ document.addEventListener("DOMContentLoaded", () => {
         isLoggedIn = !!user;
         applyAuthState();
         rerenderActiveSection();
-        if (user) { attachPrivateListener(user.uid); attachCurrencyListeners(user.uid); attachFinanceListener(user.uid); migrateFinanceDataIfNeeded(user.uid); }
+        if (user) { attachPrivateListener(user.uid); attachCurrencyListeners(user.uid); attachFinanceListener(user.uid); migrateFinanceDataIfNeeded(user.uid); attachWorkListener(user.uid); }
         else {
             if (privateUnsub) { privateUnsub(); privateUnsub = null; }
             detachCurrencyListeners();
             if (financeUnsub) { financeUnsub(); financeUnsub = null; }
+            if (workUnsub) { workUnsub(); workUnsub = null; }
             stopAiAutoTick();
         }
     });
 
     document.getElementById('btn-login').addEventListener('click', () => {
-        if (isLoggedIn) { showConfirm("Yakin mau logout bos?", () => { auth.signOut(); }); }
-        else { document.getElementById('login-modal').style.display = 'flex'; }
+        document.getElementById('login-modal').style.display = 'flex';
+    });
+
+    document.getElementById('acct-trigger').addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.getElementById('acct-menu').classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('acct-menu');
+        if (menu && menu.classList.contains('open') && !menu.contains(e.target) && e.target.id !== 'acct-trigger') {
+            menu.classList.remove('open');
+        }
+    });
+    document.getElementById('btn-logout').addEventListener('click', () => {
+        document.getElementById('acct-menu').classList.remove('open');
+        showConfirm("Yakin mau logout bos?", () => { auth.signOut(); });
     });
 
     document.getElementById('btn-upload-cloud').addEventListener('click', () => {
         showConfirm("Ini akan MENIMPA data cloud dengan data di device ini. Cuma pakai ini di device yang punya data paling lengkap. Yakin?", () => {
             Promise.all([pushPublicToCloud(), pushAiToCloud(), pushFinanceToCloud()]).then(() => {
-                alert("Data lokal berhasil di-upload ke Cloud!");
+                showToast("Data lokal berhasil di-upload ke Cloud!", 'ok');
             }).catch(err => {
-                alert("Gagal upload ke Cloud: " + err.code + "\n" + err.message);
+                showToast("Gagal upload ke Cloud: " + err.code + " — " + err.message, 'err', 6000);
             });
         });
     });
 
+    const ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.6 10.6 0 0 1 12 19c-7 0-11-7-11-7a18.6 18.6 0 0 1 5-5.6M9.9 4.2A10.4 10.4 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.2 3.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M1 1l22 22"/></svg>';
     const togglePassBtn = document.getElementById('toggle-pass');
     if(togglePassBtn) {
+        togglePassBtn.innerHTML = ICON_EYE;
         togglePassBtn.addEventListener('click', function() {
             const passInput = document.getElementById('login-pass');
-            if (passInput.type === 'password') { passInput.type = 'text'; this.innerText = '🙈'; }
-            else { passInput.type = 'password'; this.innerText = '👁️'; }
+            if (passInput.type === 'password') { passInput.type = 'text'; this.innerHTML = ICON_EYE_OFF; }
+            else { passInput.type = 'password'; this.innerHTML = ICON_EYE; }
         });
     }
 
@@ -329,12 +450,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const u = uRaw.includes('@') ? uRaw : uRaw + '@jurnal.local';
         auth.signInWithEmailAndPassword(u, p).then(() => {
             document.getElementById('login-modal').style.display = 'none'; document.getElementById('login-user').value = ''; document.getElementById('login-pass').value = ''; document.getElementById('login-pass').type = 'password';
-            if(togglePassBtn) togglePassBtn.innerText = '👁️';
-            alert("Akses Dibuka! Selamat datang 🚀");
-        }).catch((err) => { console.error(err); alert("Login gagal: " + err.code + "\n" + err.message); });
+            if(togglePassBtn) togglePassBtn.innerHTML = ICON_EYE;
+            showToast("Akses dibuka. Selamat datang kembali.", 'ok');
+        }).catch((err) => { console.error(err); showToast("Login gagal — " + err.code, 'err', 6000); });
     });
 
-    const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-ai-trading': 'Trading AI', 'view-ai-currency': 'Trading AI Currency', 'view-monitoring': 'Monitoring', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan' };
+    const titleMap = { 'view-home': 'Pusat Kendali', 'view-trading': 'Jurnal XAUUSD', 'view-ai-trading': 'Trading AI', 'view-ai-currency': 'Trading AI Currency', 'view-monitoring': 'Monitoring', 'view-expenses': 'Pengeluaran Bulanan', 'view-sports': 'Jurnal Olahraga', 'view-wealth': 'History Kekayaan', 'view-career': 'Peningkatan Karir', 'view-roadmap': 'Roadmap Masa Depan', 'view-work': 'Pekerjaan' };
 
     menuItems.forEach(item => {
         item.addEventListener('click', () => {
@@ -350,6 +471,7 @@ document.addEventListener("DOMContentLoaded", () => {
             else if (targetId === 'view-ai-trading' && isLoggedIn) { loadEconomicCalendarWidget(); startAiAutoTick(); }
             else if (targetId === 'view-ai-currency' && isLoggedIn) { renderCurrencyDashboard(); }
             else if (targetId === 'view-monitoring' && isLoggedIn) { renderMonitoringDashboard(); }
+            else if (targetId === 'view-work' && isLoggedIn) { renderWork(); }
             if (targetId !== 'view-ai-trading') stopAiAutoTick();
         });
     });
@@ -530,7 +652,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const reader = new FileReader();
             reader.onload = function (ev) {
                 try {
-                    const rows = parseCSVRows(ev.target.result);
+                    const rows = parseCSVRows(ev.target.result).map(r => Array.isArray(r) ? r.map(cell => typeof cell === 'string' ? cell.replace(/[<>]/g, '') : cell) : r); // buang < dan > supaya isi CSV dari luar tidak bisa jadi kode
                     const count = callback(rows);
                     alert(`Berhasil import ${count} data dari CSV!`);
                 } catch (err) {
@@ -608,6 +730,17 @@ document.addEventListener("DOMContentLoaded", () => {
         return count;
     });
 
+    // Sama persis definisi is_market_open() di scripts/ai_trading_core.py / watchdog-check.mjs - dipakai
+    // Status Bot di Pusat Kendali biar gak false-alarm "mati" pas weekend (market emang tutup).
+    function isMarketOpenClient() {
+        const now = new Date();
+        const day = now.getUTCDay(); const hour = now.getUTCHours();
+        if (day === 6) return false;
+        if (day === 0 && hour < 22) return false;
+        if (day === 5 && hour >= 21) return false;
+        return true;
+    }
+
     // ==========================================
     // 1. MODUL HOMEPAGE PUSAT KENDALI
     // ==========================================
@@ -622,66 +755,205 @@ document.addEventListener("DOMContentLoaded", () => {
         let sportSesi = 0; let sportMenit = 0;
         for(let d in sportData) { if(d.startsWith(targetPrefix)) { sportData[d].forEach(t => { sportSesi++; sportMenit += parseFloat(t.totalDur); }); } }
         
+        const prevNavDate = new Date(y, m - 1, 1);
+        const prevPrefix = `${prevNavDate.getFullYear()}-${String(prevNavDate.getMonth() + 1).padStart(2, '0')}`;
         let expHtml = '';
-        if(!isLoggedIn) { expHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; } 
-        else { let expTotal = 0; for(let d in expData) { if(d.startsWith(targetPrefix)) expData[d].forEach(t => expTotal += parseFloat(t.amount)); } expHtml = `<h3 style="color:#ff1744; margin-top:10px;">-${formatRupiah(expTotal)}</h3><p style="font-size:0.8rem; color:#aaa;">Pengeluaran ${monthNames[m]} ${y}</p>`; }
+        if(!isLoggedIn) { expHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;">${pkIco('lock')}<div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; }
+        else {
+            let expTotal = 0; const catMap = {};
+            for(let d in expData) { if(d.startsWith(targetPrefix)) expData[d].forEach(t => { const amt = parseFloat(t.amount) || 0; expTotal += amt; const cat = t.category || 'Lainnya'; catMap[cat] = (catMap[cat] || 0) + amt; }); }
+            let prevTotal = 0;
+            for(let d in expData) { if(d.startsWith(prevPrefix)) expData[d].forEach(t => prevTotal += parseFloat(t.amount) || 0); }
+            let trendHtml = 'Belum ada data bulan lalu buat dibandingkan.';
+            if (prevTotal > 0) {
+                const diffPct = Math.round((expTotal - prevTotal) / prevTotal * 100);
+                const naik = diffPct > 0;
+                trendHtml = `<span style="color:${naik ? '#ff1744' : '#00e676'};">${naik ? '▲' : '▼'} ${Math.abs(diffPct)}%</span> dibanding bulan lalu`;
+            }
+            const topCats = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const topMax = topCats.length ? topCats[0][1] : 0;
+            const catBarsHtml = topCats.map(([cat, amt]) => `
+                <div class="pk-meter-row" style="margin-top:8px;">
+                    <div class="pk-meter-label"><span>${cat}</span><span>${formatRupiah(amt)}</span></div>
+                    <div class="pk-meter-track"><div class="pk-meter-fill" style="width:${topMax > 0 ? Math.round(amt / topMax * 100) : 0}%; background:#ff1744;"></div></div>
+                </div>`).join('');
+            expHtml = `
+                <h3 style="color:#ff1744; margin-top:10px;">-${formatRupiah(expTotal)}</h3>
+                <p style="font-size:0.78rem; color:#888; margin:2px 0 10px;">${trendHtml}</p>
+                ${catBarsHtml || '<p style="font-size:0.78rem; color:#666;">Belum ada transaksi bulan ini.</p>'}
+            `;
+        }
         
         let wealthHtml = '';
-        if(!isLoggedIn) { wealthHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; }
+        if(!isLoggedIn) { wealthHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;">${pkIco('lock')}<div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`; }
         else {
+            // Rumus SAMA PERSIS kayak renderWealthDashboard() di halaman History Kekayaan (totalIncome/totalExpense/
+            // expectedSavings/defisit) - sengaja gak diitung ulang beda formula, biar gak ada 2 sumber kebenaran.
             let wInc = 0, wExp = 0; wealthData.items.forEach(i => { if(i.type === 'income') wInc += parseFloat(i.amount); else wExp += parseFloat(i.amount); });
-            let defisit = (wInc - wExp) - wealthData.realMoney;
-            if(defisit > 0) wealthHtml = `<h3 style="color:#ff1744; margin-top:10px;">Defisit: ${formatRupiah(defisit)}</h3><p style="font-size:0.8rem; color:#aaa;">Target Recovery</p>`;
-            else wealthHtml = `<h3 style="color:#00e676; margin-top:10px;">Aman / Surplus</h3><p style="font-size:0.8rem; color:#aaa;">Tabungan terjaga</p>`;
+            let expectedSavings = wInc - wExp;
+            let defisit = expectedSavings - wealthData.realMoney;
+            let expPct = wInc > 0 ? Math.round(wExp / wInc * 100) : 0;
+            // Meter dibikin satu arah ("makin panjang & hijau = makin sehat") biar gak kebalik sama meter
+            // Tabungan di sebelahnya - makanya Pengeluaran ditampilin sebagai SISA anggaran, bukan dipakainya.
+            let sisaPct = Math.max(0, 100 - expPct);
+            let tabPct = expectedSavings > 0 ? Math.round(wealthData.realMoney / expectedSavings * 100) : (wealthData.realMoney > 0 ? 100 : 0);
+            const sisaColor = sisaPct >= 40 ? '#00e676' : (sisaPct >= 20 ? '#ffb300' : '#ff1744');
+            const tabColor = tabPct >= 100 ? '#00e676' : (tabPct >= 60 ? '#ffb300' : '#ff1744');
+            wealthHtml = `
+                <div class="kn-row">
+                    <div class="kn-item"><b class="up">${formatRupiah(wInc)}</b><span>Pendapatan</span></div>
+                    <div class="kn-item"><b class="amb">${formatRupiah(wExp)}</b><span>Pengeluaran</span></div>
+                    <div class="kn-item"><b>${formatRupiah(expectedSavings)}</b><span>Tabungan Seharusnya</span></div>
+                    <div class="kn-item"><b>${formatRupiah(wealthData.realMoney)}</b><span>Real Time</span></div>
+                </div>
+                <div class="pk-meter-row">
+                    <div class="pk-meter-label"><span>Sisa Anggaran (${expPct}% pendapatan sudah terpakai)</span><span>${sisaPct}%</span></div>
+                    <div class="pk-meter-track"><div class="pk-meter-fill" style="width:${Math.min(100, Math.max(0, sisaPct))}%; background:${sisaColor};"></div></div>
+                </div>
+                <div class="pk-meter-row" style="margin-top:8px;">
+                    <div class="pk-meter-label"><span>Tabungan (dari target)</span><span>${tabPct}%</span></div>
+                    <div class="pk-meter-track"><div class="pk-meter-fill" style="width:${Math.min(100, Math.max(0, tabPct))}%; background:${tabColor};"></div></div>
+                </div>
+                <p style="font-size:0.78rem; color:#888; margin-top:10px;">${defisit > 0 ? `Defisit ${formatRupiah(defisit)} · Target Recovery` : 'Surplus / Aman · Tabungan terjaga'}</p>
+            `;
         }
 
-        let aiHtml = '', curHtml = '', aiBreakdownHtml = '';
+        let aiHtml = '', curHtml = '', rankingHtml = '';
         let aiClosedPl = 0, aiClosedCount = 0;
+        const pkLockedHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;">${pkIco('lock')}<div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`;
+
+        // Status Bot dikecualikan dari gerbang login - datanya dari dokumen "public" (heartbeat harga live)
+        // yang memang bisa dibaca siapapun tanpa login (sama kayak journalData/sportData), jadi tetap
+        // ditampilin walau belum login, gak kayak P/L trade yang privat.
+        const marketOpen = isMarketOpenClient();
+        const botList = [{ label: 'Gold', updatedAt: aiLivePriceMt5UpdatedAt }, ...CURRENCY_PAIRS.map(p => ({ label: p, updatedAt: currencyLivePriceUpdatedAt[p] || null }))];
+        const botStatusHtml = marketOpen ? botList.map(b => {
+            const ageMin = b.updatedAt ? (Date.now() - new Date(b.updatedAt).getTime()) / 60000 : Infinity;
+            const alive = ageMin <= STATUS_BOT_STALE_MINUTES;
+            const ageText = ageMin === Infinity ? 'belum pernah update' : (ageMin < 1 ? 'baru saja' : `${Math.round(ageMin)}m lalu`);
+            return `<div class="pk-bot-row"><span><i class="pk-dot ${alive ? 'on' : 'off'}"></i>${b.label}</span><b class="${alive ? '' : 'loss-text'}">${alive ? 'Aktif' : 'Mati'} · ${ageText}</b></div>`;
+        }).join('') : `<p style="font-size:0.82rem; color:#888;">Market sedang tutup (weekend) - status bot gak dicek sekarang, biar gak salah tandain "mati".</p>`;
+
         if(!isLoggedIn) {
-            aiHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`;
-            curHtml = `<div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><span style="font-size:2rem;">🔒</span><div><h4 style="color:#aaa;">Terkunci</h4><p style="font-size:0.75rem; color:#666;">Login System untuk melihat</p></div></div>`;
+            aiHtml = pkLockedHtml;
+            curHtml = pkLockedHtml;
+            rankingHtml = pkLockedHtml;
         }
         else {
-            for(let d in aiTradeData) { if(d.startsWith(targetPrefix)) aiTradeData[d].forEach(t => { if(t.status === 'closed') { aiClosedPl += parseFloat(t.pl || 0); aiClosedCount++; } }); }
-            aiHtml = `<h3 class="${aiClosedPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${aiClosedPl > 0 ? '+' : ''}${formatRupiah(aiClosedPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${aiClosedCount} trade closed - ${monthNames[m]} ${y}</p>`;
+            let aiWinCount = 0;
+            for(let d in aiTradeData) { if(d.startsWith(targetPrefix)) aiTradeData[d].forEach(t => { if(t.status === 'closed') { const pl = parseFloat(t.pl || 0); aiClosedPl += pl; aiClosedCount++; if(pl > 0) aiWinCount++; } }); }
+            const aiWinRate = aiClosedCount > 0 ? Math.round(aiWinCount / aiClosedCount * 100) : null;
+            aiHtml = `<h3 class="${aiClosedPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${aiClosedPl > 0 ? '+' : ''}${formatRupiah(aiClosedPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${aiClosedCount} trade closed${aiWinRate !== null ? ` · Win Rate ${aiWinRate}%` : ''} - ${monthNames[m]} ${y}</p>`;
 
-            let curTotalPl = 0, curTotalCount = 0;
+            let curTotalPl = 0, curTotalCount = 0, curWinCount = 0;
             const curBreakdown = CURRENCY_PAIRS.map(p => {
-                let pl = 0, count = 0;
+                let pl = 0, count = 0, win = 0;
                 const td = getCurInstrument(p).aiTradeData || {};
-                for(let d in td) { if(d.startsWith(targetPrefix)) td[d].forEach(t => { if(t.status === 'closed') { pl += parseFloat(t.pl || 0); count++; } }); }
-                curTotalPl += pl; curTotalCount += count;
+                for(let d in td) { if(d.startsWith(targetPrefix)) td[d].forEach(t => { if(t.status === 'closed') { const tpl = parseFloat(t.pl || 0); pl += tpl; count++; if(tpl > 0) win++; } }); }
+                curTotalPl += pl; curTotalCount += count; curWinCount += win;
                 return { pair: p, pl };
             });
-            curHtml = `<h3 class="${curTotalPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${curTotalPl > 0 ? '+' : ''}${formatRupiah(curTotalPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${curTotalCount} trade closed - ${monthNames[m]} ${y}</p>`;
+            const curWinRate = curTotalCount > 0 ? Math.round(curWinCount / curTotalCount * 100) : null;
+            curHtml = `<h3 class="${curTotalPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${curTotalPl > 0 ? '+' : ''}${formatRupiah(curTotalPl)}</h3><p style="font-size:0.8rem; color:#aaa;">${curTotalCount} trade closed${curWinRate !== null ? ` · Win Rate ${curWinRate}%` : ''} - ${monthNames[m]} ${y}</p>`;
 
-            // Breakdown per instrumen (Gold + 5 pair) ditaruh di section terpisah full-width DI LUAR grid card
-            // kecil - kalau dipaksa masuk dash-card yg sama tingginya kayak card lain, baris grid ke-stretch
-            // semua ngikutin card ini (paling tinggi), bikin card lain ada ruang kosong item gede di bawahnya.
-            const totalGabungan = aiClosedPl + curTotalPl;
-            const allBreakdown = [{ pair: 'Gold (XAUUSD)', pl: aiClosedPl }, ...curBreakdown];
-            aiBreakdownHtml = `
-                <h3 style="color:#9c27b0; margin-bottom:5px;">🌐 Ringkasan Trading AI - ${monthNames[m]} ${y}</h3>
-                <p style="color:#aaa; font-size:0.85rem; margin-bottom:15px;">Total Semuanya (Gold+Currency): <strong class="${totalGabungan >= 0 ? 'profit-text' : 'loss-text'}">${totalGabungan > 0 ? '+' : ''}${formatRupiah(totalGabungan)}</strong></p>
-                <div class="weekly-report-grid">
-                    ${allBreakdown.map(c => `<div class="weekly-card"><h4>${c.pair}</h4><p><span>P/L Bulan Ini:</span> <strong class="${c.pl >= 0 ? 'profit-text' : 'loss-text'}">${c.pl > 0 ? '+' : ''}${formatRupiah(c.pl)}</strong></p></div>`).join('')}
-                </div>`;
+            // Peringkat P/L Instrumen - gantiin kotak "Ringkasan Trading AI" lama yang gayanya beda sendiri;
+            // sekarang jadi kartu biasa isi meter batang, konsisten sama Kekayaan Bersih/Belanja Bulanan.
+            const allBreakdown = [{ pair: 'Gold (XAUUSD)', pl: aiClosedPl }, ...curBreakdown].sort((a, b) => b.pl - a.pl);
+            const rankMax = Math.max(...allBreakdown.map(c => Math.abs(c.pl)), 1);
+            rankingHtml = `<div class="pk-rank-grid">` + allBreakdown.map(c => `
+                <div class="pk-meter-row">
+                    <div class="pk-meter-label"><span>${c.pair}</span><span class="${c.pl >= 0 ? 'profit-text' : 'loss-text'}">${c.pl > 0 ? '+' : ''}${formatRupiah(c.pl)}</span></div>
+                    <div class="pk-meter-track"><div class="pk-meter-fill" style="width:${Math.round(Math.abs(c.pl) / rankMax * 100)}%; background:${c.pl >= 0 ? '#00e676' : '#ff1744'};"></div></div>
+                </div>`).join('') + `</div>`;
         }
+
+        // Target sesi olahraga/bulan - cuma preferensi tampilan (disimpan per-device, gak perlu sync cloud).
+        const sportTarget = parseInt(localStorage.getItem('sport_target_sesi')) || 12;
+        const sportPct = Math.min(100, Math.round(sportSesi / sportTarget * 100));
+        const sportRingHtml = `
+            <div style="display:flex; align-items:center; gap:14px; margin-top:10px;">
+                <div class="pk-ring" style="--p:${sportPct};"><div class="pk-ring-inner"><b>${sportSesi}</b><span>/${sportTarget}</span></div></div>
+                <div><h3 style="color:#2196f3; margin:0;">${sportSesi} Sesi | ${sportMenit} Menit</h3><p style="font-size:0.8rem; color:#aaa; margin:2px 0 6px;">Aktivitas Fisik ${monthNames[m]} ${y}</p>
+                <a href="#" id="pk-sport-target-edit" style="font-size:0.72rem; color:#2196f3; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">Ubah target (${sportTarget} sesi/bulan) ${pkIco('pencil')}</a></div>
+            </div>`;
 
         const homeWidgets = document.getElementById('home-widgets');
         if(homeWidgets) {
             homeWidgets.innerHTML = `
-                <div class="dash-card"><h3 style="color:#ffd700; border-bottom: 1px dashed #444; padding-bottom:10px;">📊 Performa XAUUSD</h3><h3 class="${xauPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:10px;">${xauPl > 0 ? '+' : ''}${formatRupiah(xauPl)}</h3><p style="font-size:0.8rem; color:#aaa;">P/L Bulan ${monthNames[m]} ${y}</p></div>
-                <div class="dash-card"><h3 style="color:#ff1744; border-bottom: 1px dashed #444; padding-bottom:10px;">🛒 Belanja Bulanan</h3>${expHtml}</div>
-                <div class="dash-card"><h3 style="color:#2196f3; border-bottom: 1px dashed #444; padding-bottom:10px;">🏃‍♂️ Jurnal Olahraga</h3><h3 style="color:#2196f3; margin-top:10px;">${sportSesi} Sesi | ${sportMenit} Menit</h3><p style="font-size:0.8rem; color:#aaa;">Aktivitas Fisik ${monthNames[m]} ${y}</p></div>
-                <div class="dash-card"><h3 style="color:#ffb300; border-bottom: 1px dashed #444; padding-bottom:10px;">💰 Status Kekayaan</h3>${wealthHtml}</div>
-                <div class="dash-card"><h3 style="color:#9c27b0; border-bottom: 1px dashed #444; padding-bottom:10px;">🤖 Trading AI Gold</h3>${aiHtml}</div>
-                <div class="dash-card"><h3 style="color:#00bcd4; border-bottom: 1px dashed #444; padding-bottom:10px;">💴 Trading AI Currency</h3>${curHtml}</div>
+                <div class="pk-section">Personal</div>
+                <div class="dashboard-grid">
+                    <div class="dash-card"><h3 style="color:#2196f3; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('heart')}Jurnal Olahraga</h3>${sportRingHtml}</div>
+                    <div class="dash-card">
+                        <h3 style="border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('checklist')}Fokus Kuartal Ini</h3>
+                        <ul class="task-list">
+                            <li>Konsistensi profit & disiplin XAUUSD.</li>
+                            <li>Ketahanan fisik Naik Gunung.</li>
+                            <li>Manajemen waktu.</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="pk-section">Keuangan</div>
+                <div class="dashboard-grid">
+                    <div class="dash-card"><h3 style="color:#ff1744; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('cart')}Belanja Bulanan</h3>${expHtml}</div>
+                    <div class="dash-card"><h3 style="color:#ffb300; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('wallet')}Kekayaan Bersih</h3>${wealthHtml}</div>
+                </div>
+                <div class="pk-section">Trading</div>
+                <p style="margin:-6px 0 12px; font-size:0.78rem; color:#777;">Data dari shadow trading (simulasi) - bot belum eksekusi uang real.</p>
+                <div class="dashboard-grid pk-grid-4">
+                    <div class="dash-card"><h3 style="color:#ffd700; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('barChart')}Jurnal Manual XAUUSD</h3><p style="font-size:0.72rem; color:#777; margin-top:8px;">Dicatat manual, bukan bot</p><h3 class="${xauPl >= 0 ? 'profit-text' : 'loss-text'}" style="margin-top:6px;">${xauPl > 0 ? '+' : ''}${formatRupiah(xauPl)}</h3><p style="font-size:0.8rem; color:#aaa;">P/L Bulan ${monthNames[m]} ${y}</p></div>
+                    <div class="dash-card"><h3 style="color:#9c27b0; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('goldBars')}Bot AI - Gold</h3><p style="font-size:0.72rem; color:#777; margin-top:8px;">Shadow trading (simulasi)</p>${aiHtml}</div>
+                    <div class="dash-card"><h3 style="color:#00bcd4; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('coins')}Bot AI - Currency</h3><p style="font-size:0.72rem; color:#777; margin-top:8px;">Shadow trading, 5 pair (simulasi)</p>${curHtml}</div>
+                    <div class="dash-card"><h3 style="color:#4caf50; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('server')}Status Bot</h3><div style="margin-top:8px;">${botStatusHtml}</div></div>
+                </div>
+                <div class="dashboard-grid" style="margin-top: var(--space-md);">
+                    <div class="dash-card"><h3 style="color:#ff9800; border-bottom: 1px dashed #444; padding-bottom:10px;">${pkIco('rank')}Peringkat P/L Instrumen</h3><p style="font-size:0.72rem; color:#777; margin-top:8px;">${monthNames[m]} ${y}, diurutkan dari untung tertinggi</p>${rankingHtml}</div>
+                </div>
             `;
+            const sportTargetEditEl = document.getElementById('pk-sport-target-edit');
+            if (sportTargetEditEl) {
+                sportTargetEditEl.onclick = (e) => {
+                    e.preventDefault();
+                    const val = prompt('Target sesi olahraga per bulan (contoh: 12):', sportTarget);
+                    if (val === null) return;
+                    const num = parseInt(val);
+                    if (isNaN(num) || num <= 0) { showToast('Angka gak valid.', 'err'); return; }
+                    localStorage.setItem('sport_target_sesi', num);
+                    renderHome();
+                };
+            }
         }
-        const aiBreakdownEl = document.getElementById('home-ai-breakdown');
-        if (aiBreakdownEl) { aiBreakdownEl.innerHTML = aiBreakdownHtml; aiBreakdownEl.style.display = aiBreakdownHtml ? 'block' : 'none'; }
     }
+    // Pemilih bulan cepat - klik label bulan di tengah, pilih tahun lalu bulan (gak perlu klik panah berkali-kali).
+    const pkPicker = document.getElementById('pk-month-picker');
+    const pkMonthBtn = document.getElementById('home-month-year-display');
+    let pkPickerYear = globalNavDate.getFullYear();
+    function renderPkPicker() {
+        const now = new Date();
+        document.getElementById('pkmp-year-label').innerText = pkPickerYear;
+        document.getElementById('pkmp-grid').innerHTML = monthNames.map((name, i) => {
+            const selected = pkPickerYear === globalNavDate.getFullYear() && i === globalNavDate.getMonth();
+            const current = pkPickerYear === now.getFullYear() && i === now.getMonth();
+            return `<button class="pkmp-month${selected ? ' selected' : ''}${current ? ' current' : ''}" data-month="${i}">${name.slice(0, 3)}</button>`;
+        }).join('');
+    }
+    function setPkPickerOpen(open) {
+        pkPicker.hidden = !open;
+        pkMonthBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) { pkPickerYear = globalNavDate.getFullYear(); renderPkPicker(); }
+    }
+    function goToHomeMonth(y, m) { globalNavDate = new Date(y, m, 1); setPkPickerOpen(false); renderHome(); }
+    pkMonthBtn.onclick = (e) => { e.stopPropagation(); setPkPickerOpen(pkPicker.hidden); };
+    pkPicker.onclick = (e) => {
+        e.stopPropagation();
+        const monthBtn = e.target.closest('.pkmp-month');
+        if (monthBtn) goToHomeMonth(pkPickerYear, Number(monthBtn.dataset.month));
+    };
+    document.getElementById('pkmp-prev-year').onclick = () => { pkPickerYear--; renderPkPicker(); };
+    document.getElementById('pkmp-next-year').onclick = () => { pkPickerYear++; renderPkPicker(); };
+    document.getElementById('pkmp-this-month').onclick = () => { const n = new Date(); goToHomeMonth(n.getFullYear(), n.getMonth()); };
+    document.addEventListener('click', () => { if (!pkPicker.hidden) setPkPickerOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pkPicker.hidden) setPkPickerOpen(false); });
+
     document.getElementById('home-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderHome(); }; document.getElementById('home-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderHome(); };
 
     // ==========================================
@@ -730,7 +1002,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     card.onclick = () => { if(isLoggedIn) openXAUModal(fDate, dayNum); }; cal.appendChild(card);
                 } else cal.appendChild(Object.assign(document.createElement('div'), {className:'empty-card'}));
             }
-            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData?(weeklyPl>0?'weekly-profit':'weekly-loss'):'empty-card'}`;
+            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData?(weeklyPl>0?'weekly-profit':(weeklyPl<0?'weekly-loss':'')):'empty-card'}`;
             if(hasData) wCard.innerHTML = `<div class="week-title">Mg ${w+1}</div><div class="week-pl ${weeklyPl>0?'profit-text':'loss-text'}">${weeklyPl>0?'+':''}${formatRupiah(weeklyPl)}</div>`;
             cal.appendChild(wCard);
         }
@@ -787,7 +1059,7 @@ document.addEventListener("DOMContentLoaded", () => {
         (journalData[dateStr]||[]).forEach((t,i) => { 
             let upBtn = i > 0 ? `<button type="button" class="reorder-btn" title="Naik" onclick="moveXAU('${dateStr}', ${i}, -1)">⬆️</button>` : '';
             let downBtn = i < journalData[dateStr].length - 1 ? `<button type="button" class="reorder-btn" title="Turun" onclick="moveXAU('${dateStr}', ${i}, 1)">⬇️</button>` : '';
-            document.getElementById('today-history').innerHTML += `<div class="history-item ${t.pl>0?'hist-profit':'hist-loss'}"><div><strong>${formatRupiah(t.pl)}</strong><br><span style="color:#aaa; font-size:0.75rem;">[${t.tf}] ${t.arah} | Layer: ${(t.layers||[]).length}</span></div><div class="action-group">${upBtn}${downBtn}<button type="button" class="edit-btn" onclick="editXAUTrade('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteXAUTrade('${dateStr}', ${i})">🗑️</button></div></div>`; 
+            document.getElementById('today-history').innerHTML += `<div class="history-item ${t.pl>0?'hist-profit':'hist-loss'}"><div><strong>${formatRupiah(t.pl)}</strong><br><span style="color:#aaa; font-size:0.75rem;">[${t.tf}] ${t.arah} | Layer: ${(t.layers||[]).length}</span></div><div class="action-group">${upBtn}${downBtn}<button type="button" class="edit-btn" onclick="editXAUTrade('${dateStr}', ${i})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button><button type="button" class="del-btn" onclick="deleteXAUTrade('${dateStr}', ${i})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg></button></div></div>`; 
         });
         document.getElementById('xau-layers-container').innerHTML = ''; document.getElementById('btn-add-xau-layer').click(); // Default 1 layer
         
@@ -854,7 +1126,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const trades = journalData[fDate] || []; let wIdx = Math.floor((firstDay + i - 1) / 7);
             
             if (trades.length > 0) {
-                monthHasData = true; weeklyReports[wIdx].hasData = true; labels.push(`Tgl ${i}`);
+                monthHasData = true; weeklyReports[wIdx].hasData = true; labels.push(String(i));
                 trades.forEach(t => { 
                     let p = parseFloat(t.pl || 0); netDaily += p; totalTrades++;
                     if (p >= 0) { dailyProfit += p; winCount++; weeklyReports[wIdx].wins++; } else { dailyLoss += p; lossCount++; weeklyReports[wIdx].losses++; }
@@ -922,7 +1194,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const tbody = document.getElementById('dashboard-table-body'); tbody.innerHTML = filtered.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
         filtered.forEach((e, i) => {
             let layersCount = e.layers ? e.layers.length : 1;
-            tbody.innerHTML += `<tr><td>${i+1}</td><td>${e.date}</td><td>${e.tf||'-'}</td><td>${e.arah||'-'}</td><td>${e.duration||'-'}</td><td>${layersCount} L</td><td style="white-space: normal; line-height: 1.6; min-width: 250px;">${e.alasan||'-'}</td><td align="right" class="${e.plVal>=0?'profit-text':'loss-text'}"><strong>${formatRupiah(e.plVal)}</strong></td></tr>`;
+            tbody.innerHTML += `<tr><td>${i+1}</td><td>${escHtml(e.date)}</td><td>${escHtml(e.tf||'-')}</td><td>${escHtml(e.arah||'-')}</td><td>${escHtml(e.duration||'-')}</td><td>${layersCount} L</td><td style="white-space: normal; line-height: 1.6; min-width: 250px;">${escHtml(e.alasan||'-')}</td><td align="right" class="${e.plVal>=0?'profit-text':'loss-text'}"><strong>${formatRupiah(e.plVal)}</strong></td></tr>`;
         });
     }
 
@@ -934,7 +1206,6 @@ document.addEventListener("DOMContentLoaded", () => {
     let aiTickInterval = null; let lastAiCandles = null;
     let aiTimeframe = '1h'; // default H1 biar out-of-the-box pakai data MT5 real-time gratis (gak butuh API key TwelveData)
     let aiLiveCandlesMt5 = null; let aiLiveCandlesMt5UpdatedAt = null; // candle terkini dari bot VPS/MT5, disinkron lewat appData/public
-    let aiLivePriceMt5 = null; let aiLivePriceMt5UpdatedAt = null; // harga tick terkini dari bot VPS/MT5 (di-throttle bot ~30 detik biar irit kuota Firestore, eksekusi SL/TP tetap tiap ~10 detik gak kepengaruh)
     const AI_LIVE_PRICE_MAX_AGE_SECONDS = 45; // dinaikin dari 30 - kasih buffer biar gak sempet kelihatan "stale" pas mepet siklus push ~30 detik dari bot
 
     // 1 pip = 0.1 harga (konsisten sama perhitungan "Pips" di Jurnal XAUUSD manual). Lot 0.1 Cent Exness: 1 pip = 1 USC (dari contoh broker user).
@@ -1018,6 +1289,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     grid: { vertLines: { color: '#333' }, horzLines: { color: '#333' } },
                     timeScale: { timeVisible: true }
                 });
+                applyChartTheme();
                 aiCandleSeries = aiChart.addCandlestickSeries({ upColor: '#00e676', downColor: '#ff1744', borderVisible: false, wickUpColor: '#00e676', wickDownColor: '#ff1744' });
                 window.addEventListener('resize', () => { if (aiChart) aiChart.applyOptions({ width: container.clientWidth }); });
             }
@@ -1050,7 +1322,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const ma20 = calcSMA(closes, 20), ma50 = calcSMA(closes, 50), rsi = calcRSI(closes, 14), macd = calcMACD(closes);
         if (ma20 !== null && ma50 !== null) {
             const up = ma20 > ma50;
-            trendEl.innerHTML = up ? '📈 Naik' : '📉 Turun';
+            trendEl.innerHTML = up ? 'Naik' : 'Turun';
             trendEl.className = up ? 'profit-text' : 'loss-text';
         }
         if (rsi !== null) {
@@ -1062,7 +1334,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (macd) {
             const bullish = macd.macd > macd.signal;
-            macdEl.innerHTML = bullish ? '🐂 Bullish' : '🐻 Bearish';
+            macdEl.innerHTML = bullish ? 'Bullish' : 'Bearish';
             macdEl.className = bullish ? 'profit-text' : 'loss-text';
         }
     }
@@ -1236,7 +1508,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Shared antara renderAiDashboard/renderCurDashboard (stat box per jenis sinyal) & buildEvalRecommendationPrompt
     // di bawah - dulu ada 2 copy identik (signalLabels lokal di renderAiDashboard + CUR_SIGNAL_LABELS), disatukan.
-    const SIGNAL_TYPE_LABELS = { rsi_reversal: '🔄 RSI Reversal', trend_following: '📈 Trend-Following', ict_liquidity_sweep: '🔵 ICT Liquidity Sweep', lainnya: 'Lainnya' };
+    const SIGNAL_TYPE_LABELS = { rsi_reversal: 'RSI Reversal', trend_following: 'Trend-Following', ict_liquidity_sweep: 'ICT Liquidity Sweep', lainnya: 'Lainnya' };
 
     // Rekomendasi AI di Dashboard Evaluasi - reuse callLLM() di atas, prompt dari agregat statistik
     // (bukan dump semua trade satu-satu) dan sengaja diminta cuma observasi pola + saran, BUKAN sinyal
@@ -1551,26 +1823,38 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     const AI_LOG_SUCCESS_SET = new Set(['entry_opened', 'position_updated', 'position_closed', 'news_close', 'emergency_close', 'restart']);
     const AI_LOG_FAIL_SET = new Set(['error']);
-    function categorizeAiLog(outcome) { return AI_LOG_SUCCESS_SET.has(outcome) ? 'success' : AI_LOG_FAIL_SET.has(outcome) ? 'fail' : 'nihil'; }
+    function categorizeAiLog(outcome) { return (AI_LOG_SUCCESS_SET.has(outcome) || /^entry_opened/.test(outcome)) ? 'success' : AI_LOG_FAIL_SET.has(outcome) ? 'fail' : 'nihil'; }
 
     let aiLastLogs = [];
     let aiLogFilter = new Set(['success', 'nihil', 'fail']); // default semua kecentang, murni filter tampilan - gak pernah ubah query/limit 200 di atas
 
+    document.getElementById('ai-log-limit').addEventListener('change', e => { aiLogLimit = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10); renderAiLogList(); });
     window.toggleAiLogFilter = function(category, btn) {
         if (aiLogFilter.has(category)) aiLogFilter.delete(category); else aiLogFilter.add(category);
         btn.classList.toggle('ai-log-filter-off', !aiLogFilter.has(category));
         renderAiLogList();
     };
 
+    let aiLogLimit = 10; // default tampil 10 aktivitas terbaru
+    function logRowHtml(l) {
+        const pretty = (o) => { const x = String(o || '').replace(/_m2$/, ' (ICT)').replace(/_/g, ' ').trim(); return x.charAt(0).toUpperCase() + x.slice(1); };
+        const meta = AI_LOG_OUTCOME_LABEL[l.outcome] || { label: pretty(l.outcome) };
+        const cat = categorizeAiLog(l.outcome);
+        const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+        const src = String(l.source || '').startsWith('browser') ? 'browser' : 'server';
+        return `<div class="log-row log-${cat}"><span class="log-dot"></span><div class="log-main"><div class="log-title">${escHtml(meta.label)}</div><div class="log-detail">${escHtml(l.detail || '-')}</div></div><div class="log-time">${waktu}<small>${src}</small></div></div>`;
+    }
+    function logSummaryHtml(s, n, f) {
+        return `<div class="equity-box" style="border-left-color:#00e676;"><span class="label">Berhasil</span><h3>${s}</h3></div>
+                <div class="equity-box" style="border-left-color:#888;"><span class="label">Nihil</span><h3>${n}</h3></div>
+                <div class="equity-box" style="border-left-color:#ff1744;"><span class="label">Gagal</span><h3>${f}</h3></div>`;
+    }
     function renderAiLogList() {
         const listEl = document.getElementById('ai-log-list');
         const filtered = aiLastLogs.filter(l => aiLogFilter.has(categorizeAiLog(l.outcome)));
-        listEl.innerHTML = filtered.length ? '' : '<p style="color:#888;">Gak ada aktivitas yang cocok sama filter ini.</p>';
-        filtered.forEach(l => {
-            const meta = AI_LOG_OUTCOME_LABEL[l.outcome] || { emoji: 'ℹ️', label: l.outcome };
-            const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
-            listEl.innerHTML += `<div class="history-item"><div><strong>${meta.emoji} ${meta.label}</strong> <span style="color:#666; font-size:0.75rem;">(${l.source === 'server' ? 'server' : 'browser'})</span><br><span style="color:#aaa; font-size:0.8rem;">${waktu} — ${l.detail}</span></div></div>`;
-        });
+        const shown = filtered.slice(0, aiLogLimit === 'all' ? filtered.length : aiLogLimit);
+        listEl.innerHTML = shown.length ? shown.map(logRowHtml).join('') : '<p class="ec-empty">Tidak ada aktivitas yang cocok dengan filter ini.</p>';
+        const info = document.getElementById('ai-log-count'); if (info) info.innerText = `${shown.length} dari ${filtered.length}`;
     }
 
     function renderAiLog() {
@@ -1583,10 +1867,7 @@ document.addEventListener("DOMContentLoaded", () => {
             aiLastLogs = logs;
             let success = 0, fail = 0, nihil = 0;
             logs.forEach(l => { const cat = categorizeAiLog(l.outcome); if (cat === 'success') success++; else if (cat === 'fail') fail++; else nihil++; });
-            document.getElementById('ai-log-summary').innerHTML = `
-                <div class="equity-box" style="border-left-color:#00e676;"><span class="label">✅ Berhasil</span><h3 style="color:#00e676;">${success}</h3></div>
-                <div class="equity-box" style="border-left-color:#888;"><span class="label">⚪ Nihil</span><h3 style="color:#ccc;">${nihil}</h3></div>
-                <div class="equity-box" style="border-left-color:#ff1744;"><span class="label">❌ Gagal</span><h3 style="color:#ff1744;">${fail}</h3></div>`;
+            document.getElementById('ai-log-summary').innerHTML = logSummaryHtml(success, nihil, fail);
             renderAiLogList();
         }).catch(err => console.error('Gagal ambil log tick:', err));
     }
@@ -1645,7 +1926,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         totalEl.innerText = `${totalFloating >= 0 ? '+' : ''}${formatRupiah(totalFloating)}`;
         totalEl.className = totalFloating >= 0 ? 'profit-text' : 'loss-text';
-        if (detailEl) detailEl.innerHTML = `<div class="insight-box ${totalFloating >= 0 ? 'insight-success' : 'insight-danger'}" style="font-size:0.8rem;">${trade.alasan || ''}</div>`;
+        if (detailEl) detailEl.innerHTML = `<div class="insight-box ${totalFloating >= 0 ? 'insight-success' : 'insight-danger'}" style="font-size:0.8rem;">${escHtml(trade.alasan || '')}</div>`;
     }
 
     // --- Tick "display" — dipanggil otomatis selagi tab browser kebuka. Cuma update chart & floating P/L, TIDAK buka/tutup posisi (biar gak race sama bot server). ---
@@ -1694,7 +1975,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     cal.appendChild(card);
                 } else cal.appendChild(Object.assign(document.createElement('div'), { className: 'empty-card' }));
             }
-            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData ? (weeklyPl > 0 ? 'weekly-profit' : 'weekly-loss') : 'empty-card'}`;
+            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData ? (weeklyPl > 0 ? 'weekly-profit' : (weeklyPl < 0 ? 'weekly-loss' : '')) : 'empty-card'}`;
             if (hasData) wCard.innerHTML = `<div class="week-title">Mg ${w + 1}</div><div class="week-pl ${weeklyPl > 0 ? 'profit-text' : 'loss-text'}">${weeklyPl > 0 ? '+' : ''}${formatRupiah(weeklyPl)}</div>`;
             cal.appendChild(wCard);
         }
@@ -1756,29 +2037,94 @@ document.addEventListener("DOMContentLoaded", () => {
         headerEl.querySelector('.ai-hist-arrow').classList.toggle('open');
     };
 
+    // ---- Kartu entry simulasi (dipakai modal kalender Gold & Currency) ----
+    function escHtml(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    function plTone(v) { v = parseFloat(v || 0); return v > 0 ? 'pos' : v < 0 ? 'neg' : 'neu'; }
+    function entryModalTitle(dateStr, dayNum) {
+        const [yy, mm, dd] = String(dateStr).split('-').map(Number);
+        if (!yy || !mm || !dd) return `Entry Simulasi Tgl ${dayNum}`;
+        return 'Entry Simulasi · ' + new Date(yy, mm - 1, dd).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+    }
+    function layerShort(ly) {
+        const st = String(ly.status || '');
+        const full = AI_LAYER_STATUS_LABEL[st] || st || '-';
+        if (/tp/i.test(full)) return 'TP';
+        if (/sl/i.test(full) && !/tutup/i.test(full)) return 'SL';
+        if (/batal/i.test(full)) return 'Batal';
+        if (/berita/i.test(full)) return 'Berita';
+        if (/weekend/i.test(full)) return 'Weekend';
+        if (/timeout/i.test(full)) return 'Timeout';
+        if (/breakeven/i.test(full)) return 'BE';
+        return full.length > 9 ? full.slice(0, 8) + '.' : full;
+    }
+    function layerBadgesHtml(layers) {
+        return '<span class="lbs">' + (layers || []).map((ly, i) => `<span class="lb ${plTone(ly.pl)}">L${i + 1} ${escHtml(layerShort(ly))}</span>`).join('') + '</span>';
+    }
+    function fmtJam(iso) { return iso ? new Date(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'; }
+    function entryBodyHtml(t, dec) {
+        const f = (v) => (v === undefined || v === null || v === '' || isNaN(parseFloat(v))) ? '-' : parseFloat(v).toFixed(dec);
+        const sig = SIGNAL_TYPE_LABELS[t.signalType] || t.signalType || '-';
+        const layers = (t.layers || []).map((ly, i) => `<div class="ecx-layer">
+                <div class="ecx-lh"><b>Layer ${i + 1}</b><span class="ec-st ${plTone(ly.pl)}">${escHtml(AI_LAYER_STATUS_LABEL[ly.status] || ly.status || '-')}</span></div>
+                <dl><dt>Entry</dt><dd>${f(ly.entry)}</dd><dt>SL</dt><dd>${f(ly.sl)}</dd><dt>TP</dt><dd>${f(ly.tp)}${ly.tpPips != null ? ` <small>${ly.tpPips}p</small>` : ''}</dd>${ly.lot != null ? `<dt>Lot</dt><dd>${ly.lot}</dd>` : ''}</dl>
+                <div class="ecx-lpl ${plTone(ly.pl)}">${formatRupiah(ly.pl || 0)}</div>
+            </div>`).join('');
+        return `<div class="ecx-meta">
+                <div><span>Metode</span><b>${escHtml(sig)}</b></div>
+                <div><span>Timeframe</span><b>${escHtml(t.tf || '-')}</b></div>
+                <div><span>Dibuka</span><b>${formatAiTime(t.openedAt)}</b></div>
+                <div><span>Ditutup</span><b>${t.closedAt ? formatAiTime(t.closedAt) : 'Belum'}</b></div>
+                <div><span>Durasi</span><b>${fmtDurasi(t.openedAt, t.closedAt)}</b></div>
+            </div>
+            <div class="ecx-layers-grid">${layers}</div>
+            ${t.alasan ? `<div class="ecx-reason"><span>Alasan entry</span><p>${escHtml(t.alasan)}</p></div>` : ''}`;
+    }
+    const EC_CHEV = '<svg class="ecx-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+    function entryCardHtml(t, dec) {
+        const pl = parseFloat(t.pl || 0);
+        const isOpen = t.status !== 'closed';
+        const dir = String(t.arah || '').toUpperCase();
+        const sig = SIGNAL_TYPE_LABELS[t.signalType] || t.signalType || '-';
+        const tone = isOpen ? 'open' : pl > 0 ? 'win' : pl < 0 ? 'lose' : 'flat';
+        const price = isNaN(parseFloat(t.entry)) ? '-' : parseFloat(t.entry).toFixed(dec);
+        return `<div class="ecx ecx-${tone}">
+            <button type="button" class="ecx-sum" onclick="toggleEc(this)">
+                <span class="ec-dir ${dir === 'BUY' ? 'buy' : 'sell'}">${escHtml(dir || '-')}</span>
+                <span class="ecx-main"><b>${price}</b><small>${escHtml(sig)} · ${fmtJam(t.openedAt)} - ${t.closedAt ? fmtJam(t.closedAt) : 'open'}</small></span>
+                ${layerBadgesHtml(t.layers)}
+                <span class="ec-total ${plTone(pl)}">${isOpen ? 'Open' : formatRupiah(pl)}</span>
+                ${EC_CHEV}
+            </button>
+            <div class="ecx-body">${entryBodyHtml(t, dec)}</div>
+        </div>`;
+    }
+    window.toggleEc = function(btn) { btn.parentElement.classList.toggle('open'); };
+    window.toggleAllEc = function(btn) {
+        const root = btn.closest('.modal-content');
+        const items = root.querySelectorAll('.ecx');
+        const open = !Array.from(items).every(i => i.classList.contains('open'));
+        items.forEach(i => i.classList.toggle('open', open));
+        btn.innerText = open ? 'Tutup semua' : 'Buka semua';
+    };
+    window.dtToggle = function(tr) { tr.classList.toggle('open'); if (tr.nextElementSibling) tr.nextElementSibling.classList.toggle('open'); };
+    function dashRowsHtml(e, num, dec) {
+        const pl = parseFloat(e.plVal || 0);
+        const dir = String(e.arah || '').toUpperCase();
+        const f = (v) => isNaN(parseFloat(v)) ? '-' : parseFloat(v).toFixed(dec);
+        const tp = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join(' / ') : (e.tp || '-');
+        return `<tr class="dt-row" onclick="dtToggle(this)"><td class="dt-no">${num}</td><td>${e.date}</td><td><span class="ec-dir ${dir === 'BUY' ? 'buy' : 'sell'}">${escHtml(dir)}</span></td><td>${f(e.entry)}</td><td>${f(e.sl)}</td><td>${tp}</td><td>${layerBadgesHtml(e.layers)}</td><td align="right" class="${plTone(pl)}"><strong>${e.status === 'closed' ? formatRupiah(pl) : 'Open'}</strong></td></tr><tr class="dt-detail"><td colspan="8">${entryBodyHtml(e, dec)}</td></tr>`;
+    }
+    function entryListHtml(list, dec) {
+        if (!list.length) return '<p class="ec-empty">Tidak ada entry pada tanggal ini.</p>';
+        const sorted = list.slice().sort((a, b) => String(a.openedAt || '').localeCompare(String(b.openedAt || '')));
+        const total = sorted.reduce((s, t) => s + parseFloat(t.pl || 0), 0);
+        return `<div class="ec-summary"><span>${sorted.length} entry</span><button type="button" class="exp-link" onclick="toggleAllEc(this)">Buka semua</button><span class="${plTone(total)}">Total ${formatRupiah(total)}</span></div>` + sorted.map(t => entryCardHtml(t, dec)).join('');
+    }
+
     function openAiModal(dateStr, dayNum) {
         currentAiDateStr = dateStr;
-        document.getElementById('ai-modal-date-title').innerText = `Entry Simulasi Tgl ${dayNum}`;
-        const list = aiTradeData[dateStr] || [];
-        document.getElementById('ai-today-history').innerHTML = list.length ? '' : '<p style="color:#888;">Gak ada entry tanggal ini.</p>';
-        list.forEach((t) => {
-            const layerLines = (t.layers || []).map((ly, idx) => {
-                const label = AI_LAYER_STATUS_LABEL[ly.status] || ly.status;
-                return `Layer ${idx + 1}: Entry ${parseFloat(ly.entry).toFixed(2)} | SL ${parseFloat(ly.sl).toFixed(2)} | TP ${parseFloat(ly.tp).toFixed(2)} (${ly.tpPips}p) | ${label} | ${formatRupiah(ly.pl || 0)}`;
-            }).join('<br>');
-            document.getElementById('ai-today-history').innerHTML += `<div class="history-item ai-hist-collapsible ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}">
-                <div class="ai-hist-header" onclick="toggleAiHistDetail(this)">
-                    <span><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(2)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'})</span></span>
-                    <span class="ai-hist-arrow">▼</span>
-                </div>
-                <div class="ai-hist-detail">
-                    <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'}) 🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
-                    <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
-                    <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
-                    <strong>Total P/L: ${formatRupiah(t.pl || 0)}</strong>
-                </div>
-            </div>`;
-        });
+        document.getElementById('ai-modal-date-title').innerText = entryModalTitle(dateStr, dayNum);
+        document.getElementById('ai-today-history').innerHTML = entryListHtml(aiTradeData[dateStr] || [], 2);
         document.getElementById('ai-entry-modal').style.display = 'flex';
     }
     document.getElementById('close-ai-modal').onclick = () => document.getElementById('ai-entry-modal').style.display = 'none';
@@ -1839,16 +2185,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const riskLimit = aiModalAwal * (masterS.riskLimitPct / 100);
         const usedPct = periodPl < 0 ? Math.min((Math.abs(periodPl) / riskLimit) * 100, 999) : 0;
         const riskBox = document.getElementById('ai-risk-insight');
-        if (periodPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Aman! ${riskPeriodLabel === 'minggu' ? 'Minggu' : 'Bulan'} ini masih profit ${formatRupiah(periodPl)}, belum kepakai risk budget.</div>`;
-        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel} (${formatRupiah(Math.abs(periodPl))} dari ${formatRupiah(riskLimit)}).</div>`;
-        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">⚠️ Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}. Kurangi ukuran posisi.</div>`;
-        else riskBox.innerHTML = `<div class="insight-box insight-danger">🚨 LIMIT TERLAMPAUI! Rugi ${riskPeriodLabel} ini ${formatRupiah(Math.abs(periodPl))}, lewat batas ${masterS.riskLimitPct}% modal (${formatRupiah(riskLimit)}). STOP entry baru ${riskPeriodLabel} ini.</div>`;
+        if (periodPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">Aman! ${riskPeriodLabel === 'minggu' ? 'Minggu' : 'Bulan'} ini masih profit ${formatRupiah(periodPl)}, belum kepakai risk budget.</div>`;
+        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel} (${formatRupiah(Math.abs(periodPl))} dari ${formatRupiah(riskLimit)}).</div>`;
+        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}. Kurangi ukuran posisi.</div>`;
+        else riskBox.innerHTML = `<div class="insight-box insight-danger">LIMIT TERLAMPAUI! Rugi ${riskPeriodLabel} ini ${formatRupiah(Math.abs(periodPl))}, lewat batas ${masterS.riskLimitPct}% modal (${formatRupiah(riskLimit)}). STOP entry baru ${riskPeriodLabel} ini.</div>`;
 
         let closedTrades = tableRows.filter(t => t.status === 'closed');
         let overboughtMistakes = closedTrades.filter(t => t.arah === 'BUY' && t.alasan && t.alasan.toLowerCase().includes('overbought')).length;
         let oversoldMistakes = closedTrades.filter(t => t.arah === 'SELL' && t.alasan && t.alasan.toLowerCase().includes('oversold')).length;
         let winRate = closedTrades.length > 0 ? ((winCount / closedTrades.length) * 100).toFixed(0) : 0;
-        document.getElementById('ai-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${periodPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
+        document.getElementById('ai-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${periodPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
 
         let signalStats = {};
         closedTrades.forEach(t => {
@@ -1951,7 +2297,7 @@ document.addEventListener("DOMContentLoaded", () => {
         tbody.innerHTML = pageRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
         pageRows.forEach((e, i) => {
             const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '-');
-            tbody.innerHTML += `<tr><td>${startIdx + i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${parseFloat(e.entry).toFixed(2)}</td><td>${parseFloat(e.sl).toFixed(2)}</td><td>${tpDisplay}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`;
+            tbody.innerHTML += dashRowsHtml(e, startIdx + i + 1, 2);
         });
 
         const pagEl = document.getElementById('ai-table-pagination');
@@ -2028,41 +2374,59 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     document.getElementById('exp-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderExpCalendar(); }; document.getElementById('exp-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderExpCalendar(); };
 
+    const EXP_CAT_COLORS = { 'Rutin (Wajib)': '#4caf50', 'Penting banget': '#ff9800', 'Penasaran/FOMO': '#f44336', 'Date / Main': '#e91e63', 'Gak penting banget': '#9c27b0' };
+    const EXP_BANK_COLORS = { 'Tunai': '#4caf50', 'BCA': '#0066ae', 'Gopay': '#00aed6', 'OVO': '#4c2a86', 'PMT': '#ff9800', 'Lainnya': '#888' };
+    function expBarsHtml(totals, total, colors, clickAttr) {
+        return Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([name, amt]) => {
+            const pct = total ? (amt / total) * 100 : 0;
+            return `<div class="bar-row"${clickAttr ? ` ${clickAttr}="${escHtml(name)}" role="button" tabindex="0"` : ''}>
+                <div class="bar-top"><span class="bar-name"><i style="background:${colors[name] || '#888'}"></i>${escHtml(name)}</span><span class="bar-val">${formatRupiah(amt)} <em>${pct.toFixed(0)}%</em></span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:${Math.max(pct, 2)}%; background:${colors[name] || '#888'}"></div></div>
+            </div>`;
+        }).join('');
+    }
     function renderExpDashboard() {
         if(!isLoggedIn) return; const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth(); document.getElementById('exp-dash-month-year-display').innerText = `${monthNames[m]} ${y}`; let catTotals = {}; let bankTotals = {}; let totalBelanja = 0; let monthHasData = false; let allTx = []; let maxTx = null;
-        for (let i = 1; i <= 31; i++) { const fDate = `${y}-${String(m+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`; if(expData[fDate] && expData[fDate].length > 0) { monthHasData = true; expData[fDate].forEach(t => { let amt = parseFloat(t.amount); totalBelanja += amt; catTotals[t.category] = (catTotals[t.category] || 0) + amt; let bankKey = t.type === 'Cash' ? 'Tunai' : t.bank; bankTotals[bankKey] = (bankTotals[bankKey] || 0) + amt; let tx = { date: fDate, ...t, amt }; allTx.push(tx); if (!maxTx || amt > maxTx.amt) maxTx = tx; }); } }
+        for (let i = 1; i <= 31; i++) { const fDate = `${y}-${String(m+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`; if(expData[fDate] && expData[fDate].length > 0) { monthHasData = true; expData[fDate].forEach(t => { let amt = parseFloat(t.amount) || 0; totalBelanja += amt; catTotals[t.category] = (catTotals[t.category] || 0) + amt; let bankKey = t.type === 'Cash' ? 'Tunai' : t.bank; bankTotals[bankKey] = (bankTotals[bankKey] || 0) + amt; let tx = { date: fDate, ...t, amt }; allTx.push(tx); if (!maxTx || amt > maxTx.amt) maxTx = tx; }); } }
         const emptyState = document.getElementById('exp-empty-state'); const dashContent = document.getElementById('exp-dash-content');
         document.getElementById('exp-category-detail').style.display = 'none';
-        if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; }
-        else {
-            emptyState.style.display = 'none'; dashContent.style.display = 'block';
-            let insightHTML = `Total keluar: <strong style="color:#ff1744;">${formatRupiah(totalBelanja)}</strong>. `;
-            if(catTotals['Gak penting banget'] > 300000) insightHTML += `Banyak keluar untuk hal gak penting, kurangi fomo!`; else if(totalBelanja > 0) insightHTML += `Manajemen cukup baik.`; document.getElementById('exp-dash-insight').innerHTML = `<div class="insight-box insight-warning">${insightHTML}</div>`;
-
-            if (maxTx) { document.getElementById('exp-highest-pl').innerText = formatRupiah(maxTx.amt); document.getElementById('exp-highest-desc').innerText = `[${maxTx.date}] ${maxTx.notes} (${maxTx.category})`; }
-            let topCatEntry = Object.entries(catTotals).sort((a,b) => b[1]-a[1])[0];
-            if (topCatEntry) { document.getElementById('exp-top-category').innerText = topCatEntry[0]; document.getElementById('exp-top-category-desc').innerText = `${formatRupiah(topCatEntry[1])} (${((topCatEntry[1]/totalBelanja)*100).toFixed(0)}% dari total)`; }
-
-            if(expCatChartInst) expCatChartInst.destroy(); if(expBankChartInst) expBankChartInst.destroy();
-
-            const catLabels = Object.keys(catTotals);
-            expCatChartInst = new Chart(document.getElementById('expCategoryChart').getContext('2d'), { type: 'bar', data: { labels: catLabels, datasets: [{ label: 'Total Rp', data: Object.values(catTotals), backgroundColor: ['#4caf50', '#ff9800', '#f44336', '#e91e63', '#9c27b0'] }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } }, onClick: (evt, elements) => { if (!elements.length) return; const cat = catLabels[elements[0].index]; showExpCategoryDetail(cat, allTx.filter(t => t.category === cat)); } } });
-            expBankChartInst = new Chart(document.getElementById('expBankChart').getContext('2d'), { type: 'pie', data: { labels: Object.keys(bankTotals), datasets: [{ data: Object.values(bankTotals), backgroundColor: ['#0066ae', '#00aed6', '#4c2a86', '#ff9800', '#4caf50'] }] }, options: { plugins: { legend: { position: 'bottom', labels: {color:'#fff'} } } } });
-        }
+        if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; return; }
+        emptyState.style.display = 'none'; dashContent.style.display = 'block';
+        const prevD = new Date(y, m - 1, 1), prevPrefix = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`;
+        let prevTotal = 0; for (let d in expData) { if (d.startsWith(prevPrefix)) expData[d].forEach(t => prevTotal += parseFloat(t.amount) || 0); }
+        const dayCount = new Set(allTx.map(t => t.date)).size;
+        const topCat = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
+        let vsPrev = `<h3>-</h3><span class="sub">Belum ada data bulan lalu</span>`;
+        if (prevTotal > 0) { const diff = ((totalBelanja - prevTotal) / prevTotal) * 100; vsPrev = `<h3 class="${diff > 0 ? 'loss-text' : 'profit-text'}">${diff > 0 ? '+' : ''}${diff.toFixed(0)}%</h3><span class="sub">${diff > 0 ? 'Naik' : 'Turun'} dibanding bulan lalu</span>`; }
+        document.getElementById('exp-dash-stats').innerHTML = `
+            <div class="equity-box" style="border-left-color:#ff1744;"><span class="label">Total keluar</span><h3 class="loss-text">${formatRupiah(totalBelanja)}</h3><span class="sub">${allTx.length} transaksi di ${dayCount} hari</span></div>
+            <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Rata-rata per hari</span><h3>${formatRupiah(Math.round(totalBelanja / dayCount))}</h3><span class="sub">Hari yang ada pengeluaran</span></div>
+            <div class="equity-box" style="border-left-color:#ff9800;"><span class="label">Pengeluaran terbesar</span><h3>${formatRupiah(maxTx.amt)}</h3><span class="sub">${escHtml(maxTx.notes)} (tgl ${maxTx.date.slice(8)})</span></div>
+            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">Bulan lalu</span>${vsPrev}</div>`;
+        let msg = '';
+        if ((catTotals['Gak penting banget'] || 0) > 300000) msg = 'Pengeluaran "Gak penting banget" cukup besar bulan ini. Coba kurangi di bulan depan.';
+        else if (topCat) msg = `Kategori terbesar: <b>${escHtml(topCat[0])}</b>, ${((topCat[1] / totalBelanja) * 100).toFixed(0)}% dari total. Pengeluaran masih terkendali.`;
+        document.getElementById('exp-dash-insight').innerHTML = `<div class="pg-note">${msg}</div>`;
+        document.getElementById('exp-cat-bars').innerHTML = expBarsHtml(catTotals, totalBelanja, EXP_CAT_COLORS, 'data-cat');
+        document.getElementById('exp-bank-bars').innerHTML = expBarsHtml(bankTotals, totalBelanja, EXP_BANK_COLORS, '');
+        document.querySelectorAll('#exp-cat-bars .bar-row').forEach(r => {
+            const open = () => { const cat = r.dataset.cat; showExpCategoryDetail(cat, allTx.filter(t => t.category === cat)); };
+            r.addEventListener('click', open); r.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
+        });
     }
 
     function showExpCategoryDetail(category, txList) {
         const box = document.getElementById('exp-category-detail');
         txList = [...txList].sort((a,b) => b.date.localeCompare(a.date));
-        let rows = txList.map(t => `<tr><td>${t.date}</td><td>${t.type === 'Cash' ? 'Tunai' : t.bank}</td><td>${t.notes}</td><td align="right" class="loss-text">${formatRupiah(t.amt)}</td></tr>`).join('');
-        box.innerHTML = `<h3 class="chart-title" style="color:#ff1744;">Detail Kategori: ${category} (${txList.length} transaksi)</h3><table class="data-table"><thead><tr><th>Tanggal</th><th>Bank/Tunai</th><th>Catatan</th><th style="text-align:right;">Jumlah</th></tr></thead><tbody>${rows}</tbody></table>`;
+        const rows = txList.map(t => `<div class="exp-tx"><span class="exp-tx-date">${t.date.slice(8)}/${t.date.slice(5, 7)}</span><span class="exp-tx-note">${escHtml(t.notes)}<small>${t.type === 'Cash' ? 'Tunai' : escHtml(t.bank)}</small></span><b class="loss-text">${formatRupiah(t.amt)}</b></div>`).join('');
+        box.innerHTML = `<h3 class="chart-title">${escHtml(category)} <span class="mon-sub">${txList.length} transaksi</span></h3><div class="exp-tx-list">${rows}</div>`;
         box.style.display = 'block';
         box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
     document.getElementById('exp-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderExpDashboard(); }; document.getElementById('exp-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderExpDashboard(); };
 
     function openExpModal(dateStr, dayNum) {
-        currentExpDateStr = dateStr; document.getElementById('exp-modal-title').innerText = `Pengeluaran Tgl ${dayNum}`; document.getElementById('exp-history').innerHTML=''; (expData[dateStr]||[]).forEach((t,i) => { document.getElementById('exp-history').innerHTML += `<div class="history-item" style="border-left-color:#ff1744;"><div><strong style="color:#ff1744;">-${formatRupiah(t.amount)}</strong><br><span style="color:#aaa; font-size:0.75rem;">[${t.type==='Cash'?'Tunai':t.bank}] ${t.notes} (${t.category})</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editExp('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteExp('${dateStr}', ${i})">🗑️</button></div></div>`; }); document.getElementById('exp-modal').style.display = 'flex';
+        currentExpDateStr = dateStr; document.getElementById('exp-modal-title').innerText = `Pengeluaran Tgl ${dayNum}`; document.getElementById('exp-history').innerHTML=''; (expData[dateStr]||[]).forEach((t,i) => { document.getElementById('exp-history').innerHTML += `<div class="history-item" style="border-left-color:#ff1744;"><div><strong style="color:#ff1744;">-${formatRupiah(t.amount)}</strong><br><span style="color:#aaa; font-size:0.75rem;">[${t.type==='Cash'?'Tunai':escHtml(t.bank)}] ${escHtml(t.notes)} (${escHtml(t.category)})</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editExp('${dateStr}', ${i})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button><button type="button" class="del-btn" onclick="deleteExp('${dateStr}', ${i})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg></button></div></div>`; }); document.getElementById('exp-modal').style.display = 'flex';
     }
     document.getElementById('close-exp-modal').onclick = () => document.getElementById('exp-modal').style.display='none';
     window.deleteExp = (d, i) => { expData[d].splice(i,1); if(!expData[d].length) delete expData[d]; saveData('expense_data_v1', expData); openExpModal(d, new Date(d).getDate()); renderExpCalendar(); };
@@ -2112,7 +2476,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     
                     let statusHTML = '';
                     if (items.length > 0) statusHTML = `<span class="day-pl sport-text" style="font-size:0.9rem; margin-top:auto;">${dayDur} Menit</span>`;
-                    else if (isMissed) statusHTML = `<span class="day-pl sport-text" style="font-size:0.8rem; color:#ff1744; margin-top:auto;">❌ Tidak Olahraga</span>`;
+                    else if (isMissed) statusHTML = `<span class="day-pl sport-text" style="font-size:0.72rem; font-weight:600; color:var(--tx-muted, #888); margin-top:auto;">Tidak olahraga</span>`;
 
                     card.innerHTML = `<div class="day-number">${dayNum}</div><div style="display:flex; flex-direction:column; gap:3px;">${badgesHTML}</div>${statusHTML}`;
                     card.onclick = () => { if(isLoggedIn) openSportModal(fDate, dayNum, diffDays); }; cal.appendChild(card);
@@ -2125,6 +2489,23 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     document.getElementById('sport-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderSportCalendar(); }; document.getElementById('sport-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderSportCalendar(); };
     document.getElementById('sport-dash-prev-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()-1); renderSportDashboard(); }; document.getElementById('sport-dash-next-month').onclick = () => { globalNavDate.setMonth(globalNavDate.getMonth()+1); renderSportDashboard(); };
+
+
+    // Dropdown di form diganti tombol pilihan. <select> aslinya tetap ada (disembunyikan) supaya logika simpan/edit tidak berubah.
+    function enhanceChips(selectId) {
+        const sel = document.getElementById(selectId); if (!sel || sel.dataset.chips) return;
+        sel.dataset.chips = '1'; sel.style.display = 'none';
+        const box = document.createElement('div'); box.className = 'chip-group'; box.setAttribute('role', 'group');
+        [...sel.options].forEach(o => { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.dataset.v = o.value; b.textContent = o.textContent; b.addEventListener('click', () => { sel.value = o.value; sel.dispatchEvent(new Event('change')); }); box.appendChild(b); });
+        sel.insertAdjacentElement('afterend', box);
+        const sync = () => box.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.v === sel.value));
+        const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+        Object.defineProperty(sel, 'value', { get() { return desc.get.call(this); }, set(v) { desc.set.call(this, v); sync(); }, configurable: true });
+        sel.addEventListener('change', sync);
+        if (sel.form) sel.form.addEventListener('reset', () => setTimeout(sync, 0));
+        sync();
+    }
+    ['exp-type', 'exp-bank', 'exp-category', 'sport-type', 'sport-target', 'sport-achieved'].forEach(enhanceChips);
 
     function renderSportDashboard() {
         const y = globalNavDate.getFullYear(); const m = globalNavDate.getMonth(); document.getElementById('sport-dash-month-year-display').innerText = `${monthNames[m]} ${y}`;
@@ -2146,36 +2527,40 @@ document.addEventListener("DOMContentLoaded", () => {
         if(!monthHasData) { emptyState.innerHTML = emptyStateHTML; emptyState.style.display = 'block'; dashContent.style.display = 'none'; }
         else {
             emptyState.style.display = 'none'; dashContent.style.display = 'block';
-            let insightHTML = `Total hari aktif latihan: <strong style="color:#2196f3;">${activeDays} Hari</strong>. Bolong (Tidak Olahraga): <strong style="color:#ff1744;">${missedDays} Hari</strong>. `;
-            if (activeDays < 4) { insightHTML += `Woy pemalas! Masa sebulan olahraganya kurang dari 4 hari? Ayo gerak buat Naik Gunung!`; document.getElementById('sport-dash-insight').innerHTML = `<div class="insight-box insight-danger">${insightHTML}</div>`; }
-            else if (activeDays > 15) { insightHTML += `Gila lu ndro! Mantap banget konsistensinya, pertahankan!`; document.getElementById('sport-dash-insight').innerHTML = `<div class="insight-box insight-success">${insightHTML}</div>`; }
-            else { insightHTML += `Bagus, sudah mulai rutin. `; document.getElementById('sport-dash-insight').innerHTML = `<div class="insight-box insight-warning">${insightHTML}</div>`; }
-
-            let topType = Object.entries(domSport).sort((a,b) => b[1]-a[1])[0];
-            document.getElementById('sport-top-type').innerText = topType ? topType[0] : '-';
-            document.getElementById('sport-top-type-desc').innerText = topType ? `${topType[1]}x dari ${totalSessions} sesi bulan ini` : '-';
-            document.getElementById('sport-avg-dur').innerText = `${totalSessions > 0 ? Math.round(totalMinutes / totalSessions) : 0} Menit`;
-
             const daysInMonthActual = new Date(y, m + 1, 0).getDate();
             const isCurrentMonth = (y === today.getFullYear() && m === today.getMonth());
             const relevantDays = isCurrentMonth ? today.getDate() : daysInMonthActual;
             const daysOff = Math.max(relevantDays - activeDays, 0);
             const pctAktif = relevantDays > 0 ? Math.round((activeDays / relevantDays) * 100) : 0;
+            const topType = Object.entries(domSport).sort((a, b) => b[1] - a[1])[0];
+            document.getElementById('sport-dash-stats').innerHTML = `
+                <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">Hari aktif</span><h3>${activeDays} hari</h3><span class="sub">${daysOff} hari tanpa latihan</span></div>
+                <div class="equity-box" style="border-left-color:#00e676;"><span class="label">Total sesi</span><h3>${totalSessions}x</h3><span class="sub">${Math.round(totalMinutes)} menit semuanya</span></div>
+                <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Rata-rata per sesi</span><h3>${totalSessions > 0 ? Math.round(totalMinutes / totalSessions) : 0} menit</h3><span class="sub">Durasi latihan</span></div>
+                <div class="equity-box" style="border-left-color:#ff9800;"><span class="label">Paling sering</span><h3>${topType ? escHtml(topType[0]) : '-'}</h3><span class="sub">${topType ? topType[1] + 'x dari ' + totalSessions + ' sesi' : '-'}</span></div>`;
+            let msg = `Latihan di <b>${activeDays} hari</b>, tanpa latihan <b>${daysOff} hari</b>. `;
+            if (activeDays < 4) msg += 'Masih sedikit. Coba pelan-pelan naikkan frekuensinya untuk target Naik Gunung.';
+            else if (activeDays > 15) msg += 'Konsistensinya sangat bagus, pertahankan.';
+            else msg += 'Bagus, sudah mulai rutin.';
+            document.getElementById('sport-dash-insight').innerHTML = `<div class="pg-note">${msg}</div>`;
+            const SPORT_COLORS = { 'Skipping': '#ff9800', 'Plank': '#9c27b0', 'Angkat Beban': '#f44336', 'Lari': '#4caf50', 'Lainnya': '#2196f3' };
+            document.getElementById('sport-type-bars').innerHTML = Object.entries(domSport).sort((a, b) => b[1] - a[1]).map(([name, n]) => {
+                const pct = totalSessions ? (n / totalSessions) * 100 : 0;
+                return `<div class="bar-row"><div class="bar-top"><span class="bar-name"><i style="background:${SPORT_COLORS[name] || '#888'}"></i>${escHtml(name)}</span><span class="bar-val">${n}x <em>${pct.toFixed(0)}%</em></span></div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(pct, 3)}%; background:${SPORT_COLORS[name] || '#888'}"></div></div></div>`;
+            }).join('');
+            document.getElementById('sport-consistency').innerHTML = `<div class="sport-cons-big">${pctAktif}%<small>${activeDays} dari ${relevantDays} hari</small></div><div class="bar-track" style="height:12px;"><div class="bar-fill" style="width:${Math.max(pctAktif, 2)}%; background:#2196f3;"></div></div>`;
 
-            if(sportFreqChartInst) sportFreqChartInst.destroy(); if(sportTypeChartInst) sportTypeChartInst.destroy(); if(sportActiveChartInst) sportActiveChartInst.destroy();
-
-            sportTypeChartInst = new Chart(document.getElementById('sportTypeChart').getContext('2d'), { type: 'doughnut', data: { labels: Object.keys(domSport), datasets: [{ data: Object.values(domSport), backgroundColor: ['#ff9800', '#9c27b0', '#f44336', '#4caf50', '#2196f3'], borderWidth: 0 }] }, options: { plugins: { legend: { position: 'bottom', labels: { color: '#fff' } } } } });
-
-            sportActiveChartInst = new Chart(document.getElementById('sportActiveChart').getContext('2d'), { type: 'doughnut', data: { labels: ['Aktif', 'Tidak Aktif'], datasets: [{ data: [activeDays, daysOff], backgroundColor: ['#00e676', '#333'], borderWidth: 0 }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false } } } });
-            document.getElementById('sport-active-text').innerHTML = `<span style="font-size:1.5rem;">${pctAktif}% Aktif</span><span style="font-size:0.85rem; color:#aaa;">${activeDays}/${relevantDays} hari</span>`;
-
-            sportFreqChartInst = new Chart(document.getElementById('sportFreqChart').getContext('2d'), { type: 'bar', data: { labels: labels, datasets: [{ label: 'Durasi (Menit)', data: dataFreq, backgroundColor: '#2196f3', borderRadius: 4 }] }, options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#333' } }, x: { grid: { display: false } } } } });
+            const dim = daysInMonthActual;
+            const maxDur = Math.max(...dataFreq.slice(0, dim), 1);
+            const bestIdx = dataFreq.slice(0, dim).indexOf(Math.max(...dataFreq.slice(0, dim)));
+            document.getElementById('sport-daily-note').innerText = `Terlama ${Math.round(maxDur)} menit (tgl ${bestIdx + 1})`;
+            document.getElementById('sport-daily-bars').innerHTML = dataFreq.slice(0, dim).map((d, i) => `<div class="db${d ? ' on' : ''}" title="Tgl ${i + 1}: ${d ? Math.round(d) + ' menit' : 'tidak latihan'}"><i style="height:${d ? Math.max((d / maxDur) * 100, 12) : 6}%"></i><span>${(i + 1) % 5 === 0 || i === 0 ? i + 1 : ''}</span></div>`).join('');
         }
     }
 
     function openSportModal(dateStr, dayNum, diffDays = 0) {
         currentSportDateStr = dateStr; document.getElementById('sport-modal-title').innerText = `Latihan Tgl ${dayNum}`; document.getElementById('sport-history').innerHTML=''; 
-        (sportData[dateStr]||[]).forEach((t,i) => { let lateInfo = t.lateReason ? `<br><span style="color:#ff9800; font-size:0.75rem;">(Telat Input: ${t.lateReason})</span>` : ''; let sClass = getSportClass(t.type); document.getElementById('sport-history').innerHTML += `<div class="history-item ${sClass}"><div><strong class="sport-badge ${sClass}" style="display:inline-block;">${t.type} (${t.totalDur} Mnt)</strong><br><span style="color:#aaa; font-size:0.75rem;">${t.time} | Target: ${t.target} | ${t.achieved}</span>${lateInfo}</div><div class="action-group"><button type="button" class="edit-btn" onclick="editSport('${dateStr}', ${i})">✏️</button><button type="button" class="del-btn" onclick="deleteSport('${dateStr}', ${i})">🗑️</button></div></div>`; });
+        (sportData[dateStr]||[]).forEach((t,i) => { let lateInfo = t.lateReason ? `<br><span style="color:#ff9800; font-size:0.75rem;">(Telat Input: ${escHtml(t.lateReason)})</span>` : ''; let sClass = getSportClass(t.type); document.getElementById('sport-history').innerHTML += `<div class="history-item ${sClass}"><div><strong class="sport-badge ${sClass}" style="display:inline-block;">${escHtml(t.type)} (${escHtml(t.totalDur)} Mnt)</strong><br><span style="color:#aaa; font-size:0.75rem;">${escHtml(t.time)} | Target: ${escHtml(t.target)} | ${escHtml(t.achieved)}</span>${lateInfo}</div><div class="action-group"><button type="button" class="edit-btn" onclick="editSport('${dateStr}', ${i})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button><button type="button" class="del-btn" onclick="deleteSport('${dateStr}', ${i})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg></button></div></div>`; });
         document.getElementById('sport-sets-container').innerHTML = `<div class="sport-set-row" style="display:flex; gap:10px; margin-top:10px;"><input type="text" class="form-input set-name" placeholder="Gerakan" style="flex:2;" required><input type="number" class="form-input set-dur" placeholder="Kerja (Mnt)" style="flex:1;" required><input type="number" class="form-input set-rest" placeholder="Rest (Mnt)" style="flex:1;" required></div>`; document.getElementById('sport-auto-duration').innerText = "0 Menit"; bindSetCalculation(); 
         
         if(diffDays >= 5) { document.getElementById('late-reason-container').style.display = 'block'; document.getElementById('sport-late-reason').required = true; } else { document.getElementById('late-reason-container').style.display = 'none'; document.getElementById('sport-late-reason').required = false; }
@@ -2190,24 +2575,74 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // 5. MODUL HISTORY KEKAYAAN
     // ==========================================
+    const WL_EDIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
+    const WL_DEL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg>';
+    function wealthMonthLabel(d) { const m = String(d || '').match(/^(\d{4})-(\d{2})/); return m ? `${monthNames[parseInt(m[2], 10) - 1].slice(0, 3)} ${m[1]}` : String(d || '-'); }
+    function wealthRowHtml(item, idx, amt) {
+        return `<div class="wr-date">${escHtml(wealthMonthLabel(item.date))}</div><div class="wr-text"><b>${escHtml(item.note || '-')}</b><small>${escHtml(item.date || '')}</small></div><div class="wr-amt">${formatRupiah(amt)}</div><div class="action-group"><button type="button" class="edit-btn" aria-label="Ubah" onclick="editWealthItem(${idx})">${WL_EDIT}</button><button type="button" class="del-btn" aria-label="Hapus" onclick="deleteWealthItem(${idx})">${WL_DEL}</button></div>`;
+    }
+    function renderWealthMonthly() {
+        const el = document.getElementById('wealth-monthly'); if (!el) return;
+        const mp = {};
+        wealthData.items.forEach(i => { const k = String(i.date || '').slice(0, 7); if (!/^\d{4}-\d{2}$/.test(k)) return; mp[k] = mp[k] || { inc: 0, exp: 0 }; if (i.type === 'income') mp[k].inc += parseFloat(i.amount) || 0; else mp[k].exp += parseFloat(i.amount) || 0; });
+        const keys = Object.keys(mp).sort().reverse().slice(0, 12);
+        if (!keys.length) { el.innerHTML = '<div class="empty-note">Belum ada catatan keuangan.</div>'; return; }
+        el.innerHTML = `<div class="wm-row wm-hd"><span>Bulan</span><span>Pendapatan</span><span>Pengeluaran</span><span>Selisih</span></div>` + keys.map(k => { const v = mp[k]; const net = v.inc - v.exp; return `<div class="wm-row"><span class="wm-m">${wealthMonthLabel(k)}</span><span class="wm-inc">${formatRupiah(v.inc)}</span><span class="wm-exp">${v.exp ? formatRupiah(v.exp) : '-'}</span><span class="wm-net ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '-'}${formatRupiah(Math.abs(net))}</span></div>`; }).join('');
+    }
+    // Daftar pendapatan/pengeluaran dikelompokkan per bulan (buka-tutup) supaya tidak perlu scroll panjang.
+    const wealthOpenMonths = new Set(); const wealthInit = { income: false, expense: false }; let wealthTab = 'income';
+    function wealthGroupsHtml(items, sortType, kind, limit) {
+        const groups = {};
+        items.forEach(it => { const k = String(it.date || '').slice(0, 7) || '-'; (groups[k] = groups[k] || []).push(it); });
+        const total = k => groups[k].reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+        let keys = Object.keys(groups);
+        if (sortType === 'terbesar') keys.sort((a, b) => total(b) - total(a));
+        else if (sortType === 'terkecil') keys.sort((a, b) => total(a) - total(b));
+        else if (sortType === 'terlama') keys.sort();
+        else keys.sort().reverse();
+        const itemSort = sortType === 'terbesar' ? (a, b) => parseFloat(b.amount) - parseFloat(a.amount) : sortType === 'terkecil' ? (a, b) => parseFloat(a.amount) - parseFloat(b.amount) : sortType === 'terlama' ? (a, b) => String(a.date).localeCompare(String(b.date)) : (a, b) => String(b.date).localeCompare(String(a.date));
+        if (!keys.length) return '<div class="empty-note">Belum ada data.</div>';
+        const allCount = keys.length;
+        if (limit !== 'all') keys = keys.slice(0, limit);
+        const html = keys.map((k, idx) => {
+            const id = kind + '-' + k;
+            if (!wealthInit[kind] && idx === 0) wealthOpenMonths.add(id);
+            const rows = groups[k].sort(itemSort).map(it => { const realIdx = wealthData.items.indexOf(it); return `<div class="wg-row ${kind}"><div class="wg-text"><b>${escHtml(it.note || '-')}</b><small>${escHtml(it.date || '')}</small></div><div class="wg-amt">${formatRupiah(parseFloat(it.amount) || 0)}</div><div class="action-group"><button type="button" class="edit-btn" aria-label="Ubah" onclick="editWealthItem(${realIdx})">${WL_EDIT}</button><button type="button" class="del-btn" aria-label="Hapus" onclick="deleteWealthItem(${realIdx})">${WL_DEL}</button></div></div>`; }).join('');
+            return `<details class="wg ${kind}" data-id="${id}"${wealthOpenMonths.has(id) ? ' open' : ''}><summary><span class="wg-month">${wealthMonthLabel(k)}</span><span class="wg-count">${groups[k].length} catatan</span><b class="wg-total">${formatRupiah(total(k))}</b><svg class="mon-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></summary><div class="wg-rows">${rows}</div></details>`;
+        }).join('');
+        wealthInit[kind] = true;
+        return html + (allCount > keys.length ? `<p class="wg-more">Menampilkan ${keys.length} dari ${allCount} bulan. Ubah pilihan "Tampilkan" untuk melihat lebih banyak.</p>` : '');
+    }
+    document.addEventListener('toggle', ev => { const d = ev.target; if (d && d.classList && d.classList.contains('wg')) { if (d.open) wealthOpenMonths.add(d.dataset.id); else wealthOpenMonths.delete(d.dataset.id); } }, true);
     window.renderWealthDashboard = function() {
-        if(!isLoggedIn) return; let totalIncome = 0; let totalExpense = 0; const incList = document.getElementById('wealth-income-list'); incList.innerHTML = ''; const expList = document.getElementById('wealth-expense-list'); expList.innerHTML = '';
-        let incSort = document.getElementById('wealth-sort-inc')?.value || 'terbaru'; let expSort = document.getElementById('wealth-sort-exp')?.value || 'terbaru';
+        if(!isLoggedIn) return; let totalIncome = 0; let totalExpense = 0; const wealthListEl = document.getElementById('wealth-list');
+        const wealthSort = document.getElementById('wealth-sort')?.value || 'terbaru'; const wlLimitRaw = document.getElementById('wealth-limit')?.value || '5'; const wealthLimit = wlLimitRaw === 'all' ? 'all' : parseInt(wlLimitRaw, 10);
         let incomeItems = wealthData.items.filter(i => i.type === 'income'); let expenseItems = wealthData.items.filter(i => i.type === 'expense');
         const sortFn = (sortType) => (a,b) => { if(sortType === 'terbaru') return b.date.localeCompare(a.date); if(sortType === 'terlama') return a.date.localeCompare(b.date); if(sortType === 'terbesar') return parseFloat(b.amount) - parseFloat(a.amount); if(sortType === 'terkecil') return parseFloat(a.amount) - parseFloat(b.amount); return 0; };
-        incomeItems.sort(sortFn(incSort)); expenseItems.sort(sortFn(expSort));
+        incomeItems.sort(sortFn(wealthSort)); expenseItems.sort(sortFn(wealthSort));
 
-        incomeItems.forEach(item => { let realIdx = wealthData.items.indexOf(item); let amt = parseFloat(item.amount); totalIncome += amt; let li = document.createElement('li'); li.className = `wealth-list-item wealth-income-item`; li.innerHTML = `<div style="flex:1;"><strong style="color:#00e676">${formatRupiah(amt)}</strong><br><span style="color:#aaa; font-size:0.8rem;">[${item.date}] ${item.note}</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editWealthItem(${realIdx})">✏️</button><button type="button" class="del-btn" onclick="deleteWealthItem(${realIdx})">🗑️</button></div>`; incList.appendChild(li); });
-        expenseItems.forEach(item => { let realIdx = wealthData.items.indexOf(item); let amt = parseFloat(item.amount); totalExpense += amt; let li = document.createElement('li'); li.className = `wealth-list-item wealth-expense-item`; li.innerHTML = `<div style="flex:1;"><strong style="color:#ff9800">${formatRupiah(amt)}</strong><br><span style="color:#aaa; font-size:0.8rem;">[${item.date}] ${item.note}</span></div><div class="action-group"><button type="button" class="edit-btn" onclick="editWealthItem(${realIdx})">✏️</button><button type="button" class="del-btn" onclick="deleteWealthItem(${realIdx})">🗑️</button></div>`; expList.appendChild(li); });
+        incomeItems.forEach(item => { totalIncome += parseFloat(item.amount) || 0; });
+        expenseItems.forEach(item => { totalExpense += parseFloat(item.amount) || 0; });
+        document.getElementById('wl-sum-income').innerText = formatRupiah(totalIncome);
+        document.getElementById('wl-sum-expense').innerText = formatRupiah(totalExpense);
+        document.getElementById('wl-tab-income').classList.toggle('active', wealthTab === 'income');
+        document.getElementById('wl-tab-expense').classList.toggle('active', wealthTab === 'expense');
+        wealthListEl.innerHTML = wealthTab === 'income' ? wealthGroupsHtml(incomeItems, wealthSort, 'income', wealthLimit) : wealthGroupsHtml(expenseItems, wealthSort, 'expense', wealthLimit);
 
         let expectedSavings = totalIncome - totalExpense; let defisit = expectedSavings - wealthData.realMoney; 
         document.getElementById('wealth-income').innerText = formatRupiah(totalIncome); document.getElementById('wealth-expense').innerText = formatRupiah(totalExpense); document.getElementById('wealth-expected').innerText = formatRupiah(expectedSavings); document.getElementById('wealth-actual').innerText = formatRupiah(wealthData.realMoney);
         
+        renderWealthMonthly();
+        { const pct = expectedSavings > 0 ? Math.max(0, Math.min(100, wealthData.realMoney / expectedSavings * 100)) : 0;
+          document.getElementById('wealth-prog-pct').innerText = pct.toFixed(0) + '%'; document.getElementById('wealth-prog-fill').style.width = pct + '%';
+          document.getElementById('wealth-prog-text').innerText = `Uang real time ${formatRupiah(wealthData.realMoney)} dari Tabungan Seharusnya ${formatRupiah(expectedSavings)}`; }
         let minusEl = document.getElementById('wealth-minus');
-        if (defisit > 0) { minusEl.innerText = `- ${formatRupiah(defisit)}`; document.getElementById('wealth-recovery-card').style.display = 'block'; document.getElementById('wealth-recovery-card').style.borderColor = "#ff1744"; document.querySelector('#wealth-recovery-card h2').innerText = "🚨 DEFISIT KEUANGAN (Trading & Pengeluaran Tak Terduga)"; document.querySelector('#wealth-recovery-card h2').style.color = "#ff1744"; } 
-        else { minusEl.innerText = "Aman Bosku!"; minusEl.style.color = "#00e676"; document.getElementById('wealth-recovery-card').style.borderColor = "#00e676"; document.querySelector('#wealth-recovery-card h2').innerText = "✅ TABUNGAN SURPLUS"; document.querySelector('#wealth-recovery-card h2').style.color = "#00e676"; }
+        if (defisit > 0) { minusEl.innerText = `- ${formatRupiah(defisit)}`; document.getElementById('wealth-recovery-card').style.display = ''; document.getElementById('wealth-recovery-card').style.borderColor = "#ff1744"; document.querySelector('#wealth-recovery-card h2').innerText = "DEFISIT KEUANGAN (Trading & Pengeluaran Tak Terduga)"; document.querySelector('#wealth-recovery-card h2').style.color = "#ff1744"; } 
+        else { minusEl.innerText = "Aman"; minusEl.style.color = "#00e676"; document.getElementById('wealth-recovery-card').style.borderColor = "#00e676"; document.querySelector('#wealth-recovery-card h2').innerText = "TABUNGAN SURPLUS"; document.querySelector('#wealth-recovery-card h2').style.color = "#00e676"; }
     }
 
+    document.getElementById('wl-tab-income').onclick = () => { wealthTab = 'income'; renderWealthDashboard(); };
+    document.getElementById('wl-tab-expense').onclick = () => { wealthTab = 'expense'; renderWealthDashboard(); };
     window.openWealthModal = () => { document.getElementById('wealth-form').reset(); document.getElementById('wealth-edit-index').value = "-1"; document.getElementById('wealth-modal-title').innerText = "+ Catat Keuangan"; document.getElementById('wealth-cancel-edit-btn').style.display = "none"; document.getElementById('wealth-modal').style.display = 'flex'; };
     window.editWealthItem = (idx) => { let item = wealthData.items[idx]; document.getElementById('wealth-type').value = item.type; document.getElementById('wealth-date').value = item.date; document.getElementById('wealth-amount').value = item.amount; document.getElementById('wealth-notes').value = item.note; document.getElementById('wealth-edit-index').value = idx; document.getElementById('wealth-modal-title').innerText = "✏️ Edit Catatan Keuangan"; document.getElementById('wealth-cancel-edit-btn').style.display = "block"; document.getElementById('wealth-modal').style.display = 'flex'; };
     document.getElementById('wealth-cancel-edit-btn').onclick = () => { document.getElementById('wealth-modal').style.display = 'none'; };
@@ -2325,7 +2760,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const ma20 = calcSMA(closes, 20), ma50 = calcSMA(closes, 50), rsi = calcRSI(closes, 14), macd = calcMACD(closes);
         if (ma20 !== null && ma50 !== null) {
             const up = ma20 > ma50;
-            trendEl.innerHTML = up ? '📈 Naik' : '📉 Turun';
+            trendEl.innerHTML = up ? 'Naik' : 'Turun';
             trendEl.className = up ? 'profit-text' : 'loss-text';
         }
         if (rsi !== null) {
@@ -2337,7 +2772,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (macd) {
             const bullish = macd.macd > macd.signal;
-            macdEl.innerHTML = bullish ? '🐂 Bullish' : '🐻 Bearish';
+            macdEl.innerHTML = bullish ? 'Bullish' : 'Bearish';
             macdEl.className = bullish ? 'profit-text' : 'loss-text';
         }
     }
@@ -2376,6 +2811,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     grid: { vertLines: { color: '#333' }, horzLines: { color: '#333' } },
                     timeScale: { timeVisible: true }
                 });
+                applyChartTheme();
                 curCandleSeries = curChart.addCandlestickSeries({ upColor: '#00e676', downColor: '#ff1744', borderVisible: false, wickUpColor: '#00e676', wickDownColor: '#ff1744' });
                 window.addEventListener('resize', () => { if (curChart) curChart.applyOptions({ width: container.clientWidth }); });
             }
@@ -2444,7 +2880,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     cal.appendChild(card);
                 } else cal.appendChild(Object.assign(document.createElement('div'), { className: 'empty-card' }));
             }
-            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData ? (weeklyPl > 0 ? 'weekly-profit' : 'weekly-loss') : 'empty-card'}`;
+            const wCard = document.createElement('div'); wCard.className = `weekly-summary-card ${hasData ? (weeklyPl > 0 ? 'weekly-profit' : (weeklyPl < 0 ? 'weekly-loss' : '')) : 'empty-card'}`;
             if (hasData) wCard.innerHTML = `<div class="week-title">Mg ${w + 1}</div><div class="week-pl ${weeklyPl > 0 ? 'profit-text' : 'loss-text'}">${weeklyPl > 0 ? '+' : ''}${formatRupiah(weeklyPl)}</div>`;
             cal.appendChild(wCard);
         }
@@ -2508,28 +2944,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // Reuse AI_LAYER_STATUS_LABEL/formatAiTime/toggleAiHistDetail (punya Gold, generic gak nyimpang per instrumen).
     function openCurModal(pairKey, dateStr, dayNum) {
         const tradeData = getCurInstrument(pairKey).aiTradeData || {};
-        document.getElementById('cur-modal-date-title').innerText = `${pairKey} — Entry Simulasi Tgl ${dayNum}`;
-        const list = tradeData[dateStr] || [];
-        const histEl = document.getElementById('cur-today-history');
-        histEl.innerHTML = list.length ? '' : '<p style="color:#888;">Gak ada entry tanggal ini.</p>';
-        list.forEach((t) => {
-            const layerLines = (t.layers || []).map((ly, idx) => {
-                const label = AI_LAYER_STATUS_LABEL[ly.status] || ly.status;
-                return `Layer ${idx + 1}: Entry ${parseFloat(ly.entry).toFixed(5)} | SL ${parseFloat(ly.sl).toFixed(5)} | TP ${parseFloat(ly.tp).toFixed(5)} (${ly.tpPips}p) | ${label} | ${formatRupiah(ly.pl || 0)}`;
-            }).join('<br>');
-            histEl.innerHTML += `<div class="history-item ai-hist-collapsible ${parseFloat(t.pl || 0) > 0 ? 'hist-profit' : 'hist-loss'}">
-                <div class="ai-hist-header" onclick="toggleAiHistDetail(this)">
-                    <span><strong>${t.arah} @ ${parseFloat(t.entry).toFixed(5)}</strong> <span style="color:#888; font-size:0.75rem;">(${t.status === 'closed' ? formatRupiah(t.pl || 0) : 'Open'})</span></span>
-                    <span class="ai-hist-arrow">▼</span>
-                </div>
-                <div class="ai-hist-detail">
-                    <span style="color:#888; font-size:0.75rem;">(${t.signalType || '-'}) 🕐 Buka: ${formatAiTime(t.openedAt)} — Tutup: ${t.closedAt ? formatAiTime(t.closedAt) : 'Masih Open'}</span><br>
-                    <span style="color:#aaa; font-size:0.78rem;">${layerLines}</span><br>
-                    <span style="color:#666; font-size:0.72rem;">📝 ${t.alasan || '-'}</span><br>
-                    <strong>Total P/L: ${formatRupiah(t.pl || 0)}</strong>
-                </div>
-            </div>`;
-        });
+        document.getElementById('cur-modal-date-title').innerText = pairKey + ' · ' + entryModalTitle(dateStr, dayNum).replace('Entry Simulasi · ', '');
+        document.getElementById('cur-today-history').innerHTML = entryListHtml(tradeData[dateStr] || [], pairKey.endsWith('JPY') ? 3 : 5);
         document.getElementById('cur-entry-modal').style.display = 'flex';
     }
     document.getElementById('close-cur-modal').onclick = () => document.getElementById('cur-entry-modal').style.display = 'none';
@@ -2578,16 +2994,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const riskLimit = modalAwal * (masterS.riskLimitPct / 100);
         const usedPct = periodPl < 0 ? Math.min((Math.abs(periodPl) / riskLimit) * 100, 999) : 0;
         const riskBox = document.getElementById('cur-risk-insight');
-        if (periodPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Aman! ${riskPeriodLabel === 'minggu' ? 'Minggu' : 'Bulan'} ini masih profit ${formatRupiah(periodPl)}, belum kepakai risk budget.</div>`;
-        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">✅ Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel} (${formatRupiah(Math.abs(periodPl))} dari ${formatRupiah(riskLimit)}).</div>`;
-        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">⚠️ Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}. Kurangi ukuran posisi.</div>`;
-        else riskBox.innerHTML = `<div class="insight-box insight-danger">🚨 LIMIT TERLAMPAUI! Rugi ${riskPeriodLabel} ini ${formatRupiah(Math.abs(periodPl))}, lewat batas ${masterS.riskLimitPct}% modal (${formatRupiah(riskLimit)}). STOP entry baru ${riskPeriodLabel} ini.</div>`;
+        if (periodPl >= 0) riskBox.innerHTML = `<div class="insight-box insight-success">Aman! ${riskPeriodLabel === 'minggu' ? 'Minggu' : 'Bulan'} ini masih profit ${formatRupiah(periodPl)}, belum kepakai risk budget.</div>`;
+        else if (usedPct < 70) riskBox.innerHTML = `<div class="insight-box insight-success">Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel} (${formatRupiah(Math.abs(periodPl))} dari ${formatRupiah(riskLimit)}).</div>`;
+        else if (usedPct < 100) riskBox.innerHTML = `<div class="insight-box insight-warning">Waspada! Risk terpakai ${usedPct.toFixed(0)}% dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}. Kurangi ukuran posisi.</div>`;
+        else riskBox.innerHTML = `<div class="insight-box insight-danger">LIMIT TERLAMPAUI! Rugi ${riskPeriodLabel} ini ${formatRupiah(Math.abs(periodPl))}, lewat batas ${masterS.riskLimitPct}% modal (${formatRupiah(riskLimit)}). STOP entry baru ${riskPeriodLabel} ini.</div>`;
 
         let closedTrades = tableRows.filter(t => t.status === 'closed');
         let overboughtMistakes = closedTrades.filter(t => t.arah === 'BUY' && t.alasan && t.alasan.toLowerCase().includes('overbought')).length;
         let oversoldMistakes = closedTrades.filter(t => t.arah === 'SELL' && t.alasan && t.alasan.toLowerCase().includes('oversold')).length;
         let winRate = closedTrades.length > 0 ? ((winCount / closedTrades.length) * 100).toFixed(0) : 0;
-        document.getElementById('cur-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${periodPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">⚠️ ${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">✅ Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
+        document.getElementById('cur-eval-text').innerHTML = `<ul style="padding-left:20px;"><li>Total entry simulasi bulan ini: <strong>${tableRows.length}</strong> (${closedTrades.length} closed, win rate ${winRate}%).</li><li>Risk budget terpakai: <strong>${periodPl < 0 ? usedPct.toFixed(0) : 0}%</strong> dari limit ${masterS.riskLimitPct}%/${riskPeriodLabel}.</li>${overboughtMistakes > 0 ? `<li style="color:#ff9800;">${overboughtMistakes}x entry BUY meski overbought — tunggu koreksi dulu.</li>` : ''}${oversoldMistakes > 0 ? `<li style="color:#ff9800;">${oversoldMistakes}x entry SELL meski oversold — tunggu rebound dulu.</li>` : ''}${winRate >= 50 && closedTrades.length >= 3 ? `<li style="color:#00e676;">Win rate di atas 50%, konsistensi mulai terbentuk. Pertahankan!</li>` : ''}</ul>`;
 
         let signalStats = {};
         closedTrades.forEach(t => {
@@ -2688,7 +3104,7 @@ document.addEventListener("DOMContentLoaded", () => {
         tbody.innerHTML = pageRows.length ? '' : `<tr><td colspan="8" style="text-align:center;">Tidak ada data.</td></tr>`;
         pageRows.forEach((e, i) => {
             const tpDisplay = e.layers ? e.layers.map(ly => `${ly.tpPips}p`).join('/') : (e.tp || '-');
-            tbody.innerHTML += `<tr><td>${startIdx + i + 1}</td><td>${e.date}</td><td>${e.arah}</td><td>${parseFloat(e.entry).toFixed(5)}</td><td>${parseFloat(e.sl).toFixed(5)}</td><td>${tpDisplay}</td><td style="min-width:250px;">${e.alasan || '-'}</td><td align="right" class="${e.plVal >= 0 ? 'profit-text' : 'loss-text'}"><strong>${e.status === 'closed' ? formatRupiah(e.plVal) : 'Open'}</strong></td></tr>`;
+            tbody.innerHTML += dashRowsHtml(e, startIdx + i + 1, (currentCurPair().endsWith('JPY') ? 3 : 5));
         });
 
         const pagEl = document.getElementById('cur-table-pagination');
@@ -2732,6 +3148,22 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // ---- Tab "Log Aktivitas" ----
+    let curLastLogs = []; let curLogLimit = 10;
+    let curLogFilter = new Set(['success', 'nihil', 'fail']);
+    window.toggleCurLogFilter = function(category, btn) {
+        if (curLogFilter.has(category)) curLogFilter.delete(category); else curLogFilter.add(category);
+        btn.classList.toggle('ai-log-filter-off', !curLogFilter.has(category));
+        renderCurLogList();
+    };
+    function renderCurLogList() {
+        const el = document.getElementById('cur-log-list');
+        if (!el) return;
+        const filtered = curLastLogs.filter(l => curLogFilter.has(categorizeAiLog(l.outcome)));
+        const shown = filtered.slice(0, curLogLimit === 'all' ? filtered.length : curLogLimit);
+        el.innerHTML = shown.length ? shown.map(logRowHtml).join('') : '<p class="ec-empty">Belum ada aktivitas yang cocok.</p>';
+        const info = document.getElementById('cur-log-count'); if (info) info.innerText = `${shown.length} dari ${filtered.length}`;
+    }
+    document.getElementById('cur-log-limit').addEventListener('change', e => { curLogLimit = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10); renderCurLogList(); });
     function renderCurrencyLog(pairKey) {
         const el = document.getElementById('cur-log-list');
         if (!el || !auth.currentUser) return;
@@ -2745,12 +3177,12 @@ document.addEventListener("DOMContentLoaded", () => {
         db.collection('appData').doc(auth.currentUser.uid).collection('ai_tick_log')
             .orderBy('time', 'desc').limit(900).get()
             .then(snap => {
-                const logs = snap.docs.map(d => d.data()).filter(l => l.source === `server_${pairKey}` || l.source === `browser_${pairKey}`).slice(0, 100);
-                el.innerHTML = logs.length ? '' : '<p style="color:#888;">Belum ada aktivitas.</p>';
-                logs.forEach(l => {
-                    const waktu = new Date(l.time).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
-                    el.innerHTML += `<div class="history-item"><div><strong>${l.outcome}</strong><br><span style="color:#aaa; font-size:0.8rem;">${waktu} — ${l.detail}</span></div></div>`;
-                });
+                const logs = snap.docs.map(d => d.data()).filter(l => l.source === `server_${pairKey}` || l.source === `browser_${pairKey}`).slice(0, 200);
+                curLastLogs = logs;
+                let s = 0, n = 0, f = 0;
+                logs.forEach(l => { const c = categorizeAiLog(l.outcome); if (c === 'success') s++; else if (c === 'fail') f++; else n++; });
+                document.getElementById('cur-log-summary').innerHTML = logSummaryHtml(s, n, f);
+                renderCurLogList();
             }).catch(err => console.error('Gagal ambil log Currency:', err));
     }
 
@@ -2908,6 +3340,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return found;
     }
 
+    let monBdSort = { key: 'pl', asc: false }; // default: P/L bulan ini tertinggi di atas
     window.renderMonitoringDashboard = function() {
         if (!isLoggedIn) return;
         const trendY = monTrendNavDate.getFullYear(), trendM = monTrendNavDate.getMonth();
@@ -2950,7 +3383,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Banner pause (Pilar 1, kill-switch) - dibaca dari botControl Gold (representatif, krn cuma
         // tombol Pause/Resume di bawah satu2nya cara nyalain/matiin, nulis ke ke-6 instrumen sekaligus).
         document.getElementById('mon-pause-banner').innerHTML = botControl.pauseRequested
-            ? `<div class="insight-box insight-danger" style="margin-bottom:15px;">🚨 <b>Trading SEDANG DIPAUSE</b> - semua entry baru ditahan di 6 instrumen. Klik "Resume Semua Entry" buat lanjut.</div>`
+            ? `<div class="insight-box insight-danger" style="margin-bottom:15px;"><b>Trading sedang dipause.</b> Semua entry baru ditahan di 6 instrumen. Buka "Kontrol darurat bot" di bagian bawah halaman untuk melanjutkan.</div>`
             : '';
 
         // Risk Overview - exposure gabungan bulan ini (limit tiap instrumen dijumlah, sesuai riskLimitPct
@@ -2959,10 +3392,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const totalLoss = instruments.reduce((s, i) => s + (i.totalPl < 0 ? Math.abs(i.totalPl) : 0), 0);
         const usedPct = totalLimit > 0 ? (totalLoss / totalLimit * 100) : 0;
         let riskBoxHtml;
-        if (totalLoss === 0) riskBoxHtml = `<div class="insight-box insight-success">✅ Aman! Belum ada rugi bulan ini dari semua instrumen.</div>`;
-        else if (usedPct < 70) riskBoxHtml = `<div class="insight-box insight-success">✅ Risk exposure gabungan terpakai ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}).</div>`;
-        else if (usedPct < 100) riskBoxHtml = `<div class="insight-box insight-warning">⚠️ Risk exposure gabungan udah ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}) - kemungkinan ada instrumen yang deket/kesentuh limit sendiri.</div>`;
-        else riskBoxHtml = `<div class="insight-box insight-danger">🚨 Risk exposure gabungan udah ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}).</div>`;
+        if (totalLoss === 0) riskBoxHtml = `<div class="insight-box insight-success">Aman! Belum ada rugi bulan ini dari semua instrumen.</div>`;
+        else if (usedPct < 70) riskBoxHtml = `<div class="insight-box insight-success">Risk exposure gabungan terpakai ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}).</div>`;
+        else if (usedPct < 100) riskBoxHtml = `<div class="insight-box insight-warning">Risk exposure gabungan udah ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}) - kemungkinan ada instrumen yang deket/kesentuh limit sendiri.</div>`;
+        else riskBoxHtml = `<div class="insight-box insight-danger">Risk exposure gabungan udah ${usedPct.toFixed(0)}% dari total limit semua instrumen (${formatRupiah(totalLoss)} dari ${formatRupiah(totalLimit)}).</div>`;
         document.getElementById('mon-risk-insight').innerHTML = riskBoxHtml;
 
         const ddAll = computeCombinedMaxDrawdown(instruments);
@@ -2971,20 +3404,29 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="equity-box"><span class="label">Max Drawdown (All-Time) - Semua Instrumen</span><h3 class="loss-text">${formatRupiah(ddAll.maxDD)}</h3><p style="color:#888; font-size:0.75rem; margin-top:4px;">${ddAll.maxDDPct.toFixed(2)}% dari peak equity</p></div>
             <div class="equity-box"><span class="label">Max Drawdown (All-Time) - Currency Saja</span><h3 class="loss-text">${formatRupiah(ddCur.maxDD)}</h3><p style="color:#888; font-size:0.75rem; margin-top:4px;">${ddCur.maxDDPct.toFixed(2)}% dari peak equity</p></div>`;
 
-        document.getElementById('mon-breakdown-grid').innerHTML = instruments.map(i => {
+        const bdVal = { name: i => i.label, equityAwal: i => i.equityAwal, pl: i => i.totalPl, equityAkhir: i => i.equityAwal + i.totalPl, growth: i => (i.equityAwal > 0 ? i.totalPl / i.equityAwal : 0), wr: i => (i.closedCount ? i.winCount / i.closedCount : -1) };
+        const bdFn = bdVal[monBdSort.key] || bdVal.pl;
+        const bdList = instruments.slice().sort((x, y) => { const p = bdFn(x), q = bdFn(y); const c = typeof p === 'string' ? p.localeCompare(q) : (p - q); return monBdSort.asc ? c : -c; });
+        const bdHead = (k, t) => `<span class="mon-sort ${monBdSort.key === k ? 'on' : ''}" data-k="${k}">${t}${monBdSort.key === k ? (monBdSort.asc ? ' ▲' : ' ▼') : ''}</span>`;
+        document.getElementById('mon-breakdown-grid').innerHTML = `<div class="mon-tbl"><div class="mon-tr mon-th">${bdHead('name', 'Instrumen')}${bdHead('equityAwal', 'Equity awal')}${bdHead('pl', 'P/L bulan ini')}${bdHead('equityAkhir', 'Equity akhir')}${bdHead('growth', 'Pertumbuhan')}${bdHead('wr', 'Win rate')}</div>` + bdList.map(i => {
             const equityAkhir = i.equityAwal + i.totalPl;
             const growthPct = i.equityAwal > 0 ? (i.totalPl / i.equityAwal * 100) : 0;
-            const growthClass = i.totalPl > 0 ? 'profit-text' : (i.totalPl < 0 ? 'loss-text' : 'netral');
+            const tone = i.totalPl > 0 ? 'profit-text' : (i.totalPl < 0 ? 'loss-text' : 'netral');
             const winRate = i.closedCount > 0 ? ((i.winCount / i.closedCount) * 100).toFixed(0) + '%' : '-';
-            return `<div class="weekly-card" style="border-top-color:${i.color};">
-                <h4>${i.label}</h4>
-                <p><span>Equity Awal:</span> <strong>${formatRupiah(i.equityAwal)}</strong></p>
-                <p><span>P/L Bulan Ini:</span> <strong class="${growthClass}">${i.totalPl >= 0 ? '+' : ''}${formatRupiah(i.totalPl)}</strong></p>
-                <p><span>Equity Akhir:</span> <strong>${formatRupiah(equityAkhir)}</strong></p>
-                <p><span>Pertumbuhan:</span> <strong class="${growthClass}">${growthPct >= 0 ? '+' : ''}${growthPct.toFixed(2)}%</strong></p>
-                <p style="border-top:1px dotted #444; padding-top:5px;"><span>Win Rate:</span> <strong>${winRate}</strong> (${i.closedCount} closed)</p>
+            return `<div class="mon-tr">
+                <span class="mon-name" data-l="Instrumen"><i class="mon-dot" style="background:${i.color};"></i>${i.label}</span>
+                <span data-l="Equity awal">${formatRupiah(i.equityAwal)}</span>
+                <span data-l="P/L bulan ini" class="${tone}"><b>${i.totalPl >= 0 ? '+' : ''}${formatRupiah(i.totalPl)}</b></span>
+                <span data-l="Equity akhir">${formatRupiah(equityAkhir)}</span>
+                <span data-l="Pertumbuhan" class="${tone}">${growthPct >= 0 ? '+' : ''}${growthPct.toFixed(2)}%</span>
+                <span data-l="Win rate">${winRate} <small>(${i.closedCount} closed)</small></span>
             </div>`;
-        }).join('');
+        }).join('') + '</div>';
+        document.querySelectorAll('#mon-breakdown-grid .mon-sort').forEach(el => el.addEventListener('click', () => {
+            const k = el.dataset.k;
+            if (monBdSort.key === k) monBdSort.asc = !monBdSort.asc; else { monBdSort.key = k; monBdSort.asc = (k === 'name'); }
+            window.renderMonitoringDashboard();
+        }));
 
         let totalContradictions = 0;
         const contradictionDetails = [];
@@ -2992,16 +3434,18 @@ document.addEventListener("DOMContentLoaded", () => {
             const found = findMethodContradictions(i.tradeData, trendY, trendM);
             totalContradictions += found.length;
             found.forEach(f => contradictionDetails.push({ instrument: i.label, ...f }));
-            return `<div class="weekly-card" style="border-top-color:${i.color};"><h4>${i.label}</h4><p><span>Kontradiksi:</span> <strong class="${found.length > 0 ? 'loss-text' : 'profit-text'}">${found.length}x</strong></p></div>`;
+            return `<span class="mon-chipcount ${found.length > 0 ? 'has' : ''}"><i class="mon-dot" style="background:${i.color};"></i>${i.label}<b>${found.length}x</b></span>`;
         }).join('');
         const contradictionLimitEl = document.getElementById('mon-contradiction-limit');
         if (contradictionLimitEl) contradictionLimitEl.value = String(monContradictionLimit);
         const shownContradictions = monContradictionLimit === 'all' ? contradictionDetails : contradictionDetails.slice(0, monContradictionLimit);
         document.getElementById('mon-contradiction-list').innerHTML = totalContradictions === 0
             ? `<p style="color:#888; font-size:0.85rem;">Gak ada kontradiksi sinyal bulan ini.</p>`
-            : shownContradictions.map(d => `<div style="background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; margin-bottom:8px; font-size:0.8rem; color:#ccc;">
-                <strong>${d.instrument}</strong> - ${d.t1.date}: ${SIGNAL_TYPE_LABELS[d.t1.signalType] || d.t1.signalType} (${d.t1.arah}) vs ${SIGNAL_TYPE_LABELS[d.t2.signalType] || d.t2.signalType} (${d.t2.arah}), buka bareng.
-            </div>`).join('')
+            : shownContradictions.map(d => {
+                const n1 = SIGNAL_TYPE_LABELS[d.t1.signalType] || d.t1.signalType, n2 = SIGNAL_TYPE_LABELS[d.t2.signalType] || d.t2.signalType;
+                const cls = (a) => String(a).toUpperCase() === 'BUY' ? 'buy' : 'sell';
+                return `<div class="mon-contra"><span class="mon-contra-ins">${d.instrument}</span><span class="mon-contra-date">${d.t1.date}</span><span class="mon-contra-txt">${n1} <em class="${cls(d.t1.arah)}">${String(d.t1.arah).toUpperCase()}</em> bertemu ${n2} <em class="${cls(d.t2.arah)}">${String(d.t2.arah).toUpperCase()}</em></span></div>`;
+            }).join('')
                 + (contradictionDetails.length > shownContradictions.length ? `<p style="color:#777; font-size:0.75rem; margin-top:5px;">Menampilkan ${shownContradictions.length} dari ${contradictionDetails.length} kontradiksi.</p>` : '');
 
         // Chart di-buat SEKALI trus di-update in-place tiap render (bukan destroy+new tiap kali) - data doc Firestore
@@ -3037,7 +3481,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 },
                 options: {
                     maintainAspectRatio: false,
-                    scales: { x: { grid: { color: '#333' } }, y: { grid: { color: '#333' }, ticks: { callback: v => formatRupiah(v) } } },
+                    scales: { x: { grid: { color: chartGridColor() } }, y: { grid: { color: chartGridColor() }, ticks: { callback: v => formatRupiah(v) } } },
                     plugins: {
                         legend: { labels: { color: '#ccc' } },
                         tooltip: {
@@ -3100,23 +3544,36 @@ document.addEventListener("DOMContentLoaded", () => {
                 : '▶️ Sinyal resume terkirim ke 6 instrumen. Entry baru bakal aktif lagi mulai siklus tick berikutnya (~5 menit).'))
             .catch(err => alert('Gagal kirim sinyal: ' + err.message));
     }
+    // Tombol darurat dikunci dulu: harus centang "Saya mengerti" biar tidak terklik tidak sengaja, dan kunci balik otomatis setelah dipakai.
+    const monCtrlUnlock = document.getElementById('mon-ctrl-unlock');
+    const monCtrlBtns = ['btn-mon-pause-all', 'btn-mon-resume-all', 'btn-mon-close-all'].map(id => document.getElementById(id));
+    const monRelock = () => { monCtrlUnlock.checked = false; monCtrlBtns.forEach(b => { b.disabled = true; }); };
+    monCtrlUnlock.addEventListener('change', () => monCtrlBtns.forEach(b => { b.disabled = !monCtrlUnlock.checked; }));
+    monCtrlBtns.forEach(b => b.addEventListener('click', () => setTimeout(monRelock, 400)));
+    document.getElementById('mon-danger').addEventListener('toggle', (e) => { if (!e.target.open) monRelock(); });
     document.getElementById('btn-mon-pause-all').onclick = () => {
-        if (!confirm('Pause SEMUA entry baru di 6 instrumen (Gold + 5 Currency)? Posisi yang udah open TETAP dilindungi SL/TP, order pending (layer 2/3 yang belum kefill) dibatalkan. Entry baru ditahan sampai di-Resume manual.')) return;
-        setGlobalPause(true);
+        showConfirm('Pause SEMUA entry baru di 6 instrumen (Gold dan 5 Currency)?\n\nPosisi yang sudah terbuka tetap dilindungi SL/TP. Order pending (layer 2/3 yang belum terisi) dibatalkan. Entry baru ditahan sampai kamu klik Resume.', () => {
+            setGlobalPause(true);
+        });
     };
     document.getElementById('btn-mon-resume-all').onclick = () => {
-        if (!confirm('Resume entry baru di SEMUA 6 instrumen?')) return;
-        setGlobalPause(false);
+        showConfirm('Lanjutkan entry baru di SEMUA 6 instrumen?', () => {
+            setGlobalPause(false);
+        });
     };
     // Tutup darurat: semua posisi open (simulasi + broker) ditutup di harga sekarang, order pending
     // dibatalkan, dan sekalian pause biar bot gak langsung entry lagi. closeAllRequested one-shot, di-reset bot.
+    // Dua kali konfirmasi karena tidak bisa dibatalkan.
     document.getElementById('btn-mon-close-all').onclick = () => {
-        if (!auth.currentUser) { alert('Login dulu.'); return; }
-        if (!confirm('TUTUP SEMUA posisi di 6 instrumen SEKARANG di harga pasar, batalkan order pending, dan pause entry baru?\n\nIni gak bisa dibatalkan.')) return;
-        const at = new Date().toISOString();
-        writeBotControlAll({ closeAllRequested: true, closeAllRequestedAt: at, pauseRequested: true, pauseRequestedAt: at })
-            .then(() => alert('🛑 Perintah tutup darurat terkirim ke 6 instrumen. Posisi ditutup dalam ~10 detik, cek Telegram. Entry baru di-pause sampai klik "Resume Semua Entry".'))
-            .catch(err => alert('Gagal kirim perintah: ' + err.message));
+        if (!auth.currentUser) { showToast('Login dulu.', 'error'); return; }
+        showConfirm('TUTUP SEMUA posisi di 6 instrumen SEKARANG di harga pasar, batalkan order pending, dan pause entry baru?\n\nTindakan ini tidak bisa dibatalkan.', () => {
+            setTimeout(() => showConfirm('Konfirmasi terakhir: yakin menutup SEMUA posisi sekarang?', () => {
+                const at = new Date().toISOString();
+                writeBotControlAll({ closeAllRequested: true, closeAllRequestedAt: at, pauseRequested: true, pauseRequestedAt: at })
+                    .then(() => showToast('Perintah tutup darurat terkirim ke 6 instrumen. Posisi ditutup dalam sekitar 10 detik, cek Telegram. Entry baru di-pause sampai kamu Resume.', 'success', 7000))
+                    .catch(err => showToast('Gagal kirim perintah: ' + err.message, 'error'));
+            }), 250);
+        });
     };
 
     // Export multi-instrumen dari Monitoring - datanya udah ke-load di memori (sama kayak yang dipakai
@@ -3128,9 +3585,118 @@ document.addEventListener("DOMContentLoaded", () => {
     function updateMonExportCount() {
         document.getElementById('mon-export-count').textContent = document.querySelectorAll('.mon-export-chip.selected').length;
     }
+    // ---- Export Markdown untuk AI: semua instrumen terpilih digabung 1 file, urut waktu buka order ----
+    function triggerFileDownload(content, filename, mime) {
+        const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = filename;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+    function monPipSize(key) { return key === 'gold' ? 0.10 : key.endsWith('JPY') ? 0.01 : 0.0001; }
+    function fmtWib(iso) {
+        if (!iso) return '-';
+        const d = new Date(iso);
+        return isNaN(d) ? '-' : d.toLocaleString('sv-SE', { timeZone: 'Asia/Jakarta' }).slice(0, 16);
+    }
+    function fmtDurasi(a, b) {
+        if (!a || !b) return '-';
+        const ms = new Date(b) - new Date(a);
+        if (isNaN(ms) || ms < 0) return '-';
+        const m = Math.round(ms / 60000);
+        return m < 60 ? `${m} menit` : m < 1440 ? `${Math.floor(m / 60)} jam ${m % 60} menit` : `${Math.floor(m / 1440)} hari ${Math.floor((m % 1440) / 60)} jam`;
+    }
+    function buildMonitoringMarkdown(selectedKeys, period, targetPrefix) {
+        const all = [];
+        selectedKeys.forEach(key => {
+            const isGold = key === 'gold';
+            const data = isGold ? aiTradeData : (getCurInstrument(key).aiTradeData || {});
+            const name = isGold ? 'XAUUSD' : key;
+            const dec = isGold ? 2 : (key.endsWith('JPY') ? 3 : 5);
+            Object.keys(data).forEach(d => {
+                if (period !== 'all' && !d.startsWith(targetPrefix)) return;
+                (data[d] || []).forEach(t => all.push({ key, name, dec, date: d, t }));
+            });
+        });
+        all.sort((a, b) => String(a.t.openedAt || a.date).localeCompare(String(b.t.openedAt || b.date)));
+        const pl = (x) => parseFloat(x.t.pl || 0);
+        const rp = (v) => (v < 0 ? '-' : '') + 'Rp ' + Math.abs(Math.round(v)).toLocaleString('id-ID');
+        const closed = all.filter(x => x.t.status === 'closed');
+        const stat = (list) => {
+            const w = list.filter(x => pl(x) > 0), l = list.filter(x => pl(x) < 0);
+            const tw = w.reduce((s, x) => s + pl(x), 0), tl = -l.reduce((s, x) => s + pl(x), 0);
+            const aw = w.length ? tw / w.length : 0, al = l.length ? tl / l.length : 0;
+            return { n: list.length, w: w.length, l: l.length, wr: list.length ? w.length / list.length * 100 : 0, total: tw - tl, aw, al, payoff: al ? aw / al : 0, pf: tl ? tw / tl : 0 };
+        };
+        const statRow = (label, list) => { const s = stat(list); return `| ${label} | ${s.n} | ${s.w} | ${s.l} | ${s.wr.toFixed(0)}% | ${rp(s.total)} | ${rp(s.aw)} | ${rp(s.al)} | ${s.payoff.toFixed(2)} | ${s.pf.toFixed(2)} |`; };
+        const statHead = (first) => `| ${first} | Trade | Menang | Kalah | WR | Total P/L | Rata2 menang | Rata2 kalah | Payoff | Profit factor |\n|---|---|---|---|---|---|---|---|---|---|`;
+        const names = Array.from(new Set(all.map(x => x.name)));
+        const methods = Array.from(new Set(all.map(x => x.t.signalType || '-')));
+        const first = all.length ? fmtWib(all[0].t.openedAt) : '-', last = all.length ? fmtWib(all[all.length - 1].t.openedAt) : '-';
+        const out = [];
+        out.push(`# Data Eksekusi Trading Simulasi`);
+        out.push(`- Periode: ${period === 'all' ? 'Semua waktu' : targetPrefix}`);
+        out.push(`- Instrumen: ${selectedKeys.map(k => k === 'gold' ? 'XAUUSD' : k).join(', ')}`);
+        out.push(`- Total trade: ${all.length} (closed ${closed.length}, masih open ${all.length - closed.length})`);
+        out.push(`- Rentang waktu buka order: ${first} s/d ${last} (WIB)`);
+        out.push(`- Dibuat: ${fmtWib(new Date().toISOString())} WIB`);
+        out.push('');
+        out.push('## Cara membaca');
+        out.push('- Urutan trade **kronologis berdasarkan waktu order dibuka** (semua instrumen digabung), bukan per instrumen.');
+        out.push('- Waktu dalam WIB. P/L dalam Rupiah simulasi (positif = untung). Trade = 1 sinyal dengan hingga 3 layer (L1, L2, L3).');
+        out.push('- Status layer: Kena TP, Kena SL, Dibatalkan (order tunggu tidak terisi), Ditutup (berita / sebelum weekend / timeout), Breakeven.');
+        out.push('- Payoff = rata-rata menang / rata-rata kalah. Profit factor = total untung / total rugi. Statistik hanya dari trade berstatus closed.');
+        out.push('- Pips SL/TP dihitung dari jarak entry ke SL/TP per layer. 1 pip Gold = 0,10, pair JPY = 0,01, pair lain = 0,0001.');
+        out.push('');
+        out.push('## Ringkasan per instrumen (closed)');
+        out.push(statHead('Instrumen'));
+        names.forEach(n => out.push(statRow(n, closed.filter(x => x.name === n))));
+        out.push(statRow('**Semua**', closed));
+        out.push('');
+        out.push('## Ringkasan per metode (closed)');
+        out.push(statHead('Metode'));
+        methods.forEach(m => out.push(statRow(m, closed.filter(x => (x.t.signalType || '-') === m))));
+        out.push('');
+        out.push('## Ringkasan per instrumen x metode (closed)');
+        out.push(statHead('Instrumen / metode'));
+        names.forEach(n => methods.forEach(m => { const l = closed.filter(x => x.name === n && (x.t.signalType || '-') === m); if (l.length) out.push(statRow(`${n} / ${m}`, l)); }));
+        out.push('');
+        const layerCount = {};
+        all.forEach(x => (x.t.layers || []).forEach(ly => { const k = AI_LAYER_STATUS_LABEL[ly.status] || ly.status || '-'; layerCount[k] = (layerCount[k] || 0) + 1; }));
+        out.push('## Hasil per layer');
+        out.push(Object.keys(layerCount).map(k => `- ${k}: ${layerCount[k]}`).join('\n') || '- (kosong)');
+        out.push('');
+        out.push('## Daftar trade (kronologis)');
+        all.forEach((x, i) => {
+            const t = x.t;
+            const ps = monPipSize(x.key);
+            out.push('');
+            out.push(`### ${i + 1}. ${fmtWib(t.openedAt)} WIB · ${x.name} · ${String(t.arah || '').toUpperCase()} @ ${parseFloat(t.entry).toFixed(x.dec)}`);
+            out.push(`- Metode: ${t.signalType || '-'} · Timeframe: ${t.tf || '-'} · Status: ${t.status} · Total P/L: ${rp(pl(x))}`);
+            out.push(`- Buka: ${fmtWib(t.openedAt)} · Tutup: ${t.closedAt ? fmtWib(t.closedAt) : 'masih open'} · Durasi: ${fmtDurasi(t.openedAt, t.closedAt)}`);
+            out.push('');
+            out.push('| Layer | Entry | SL | SL pips | TP | TP pips | Lot | Status | P/L |');
+            out.push('|---|---|---|---|---|---|---|---|---|');
+            (t.layers || []).forEach((ly, k) => {
+                const slp = Math.round(Math.abs(parseFloat(ly.entry) - parseFloat(ly.sl)) / ps);
+                out.push(`| L${k + 1} | ${parseFloat(ly.entry).toFixed(x.dec)} | ${parseFloat(ly.sl).toFixed(x.dec)} | ${slp} | ${parseFloat(ly.tp).toFixed(x.dec)} | ${ly.tpPips ?? '-'} | ${ly.lot ?? '-'} | ${AI_LAYER_STATUS_LABEL[ly.status] || ly.status || '-'} | ${rp(parseFloat(ly.pl || 0))} |`);
+            });
+            if (t.alasan) out.push('\n- Alasan entry: ' + String(t.alasan).replace(/\s*\n\s*/g, ' '));
+        });
+        out.push('');
+        return out.join('\n');
+    }
+    let monExportFormat = 'csv';
+    function updateMonExportFormat() {
+        document.querySelectorAll('#mon-export-format .exp-format').forEach(el => el.classList.toggle('selected', el.dataset.fmt === monExportFormat));
+        document.getElementById('mon-export-fmt-label').innerText = monExportFormat === 'md' ? 'Markdown' : 'CSV';
+    }
+    document.querySelectorAll('#mon-export-format .exp-format').forEach(el => el.addEventListener('click', () => { monExportFormat = el.dataset.fmt; updateMonExportFormat(); }));
+
     document.getElementById('btn-mon-open-export').addEventListener('click', () => {
         document.getElementById('mon-export-checklist').innerHTML = MON_EXPORT_INSTRUMENTS.map(i => `
-            <div class="mon-export-chip" data-key="${i.key}"><span class="chip-check">✓</span><span class="chip-label">${i.label}</span></div>`).join('');
+            <div class="mon-export-chip" data-key="${i.key}"><span class="chip-check"></span><span class="chip-label">${i.label}</span></div>`).join('');
         document.querySelectorAll('.mon-export-chip').forEach(chip => {
             chip.addEventListener('click', () => { chip.classList.toggle('selected'); updateMonExportCount(); });
         });
@@ -3148,16 +3714,21 @@ document.addEventListener("DOMContentLoaded", () => {
         const y = monTrendNavDate.getFullYear(), m = monTrendNavDate.getMonth();
         const targetPrefix = `${y}-${String(m + 1).padStart(2, '0')}`;
         const selectedKeys = Array.from(document.querySelectorAll('.mon-export-chip.selected')).map(chip => chip.dataset.key);
-        if (selectedKeys.length === 0) { alert('Pilih minimal 1 instrumen dulu.'); return; }
-        selectedKeys.forEach((key, i) => {
-            // Stagger tiap download dikit - browser suka nge-block kalau banyak file di-trigger bersamaan persis di tick yang sama.
-            setTimeout(() => {
-                const isGold = key === 'gold';
-                const tradeData = isGold ? aiTradeData : (getCurInstrument(key).aiTradeData || {});
-                const csv = buildAiTradeCsv(tradeData, period, targetPrefix, isGold ? 2 : 5);
-                triggerCsvDownload(csv, `Data_${isGold ? 'Gold' : key}_${period === 'all' ? 'All' : targetPrefix}.csv`);
-            }, i * 400);
-        });
+        if (selectedKeys.length === 0) { showToast('Pilih minimal 1 instrumen dulu.', 'error'); return; }
+        const periodLabel = period === 'all' ? 'All' : targetPrefix;
+        if (monExportFormat === 'md') {
+            triggerFileDownload(buildMonitoringMarkdown(selectedKeys, period, targetPrefix), `Eksekusi_Trading_${periodLabel}.md`, 'text/markdown');
+        } else {
+            selectedKeys.forEach((key, i) => {
+                // Stagger tiap download dikit - browser suka nge-block kalau banyak file di-trigger bersamaan persis di tick yang sama.
+                setTimeout(() => {
+                    const isGold = key === 'gold';
+                    const tradeData = isGold ? aiTradeData : (getCurInstrument(key).aiTradeData || {});
+                    const csv = buildAiTradeCsv(tradeData, period, targetPrefix, isGold ? 2 : 5);
+                    triggerCsvDownload(csv, `Data_${isGold ? 'Gold' : key}_${periodLabel}.csv`);
+                }, i * 400);
+            });
+        }
         document.getElementById('mon-export-modal').style.display = 'none';
     });
 
@@ -3356,6 +3927,575 @@ document.addEventListener("DOMContentLoaded", () => {
             })
             .catch(err => alert('Gagal reset: ' + err.message));
     };
+
+    // ==========================================
+    // MODULE PEKERJAAN (My Task + Kanban) - 1 data tugas, 2 tampilan (daftar & papan).
+    // Kolom = tahapan project (Antri > Req/FSD > Dev > Testing > Selesai), disesuaikan sama laporan harian
+    // "List Start Task" user: bisa di-import dari teks laporan & di-generate balik jadi teks yang sama.
+    // Disimpan di appData/{uid}/workspace/tasks (subkoleksi) - dokumen root appData/{uid} gak berubah,
+    // jadi 6 bot VPS yang listen ke root gak ikut ke-trigger tiap kali tugas diedit.
+    // ==========================================
+    const WORK_STATUSES = [
+        { key: 'antri', label: 'Antri', color: '#90a4ae', tahap: 'On Queue' },
+        { key: 'req', label: 'Requirement / FSD', color: '#ba68c8', tahap: 'FSD On Progress' },
+        { key: 'dev', label: 'Development', color: '#2196f3', tahap: 'Dev On Progress' },
+        { key: 'test', label: 'Testing (SIT/UAT)', color: '#ffb300', tahap: 'SIT On Progress' },
+        { key: 'done', label: 'Selesai', color: '#00e676', tahap: 'Done' },
+    ];
+    const WORK_STATUS_KEYS = WORK_STATUSES.map(s => s.key);
+    const WORK_LEGACY_STATUS = { todo: 'antri', doing: 'dev' };
+    const WORK_KATEGORI = ['Utama', 'Internal', 'Kecil', 'Approval Digital', 'Additional Task'];
+    const WORK_PRIORITY = { high: { label: 'Tinggi', color: '#ff5252' }, medium: { label: 'Sedang', color: '#ffb300' }, low: { label: 'Rendah', color: '#78909c' } };
+    const WORK_MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const WORK_MONTH_ALIASES = { ags: 7, agt: 7, aug: 7, agst: 7, oct: 9, dec: 11, may: 4 };
+    const WK_ICON_CAL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
+    const WK_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    let workView = 'list';
+    let workFilterKategori = '';
+    let workShowDone = false;
+    let workEditId = null;
+    let workEditChecklist = [];
+    let workEditLogs = [];
+    let workImportPending = null;
+    let pushTimerWork = null;
+
+    function workDocRef(uid) { return db.collection('appData').doc(uid).collection('workspace').doc('tasks'); }
+
+    function saveWork() {
+        localStorage.setItem('work_data_v1', JSON.stringify(workData));
+        clearTimeout(pushTimerWork);
+        pushTimerWork = setTimeout(() => {
+            if (!auth.currentUser) return;
+            workDocRef(auth.currentUser.uid).set(workData)
+                .catch(err => { console.error('Gagal sync tugas ke cloud:', err); showToast('Gagal simpan tugas ke cloud — ' + err.code, 'err', 6000); });
+        }, 800);
+    }
+
+    function attachWorkListener(uid) {
+        if (workUnsub) workUnsub();
+        workUnsub = workDocRef(uid).onSnapshot(doc => {
+            if (!doc.exists) {
+                // Cloud masih kosong (pertama kali): tugas yang udah ada di browser diunggah, bukan dihapus.
+                if (Object.keys((workData && workData.tasks) || {}).length && !doc.metadata.fromCache) saveWork();
+                return;
+            }
+            workData = { tasks: {}, ...doc.data() };
+            localStorage.setItem('work_data_v1', JSON.stringify(workData));
+            const active = document.querySelector('.menu-item.active');
+            if (active && active.getAttribute('data-target') === 'view-work') renderWork();
+        }, err => console.error('Gagal ambil tugas dari cloud:', err));
+    }
+
+    // ---------- Helper tanggal & teks ----------
+    function workIsoDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+    function workTodayIso() { return workIsoDate(new Date()); }
+    function workDaysSince(iso) { return Math.round((new Date(workTodayIso() + 'T00:00:00') - new Date(iso + 'T00:00:00')) / 86400000); }
+    function workEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function workFormatWhen(iso) { const d = new Date(iso + 'T00:00:00'); return `${d.getDate()} ${WORK_MONTHS_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`; }
+
+    function workMonthIndex(word) {
+        const w = (word || '').toLowerCase().slice(0, 4);
+        if (WORK_MONTH_ALIASES[w] != null) return WORK_MONTH_ALIASES[w];
+        const i = WORK_MONTHS_SHORT.findIndex(m => w.startsWith(m.toLowerCase()));
+        return i;
+    }
+
+    // "16 Okt 26" / "12 - 19 Okt 26" / "28 Sep - 2 Okt 26" / "W4 Okt 26" -> {date, end} (ISO) atau null kalau gak kebaca.
+    function parseWorkWhen(when) {
+        const s = (when || '').trim();
+        const week = s.match(/^W(\d)\s+([A-Za-z]+)\s+(\d{2,4})$/i);
+        if (week) {
+            const m = workMonthIndex(week[2]); if (m < 0) return { date: null, end: null };
+            const y = Number(week[3].length === 2 ? '20' + week[3] : week[3]);
+            const startDay = (Number(week[1]) - 1) * 7 + 1;
+            const last = new Date(y, m + 1, 0).getDate();
+            return { date: workIsoDate(new Date(y, m, Math.min(startDay, last))), end: workIsoDate(new Date(y, m, Math.min(startDay + 6, last))) };
+        }
+        const parts = s.split(/\s*-\s*/);
+        const parsePart = (p, fallback) => {
+            const mm = p.match(/^(\d{1,2})(?:\s+([A-Za-z]+))?(?:\s+(\d{2,4}))?$/);
+            if (!mm) return null;
+            const m = mm[2] ? workMonthIndex(mm[2]) : (fallback ? fallback.m : -1);
+            const yRaw = mm[3] || (fallback ? String(fallback.y) : null);
+            if (m < 0 || !yRaw) return { d: Number(mm[1]), m, y: null };
+            return { d: Number(mm[1]), m, y: Number(yRaw.length === 2 ? '20' + yRaw : yRaw) };
+        };
+        const endP = parsePart(parts[parts.length - 1], null);
+        if (!endP || endP.y == null || endP.m < 0) return { date: null, end: null };
+        const startP = parts.length > 1 ? parsePart(parts[0], endP) : endP;
+        if (!startP || startP.m < 0) return { date: null, end: null };
+        const toIso = p => workIsoDate(new Date(p.y || endP.y, p.m, p.d));
+        return { date: toIso(startP), end: toIso(endP) };
+    }
+
+    function workTahapToColumn(tahap) {
+        const t = (tahap || '').toLowerCase();
+        if (!t) return 'antri';
+        if (t.includes('queue')) return 'antri';
+        if (/\b(done|selesai|live)\b/.test(t)) return 'done';
+        if (/testing|\bsit\b|\buat\b/.test(t)) return 'test';
+        if (/\bdev\b|develop/.test(t)) return 'dev';
+        if (/requirement|\bfsd\b|change request|\bcr\b|pending/.test(t)) return 'req';
+        return 'antri';
+    }
+
+    // Tugas lama (versi 3 kolom) & field yang belum ada di-normalize di memori, kesimpen pas diedit berikutnya.
+    function migrateWorkTask(t) {
+        if (!WORK_STATUS_KEYS.includes(t.status)) t.status = WORK_LEGACY_STATUS[t.status] || 'antri';
+        if (!t.kategori && t.project) t.kategori = t.project;
+        if (!Array.isArray(t.logs)) t.logs = [];
+        if (typeof t.order !== 'number') t.order = 9999;
+        return t;
+    }
+
+    function workAllTasks() { return Object.values(workData.tasks || {}).map(migrateWorkTask); }
+    function workKategoriList() { return [...new Set([...WORK_KATEGORI, ...workAllTasks().map(t => t.kategori).filter(Boolean)])]; }
+    function workByOrder(a, b) { return (a.order - b.order) || (a.createdAt || '').localeCompare(b.createdAt || ''); }
+    function workNextOrder() { return workAllTasks().reduce((m, t) => (t.order < 9999 ? Math.max(m, t.order) : m), 0) + 1; }
+    function workLastLog(t) { return t.logs.length ? t.logs[t.logs.length - 1] : null; }
+    function workLastLogDate(t) { const dated = t.logs.filter(l => l.date); return dated.length ? (dated[dated.length - 1].end || dated[dated.length - 1].date) : null; }
+
+    function workTodayEntries(t) {
+        const today = workTodayIso();
+        const hits = t.logs.filter(l => l.date && l.date <= today && today <= (l.end || l.date));
+        if (t.deadline === today) hits.push({ text: 'Deadline hari ini' });
+        return hits;
+    }
+
+    // ---------- Saran fokus hari ini (berbasis aturan, tanpa AI berbayar) ----------
+    function buildWorkSuggestions(tasks) {
+        const active = tasks.filter(t => t.status !== 'done').sort(workByOrder);
+        const out = [];
+        const used = new Set();
+        const push = (t, text) => { if (out.length < 3 && !used.has(t.id)) { used.add(t.id); out.push(text); } };
+        active.forEach(t => { const hit = workTodayEntries(t)[0]; if (hit) push(t, `Hari ini: ${t.title} - ${hit.text}`); });
+        active.forEach(t => {
+            const last = workLastLog(t);
+            if (last && /reminder|\bfu\b|follow/i.test(last.text) && last.date && workDaysSince(last.end || last.date) >= 2) push(t, `Follow up lagi: ${t.title}${t.kode ? ` (${t.kode})` : ''}`);
+        });
+        active.filter(t => ['Utama', 'Approval Digital'].includes(t.kategori)).forEach(t => {
+            const last = workLastLogDate(t);
+            if (last) { const n = workDaysSince(last); if (n > 5) push(t, `Belum ada update ${n} hari: ${t.title}`); }
+        });
+        active.forEach(t => { if (['dev', 'test'].includes(t.status) && typeof t.progress === 'number' && t.progress < 20) push(t, `Progress masih ${t.progress}%: ${t.title}`); });
+        return out;
+    }
+
+    // ---------- Render ----------
+    function workCardMetaHtml(t) {
+        const parts = [];
+        if (t.tahap) parts.push(`<span class="wk-tahap" style="--c:${(WORK_STATUSES.find(s => s.key === t.status) || WORK_STATUSES[0]).color}">${workEsc(t.tahap)}</span>`);
+        if (t.deadline) parts.push(`<span class="wk-due${t.deadline < workTodayIso() && t.status !== 'done' ? ' overdue' : ''}">${WK_ICON_CAL}${workFormatWhen(t.deadline)}</span>`);
+        if (t.priority === 'high') parts.push(`<span class="wk-pri" style="--c:${WORK_PRIORITY.high.color}">Prioritas tinggi</span>`);
+        const cl = t.checklist || [];
+        if (cl.length) parts.push(`<span class="wk-cl${cl.every(c => c.done) ? ' full' : ''}">${WK_ICON_CHECK}${cl.filter(c => c.done).length}/${cl.length}</span>`);
+        return parts.join('');
+    }
+
+    function workItemInnerHtml(t) {
+        const head = [t.kode, t.kategori].filter(Boolean).map(workEsc).join(' · ');
+        const last = workLastLog(t);
+        const today = workTodayEntries(t).length > 0 && t.status !== 'done';
+        const progress = typeof t.progress === 'number'
+            ? `<div class="wk-progress"><div class="wk-progress-bar"><span style="width:${Math.max(0, Math.min(100, t.progress))}%"></span></div><b>${t.progress}%</b></div>` : '';
+        return `${head || today ? `<div class="wk-head">${head}${today ? '<span class="wk-today-badge">Hari ini</span>' : ''}</div>` : ''}
+            <div class="wk-title">${workEsc(t.title)}</div>
+            <div class="wk-meta">${workCardMetaHtml(t)}</div>
+            ${progress}
+            ${last ? `<div class="wk-lastlog"><b>${workEsc(last.when)}</b> ${workEsc(last.text)}</div>` : ''}`;
+    }
+
+    function renderWork() {
+        if (!isLoggedIn) return;
+        const kategoriList = workKategoriList();
+        const sel = document.getElementById('wk-filter-project');
+        sel.innerHTML = `<option value="">Semua kategori</option>` + kategoriList.map(k => `<option value="${workEsc(k)}"${k === workFilterKategori ? ' selected' : ''}>${workEsc(k)}</option>`).join('');
+        document.getElementById('wk-kategori-list').innerHTML = kategoriList.map(k => `<option value="${workEsc(k)}">`).join('');
+        document.getElementById('wk-tab-list').classList.toggle('active', workView === 'list');
+        document.getElementById('wk-tab-board').classList.toggle('active', workView === 'board');
+
+        const tasks = workAllTasks().filter(t => !workFilterKategori || t.kategori === workFilterKategori);
+        const active = tasks.filter(t => t.status !== 'done');
+        const weekAgo = Date.now() - 7 * 86400000;
+        const stats = [
+            ['Project aktif', active.length, 'doing'],
+            ['Jadwal hari ini', active.filter(t => workTodayEntries(t).length).length, 'today'],
+            ['Di Testing', active.filter(t => t.status === 'test').length, 'test'],
+            ['Selesai 7 hari', tasks.filter(t => t.status === 'done' && t.completedAt && new Date(t.completedAt).getTime() >= weekAgo).length, 'done'],
+        ];
+        document.getElementById('wk-summary').innerHTML = stats.map(([label, n, cls]) =>
+            `<div class="wk-stat ${cls}${n ? '' : ' zero'}"><b>${n}</b><span>${label}</span></div>`).join('');
+
+        const sug = buildWorkSuggestions(tasks);
+        document.getElementById('wk-focus').innerHTML = sug.length
+            ? `<div class="wk-focus"><div class="wk-focus-title">Fokus hari ini</div><ol>${sug.map(s => `<li>${workEsc(s)}</li>`).join('')}</ol></div>` : '';
+
+        document.getElementById('wk-body').innerHTML = workView === 'list' ? renderWorkList(tasks) : renderWorkBoard(tasks);
+    }
+
+    function workRowHtml(t) {
+        const done = t.status === 'done';
+        return `<div class="wk-row${done ? ' done' : ''}" data-id="${t.id}">
+            <button class="wk-check${done ? ' on' : ''}" data-act="toggle" aria-label="${done ? 'Tandai belum selesai' : 'Tandai selesai'}">${WK_ICON_CHECK}</button>
+            <div class="wk-row-main">${workItemInnerHtml(t)}</div>
+        </div>`;
+    }
+
+    function renderWorkList(tasks) {
+        if (!tasks.length) return `<div class="wk-empty">Belum ada project${workFilterKategori ? ' di kategori ini' : ''}. Klik <b>Import</b> buat tempel teks "List Start Task", atau <b>+ Tugas Baru</b>.</div>`;
+        const active = tasks.filter(t => t.status !== 'done').sort(workByOrder);
+        const todays = active.filter(t => workTodayEntries(t).length);
+        const todayIds = new Set(todays.map(t => t.id));
+        let html = todays.length ? `<div class="wk-group"><div class="wk-group-head today">Hari ini<span>${todays.length}</span></div>${todays.map(workRowHtml).join('')}</div>` : '';
+        WORK_STATUSES.filter(s => s.key !== 'done').forEach(s => {
+            const items = active.filter(t => t.status === s.key && !todayIds.has(t.id));
+            if (!items.length) return;
+            html += `<div class="wk-group"><div class="wk-group-head"><span class="wk-col-dot" style="background:${s.color}"></span>${s.label}<span>${items.length}</span></div>${items.map(workRowHtml).join('')}</div>`;
+        });
+        if (!active.length) html += `<div class="wk-empty">Semua project beres.</div>`;
+        const done = tasks.filter(t => t.status === 'done').sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+        if (done.length) {
+            html += `<div class="wk-group"><button class="wk-group-head wk-done-toggle" data-act="toggle-done">Selesai<span>${done.length}</span><em>${workShowDone ? 'Sembunyikan' : 'Tampilkan'}</em></button>${workShowDone ? done.map(workRowHtml).join('') : ''}</div>`;
+        }
+        return html;
+    }
+
+    function renderWorkBoard(tasks) {
+        return `<div class="wk-board">${WORK_STATUSES.map((s, si) => {
+            const items = tasks.filter(t => t.status === s.key)
+                .sort(s.key === 'done' ? (a, b) => (b.completedAt || '').localeCompare(a.completedAt || '') : workByOrder);
+            const prev = WORK_STATUSES[si - 1], next = WORK_STATUSES[si + 1];
+            const cards = items.map(t => `<div class="wk-card${s.key === 'done' ? ' done' : ''}" draggable="true" data-id="${t.id}">
+                    ${workItemInnerHtml(t)}
+                    <div class="wk-card-move">
+                        ${prev ? `<button data-act="move" data-to="${prev.key}" aria-label="Pindah ke ${prev.label}">‹ ${prev.label}</button>` : '<span></span>'}
+                        ${next ? `<button data-act="move" data-to="${next.key}" aria-label="Pindah ke ${next.label}">${next.label} ›</button>` : ''}
+                    </div>
+                </div>`).join('');
+            return `<div class="wk-col" data-status="${s.key}">
+                <div class="wk-col-head"><span class="wk-col-dot" style="background:${s.color}"></span>${s.label}<span class="wk-col-count">${items.length}</span></div>
+                <div class="wk-col-body">${cards || '<div class="wk-col-empty">Kosong</div>'}</div>
+                <button class="wk-col-add" data-act="add" data-status="${s.key}">+ Tambah</button>
+            </div>`;
+        }).join('')}</div>`;
+    }
+
+    function setWorkStatus(id, status) {
+        const t = workData.tasks[id];
+        if (!t || t.status === status) return;
+        migrateWorkTask(t);
+        if (status === 'done') { t.prevStatus = t.status; t.prevTahap = t.tahap; }
+        // Tahap teks yang nunjuk kolom lain diganti default kolom tujuan biar laporan tetap konsisten
+        // (balik dari Selesai -> pakai teks tahap sebelum diselesaikan kalau masih cocok).
+        if (t.status === 'done' && t.prevTahap && workTahapToColumn(t.prevTahap) === status) t.tahap = t.prevTahap;
+        else if (workTahapToColumn(t.tahap) !== status) t.tahap = (WORK_STATUSES.find(s => s.key === status) || {}).tahap || t.tahap;
+        t.status = status;
+        t.completedAt = status === 'done' ? new Date().toISOString() : null;
+        t.updatedAt = new Date().toISOString();
+        saveWork();
+        renderWork();
+    }
+
+    // ---------- Modal tambah/edit ----------
+    function renderWorkChecklistEditor() {
+        document.getElementById('wk-f-checklist').innerHTML = workEditChecklist.map((c, i) => `
+            <div class="wk-cl-item${c.done ? ' done' : ''}">
+                <button type="button" class="wk-check${c.done ? ' on' : ''}" data-cl-toggle="${i}" aria-label="Centang item">${WK_ICON_CHECK}</button>
+                <span>${workEsc(c.text)}</span>
+                <button type="button" class="wk-cl-del" data-cl-del="${i}" aria-label="Hapus item">&times;</button>
+            </div>`).join('');
+    }
+
+    function renderWorkLogEditor() {
+        // Terbaru di atas (data disimpan urut kronologis, sama kayak laporan).
+        document.getElementById('wk-f-logs').innerHTML = workEditLogs.map((l, i) => ({ l, i })).reverse().map(({ l, i }) => `
+            <div class="wk-log-item">
+                <b>${workEsc(l.when)}</b><span>${workEsc(l.text)}</span>
+                <button type="button" class="wk-cl-del" data-log-del="${i}" aria-label="Hapus log">&times;</button>
+            </div>`).join('') || '<div class="wk-log-empty">Belum ada log.</div>';
+    }
+
+    function syncWorkProgressInputs(v) {
+        const n = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+        document.getElementById('wk-f-progress').value = n;
+        document.getElementById('wk-f-progress-num').value = n;
+    }
+
+    function openWorkModal(id, presetStatus) {
+        const t = id ? migrateWorkTask(workData.tasks[id]) : null;
+        const status = t ? t.status : (presetStatus || 'antri');
+        workEditId = t ? id : null;
+        const $ = (x) => document.getElementById(x);
+        $('work-modal-title').innerText = t ? 'Edit Project / Tugas' : 'Project / Tugas Baru';
+        $('wk-f-title').value = t ? t.title : '';
+        $('wk-f-kode').value = t ? (t.kode || '') : '';
+        $('wk-f-kategori').value = t ? (t.kategori || '') : (workFilterKategori || '');
+        $('wk-f-status').value = status;
+        $('wk-f-tahap').value = t ? (t.tahap || '') : (WORK_STATUSES.find(s => s.key === status) || {}).tahap || '';
+        syncWorkProgressInputs(t && typeof t.progress === 'number' ? t.progress : 0);
+        $('wk-f-order').value = t && t.order < 9999 ? t.order : workNextOrder();
+        $('wk-f-priority').value = t ? (t.priority || 'medium') : 'medium';
+        $('wk-f-deadline').value = t ? (t.deadline || '') : '';
+        $('wk-f-notes').value = t ? (t.notes || '') : '';
+        $('wk-f-cl-input').value = '';
+        $('wk-f-log-date').value = workTodayIso();
+        $('wk-f-log-text').value = '';
+        workEditChecklist = t ? (t.checklist || []).map(c => ({ ...c })) : [];
+        workEditLogs = t ? t.logs.map(l => ({ ...l })) : [];
+        renderWorkChecklistEditor();
+        renderWorkLogEditor();
+        $('wk-f-more').open = !!(t && (t.deadline || t.notes || (t.checklist || []).length || t.priority === 'high'));
+        $('wk-f-delete').style.display = t ? '' : 'none';
+        $('work-modal').style.display = 'flex';
+        setTimeout(() => $('wk-f-title').focus(), 50);
+    }
+
+    function closeWorkModal() { document.getElementById('work-modal').style.display = 'none'; workEditId = null; }
+
+    function addWorkChecklistItem() {
+        const input = document.getElementById('wk-f-cl-input');
+        const text = input.value.trim();
+        if (!text) return;
+        workEditChecklist.push({ text, done: false });
+        input.value = '';
+        renderWorkChecklistEditor();
+    }
+
+    function addWorkLogItem() {
+        const textEl = document.getElementById('wk-f-log-text');
+        const text = textEl.value.trim();
+        if (!text) return;
+        const iso = document.getElementById('wk-f-log-date').value || workTodayIso();
+        workEditLogs.push({ when: workFormatWhen(iso), date: iso, end: iso, text });
+        workEditLogs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        textEl.value = '';
+        renderWorkLogEditor();
+    }
+
+    function saveWorkModal() {
+        const $ = (x) => document.getElementById(x);
+        const title = $('wk-f-title').value.trim();
+        if (!title) { showToast('Judul wajib diisi.', 'err'); $('wk-f-title').focus(); return; }
+        if ($('wk-f-cl-input').value.trim()) addWorkChecklistItem();
+        if ($('wk-f-log-text').value.trim()) addWorkLogItem();
+        const now = new Date().toISOString();
+        const id = workEditId || ('t' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+        const prev = workData.tasks[id] || { createdAt: now };
+        const status = $('wk-f-status').value;
+        const orderVal = parseInt($('wk-f-order').value, 10);
+        workData.tasks[id] = {
+            ...prev, id, title,
+            kode: $('wk-f-kode').value.trim(),
+            kategori: $('wk-f-kategori').value.trim(),
+            status,
+            tahap: $('wk-f-tahap').value.trim(),
+            progress: Number($('wk-f-progress-num').value) || 0,
+            order: Number.isFinite(orderVal) ? orderVal : workNextOrder(),
+            logs: workEditLogs,
+            priority: $('wk-f-priority').value,
+            deadline: $('wk-f-deadline').value || null,
+            notes: $('wk-f-notes').value.trim(),
+            checklist: workEditChecklist,
+            prevStatus: status === 'done' ? (prev.status !== 'done' ? prev.status : prev.prevStatus) : null,
+            completedAt: status === 'done' ? (prev.status === 'done' && prev.completedAt ? prev.completedAt : now) : null,
+            updatedAt: now,
+        };
+        saveWork();
+        closeWorkModal();
+        renderWork();
+        showToast(workEditId ? 'Tersimpan.' : 'Ditambahkan.', 'ok', 2500);
+    }
+
+    // ---------- Import teks "List Start Task" ----------
+    function parseStartTaskText(text) {
+        const items = [];
+        let cur = null;
+        text.split(/\r?\n/).forEach(raw => {
+            const line = raw.trim();
+            const head = line.match(/^(\d+)\.\s+(.+)$/);
+            if (head) {
+                const segs = head[2].split('|').map(s => s.trim()).filter((s, i, arr) => s !== '' || i < arr.length - 1);
+                const item = { order: Number(head[1]), kategori: segs.shift() || '', kode: '', title: '', tahap: '', progress: null, logs: [] };
+                if (segs.length && /^\d{5,}$/.test(segs[0])) item.kode = segs.shift();
+                if (segs.length && /^\d{1,3}\s*%$/.test(segs[segs.length - 1])) item.progress = parseInt(segs.pop(), 10);
+                if (item.progress != null && segs.length > 1) item.tahap = segs.pop();
+                item.title = segs.join(' | ') || item.kategori;
+                cur = item;
+                items.push(item);
+                return;
+            }
+            const log = line.match(/^\*\s*(.+?)\s*:\s*(.+)$/);
+            if (log && cur) {
+                const when = log[1].replace(/\s+/g, ' ');
+                cur.logs.push({ when, ...parseWorkWhen(when), text: log[2].trim() });
+            }
+        });
+        return items;
+    }
+
+    function workFindMatch(item) {
+        const tasks = workAllTasks();
+        if (item.kode) return tasks.find(t => t.kode === item.kode && t.title === item.title) || tasks.find(t => t.kode === item.kode && !tasks.some(o => o !== t && o.kode === item.kode));
+        return tasks.find(t => !t.kode && t.title.toLowerCase() === item.title.toLowerCase());
+    }
+
+    function previewWorkImport() {
+        const items = parseStartTaskText(document.getElementById('wk-import-text').value);
+        const box = document.getElementById('wk-import-preview');
+        if (!items.length) { workImportPending = null; box.innerHTML = '<div class="wk-log-empty">Gak ada baris project yang kebaca. Pastikan formatnya "1. Kategori | Kode | Judul | Tahap | 70%".</div>'; document.getElementById('wk-import-apply').disabled = true; return; }
+        workImportPending = items.map(it => ({ ...it, match: workFindMatch(it) }));
+        const nNew = workImportPending.filter(i => !i.match).length;
+        box.innerHTML = `<div class="wk-import-sum"><b>${workImportPending.length}</b> project kebaca: <b>${nNew}</b> baru, <b>${workImportPending.length - nNew}</b> diupdate.</div>` +
+            workImportPending.map(i => {
+                const col = WORK_STATUSES.find(s => s.key === workTahapToColumn(i.tahap));
+                return `<div class="wk-import-row"><span class="wk-import-tag ${i.match ? 'upd' : 'new'}">${i.match ? 'Update' : 'Baru'}</span>
+                    <div><div class="wk-title">${i.order}. ${workEsc(i.title)}</div>
+                    <div class="wk-import-info">${[i.kode, i.kategori].filter(Boolean).map(workEsc).join(' · ')} → <b style="color:${col.color}">${col.label}</b>${i.progress != null ? ` · ${i.progress}%` : ''} · ${i.logs.length} log</div></div></div>`;
+            }).join('');
+        document.getElementById('wk-import-apply').disabled = false;
+    }
+
+    function applyWorkImport() {
+        if (!workImportPending) return;
+        const now = new Date().toISOString();
+        workImportPending.forEach(i => {
+            const status = workTahapToColumn(i.tahap);
+            const base = i.match || { id: 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), createdAt: now, priority: 'medium', checklist: [], notes: '', deadline: null };
+            workData.tasks[base.id] = {
+                ...base,
+                title: i.title, kode: i.kode, kategori: i.kategori, tahap: i.tahap, order: i.order,
+                progress: i.progress, logs: i.logs, status,
+                completedAt: status === 'done' ? (base.completedAt || now) : null,
+                updatedAt: now,
+            };
+        });
+        const n = workImportPending.length;
+        workImportPending = null;
+        saveWork();
+        document.getElementById('work-import-modal').style.display = 'none';
+        renderWork();
+        showToast(`${n} project di-import.`, 'ok', 3000);
+    }
+
+    // ---------- Export teks "List Start Task" ----------
+    function buildStartTaskText() {
+        const name = (document.getElementById('wk-export-name').value || 'Hasan').trim();
+        const d = new Date();
+        const lines = [`List Start Task ${name}, ${d.getDate()} ${monthNames[d.getMonth()]} ${d.getFullYear()} :`, '', '> Urutan Berdasarkan Prioritas :', ''];
+        const active = workAllTasks().filter(t => t.status !== 'done').sort(workByOrder);
+        active.forEach((t, i) => {
+            const segs = [t.kategori, t.kode, t.title, t.tahap, typeof t.progress === 'number' ? `${t.progress}%` : ''].filter(s => s !== '' && s != null);
+            lines.push(`${i + 1}. ${segs.join(' | ')}`);
+            t.logs.slice(-3).forEach(l => lines.push(`* ${l.when} : ${l.text}`));
+            lines.push('');
+        });
+        const sug = buildWorkSuggestions(workAllTasks());
+        if (sug.length) {
+            lines.push('> Rekomendasi Fokus Hari Ini :', '');
+            sug.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+        }
+        return lines.join('\n').replace(/\n+$/, '');
+    }
+
+    function refreshWorkExport() { document.getElementById('wk-export-text').value = buildStartTaskText(); }
+
+    function copyWorkExport() {
+        const ta = document.getElementById('wk-export-text');
+        const done = () => showToast('Tersalin. Tinggal paste di WA.', 'ok', 2500);
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(ta.value).then(done).catch(() => { ta.select(); document.execCommand('copy'); done(); });
+        } else { ta.select(); document.execCommand('copy'); done(); }
+    }
+
+    // ---------- Event ----------
+    const $w = (x) => document.getElementById(x);
+    $w('wk-tab-list').onclick = () => { workView = 'list'; renderWork(); };
+    $w('wk-tab-board').onclick = () => { workView = 'board'; renderWork(); };
+    $w('wk-filter-project').onchange = (e) => { workFilterKategori = e.target.value; renderWork(); };
+    $w('wk-new').onclick = () => openWorkModal(null);
+    $w('wk-import').onclick = () => { $w('wk-import-text').value = ''; $w('wk-import-preview').innerHTML = ''; $w('wk-import-apply').disabled = true; workImportPending = null; $w('work-import-modal').style.display = 'flex'; setTimeout(() => $w('wk-import-text').focus(), 50); };
+    $w('wk-import-text').addEventListener('input', previewWorkImport);
+    $w('wk-import-apply').onclick = applyWorkImport;
+    $w('wk-export').onclick = () => { try { $w('wk-export-name').value = localStorage.getItem('work_report_name') || 'Hasan'; } catch (e) { $w('wk-export-name').value = 'Hasan'; } refreshWorkExport(); $w('work-export-modal').style.display = 'flex'; };
+    $w('wk-export-name').addEventListener('input', () => { try { localStorage.setItem('work_report_name', $w('wk-export-name').value.trim()); } catch (e) { /* abaikan */ } refreshWorkExport(); });
+    $w('wk-export-copy').onclick = copyWorkExport;
+    ['work-modal', 'work-import-modal', 'work-export-modal'].forEach(mid => {
+        $w(mid).addEventListener('click', (e) => { if (e.target.id === mid) { if (mid === 'work-modal') closeWorkModal(); else $w(mid).style.display = 'none'; } });
+    });
+    document.querySelectorAll('[data-close-modal]').forEach(btn => { btn.onclick = () => { $w(btn.dataset.closeModal).style.display = 'none'; if (btn.dataset.closeModal === 'work-modal') workEditId = null; }; });
+    $w('wk-f-save').onclick = saveWorkModal;
+    $w('wk-f-cl-add').onclick = addWorkChecklistItem;
+    $w('wk-f-cl-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addWorkChecklistItem(); } });
+    $w('wk-f-log-add').onclick = addWorkLogItem;
+    $w('wk-f-log-text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addWorkLogItem(); } });
+    $w('wk-f-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveWorkModal(); } });
+    $w('wk-f-progress').addEventListener('input', (e) => syncWorkProgressInputs(e.target.value));
+    $w('wk-f-progress-num').addEventListener('input', (e) => { $w('wk-f-progress').value = e.target.value; });
+    $w('wk-f-progress-num').addEventListener('change', (e) => syncWorkProgressInputs(e.target.value));
+    // Kolom & teks tahap saling ngikut: ganti kolom -> tahap default kolom itu; ketik tahap -> kolom yang cocok.
+    $w('wk-f-status').addEventListener('change', (e) => {
+        if (workTahapToColumn($w('wk-f-tahap').value) !== e.target.value) $w('wk-f-tahap').value = (WORK_STATUSES.find(s => s.key === e.target.value) || {}).tahap || '';
+    });
+    $w('wk-f-tahap').addEventListener('change', (e) => { if (e.target.value.trim()) $w('wk-f-status').value = workTahapToColumn(e.target.value); });
+    $w('wk-f-checklist').onclick = (e) => {
+        const tog = e.target.closest('[data-cl-toggle]');
+        const del = e.target.closest('[data-cl-del]');
+        if (tog) { const c = workEditChecklist[Number(tog.dataset.clToggle)]; c.done = !c.done; renderWorkChecklistEditor(); }
+        if (del) { workEditChecklist.splice(Number(del.dataset.clDel), 1); renderWorkChecklistEditor(); }
+    };
+    $w('wk-f-logs').onclick = (e) => {
+        const del = e.target.closest('[data-log-del]');
+        if (del) { workEditLogs.splice(Number(del.dataset.logDel), 1); renderWorkLogEditor(); }
+    };
+    $w('wk-f-delete').onclick = () => {
+        const id = workEditId;
+        if (!id) return;
+        showConfirm('Hapus project/tugas ini? Gak bisa dikembalikan.', () => {
+            delete workData.tasks[id];
+            saveWork();
+            closeWorkModal();
+            renderWork();
+            showToast('Dihapus.', 'ok', 2500);
+        });
+    };
+
+    const wkBody = $w('wk-body');
+    wkBody.addEventListener('click', (e) => {
+        const act = e.target.closest('[data-act]');
+        const item = e.target.closest('[data-id]');
+        if (act) {
+            const a = act.dataset.act;
+            if (a === 'toggle-done') { workShowDone = !workShowDone; renderWork(); return; }
+            if (a === 'add') { openWorkModal(null, act.dataset.status); return; }
+            if (a === 'toggle' && item) { const t = workData.tasks[item.dataset.id]; setWorkStatus(item.dataset.id, t.status === 'done' ? (t.prevStatus || 'antri') : 'done'); return; }
+            if (a === 'move' && item) { setWorkStatus(item.dataset.id, act.dataset.to); return; }
+        }
+        if (item) openWorkModal(item.dataset.id);
+    });
+    // Drag & drop kartu antar kolom (desktop). Di HP pakai tombol "‹ / ›" di kartu.
+    wkBody.addEventListener('dragstart', (e) => {
+        const card = e.target.closest('.wk-card');
+        if (!card) return;
+        e.dataTransfer.setData('text/plain', card.dataset.id);
+        e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('dragging');
+    });
+    wkBody.addEventListener('dragend', (e) => { const card = e.target.closest('.wk-card'); if (card) card.classList.remove('dragging'); });
+    wkBody.addEventListener('dragover', (e) => {
+        const col = e.target.closest('.wk-col');
+        if (!col) return;
+        e.preventDefault();
+        wkBody.querySelectorAll('.wk-col.drop').forEach(c => { if (c !== col) c.classList.remove('drop'); });
+        col.classList.add('drop');
+    });
+    wkBody.addEventListener('dragleave', (e) => { const col = e.target.closest('.wk-col'); if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop'); });
+    wkBody.addEventListener('drop', (e) => {
+        const col = e.target.closest('.wk-col');
+        if (!col) return;
+        e.preventDefault();
+        col.classList.remove('drop');
+        setWorkStatus(e.dataTransfer.getData('text/plain'), col.dataset.status);
+    });
 
     renderXAUCalendar();
 });

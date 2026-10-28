@@ -6,25 +6,26 @@
     <title>Personal OS - Pusat Kendali</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.min.js" integrity="sha384-Emf5ZVIUiarAdhkgtqK+5/Z5qIvM6QoVrS+qAVtfyZVuD5lIHrac0me485+Antp0" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=1">
+    <script>try { if (localStorage.getItem('theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); var sw = localStorage.getItem('sidebar_w'); if (sw && window.innerWidth > 768) document.documentElement.style.setProperty('--sidebar-width', sw + 'px'); } catch (e) {}</script>
+    <link rel="stylesheet" href="style.css?v=20s">
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
-
-    <div id="custom-toast" class="toast hidden"></div>
+    <div id="custom-toast"></div>
 
     <div id="custom-confirm" class="modal" style="z-index: 9999;">
-        <div class="modal-content" style="width: 400px; text-align: center; border: 1px solid #ff1744;">
-            <h3 style="color: #ffd700; margin-bottom: 15px; font-size: 1.4rem;">⚠️ Konfirmasi Dulu Nih!</h3>
-            <p id="confirm-msg" style="color: #ccc; margin-bottom: 25px; font-size: 0.95rem;">Apakah yakin yak?</p>
-            <div style="display: flex; gap: 10px;">
-                <button id="confirm-no" class="btn btn-outline" style="flex: 1; padding: 10px;">Batal</button>
-                <button id="confirm-yes" class="save-btn" style="flex: 1; background: #ff1744; color: #fff; padding: 10px; margin-top: 0;">Gasss!</button>
+        <div class="modal-content confirm-card">
+            <div class="confirm-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.3 3.9 2.5 18a1.5 1.5 0 0 0 1.3 2.2h16.4a1.5 1.5 0 0 0 1.3-2.2L13.7 3.9a1.5 1.5 0 0 0-2.6 0z"/><path d="M12 16.2h.01"/></svg></div>
+            <h3 class="confirm-title">Konfirmasi Dulu</h3>
+            <p id="confirm-msg" class="confirm-msg">Apakah yakin yak?</p>
+            <div class="confirm-actions">
+                <button id="confirm-no" class="btn btn-outline confirm-no">Batal</button>
+                <button id="confirm-yes" class="confirm-yes">Lanjutkan</button>
             </div>
         </div>
     </div>
@@ -56,100 +57,149 @@
     </div>
 
     <div id="mon-export-modal" class="modal" style="z-index: 9000;">
-        <div class="modal-content" style="width: 480px;">
+        <div class="modal-content exp-card">
             <span class="close-btn" onclick="document.getElementById('mon-export-modal').style.display='none'">&times;</span>
-            <h2 style="color:#4caf50; margin-bottom: 5px;">📤 Export Data Monitoring</h2>
-            <p style="color:#aaa; font-size: 0.85rem; margin-bottom: 15px;">Ketuk instrumen yang mau di-export (bisa satu, beberapa, atau semua) - tiap instrumen jadi 1 file CSV terpisah.</p>
-            <div style="margin-bottom: 15px;">
-                <label style="color:#aaa; font-size:0.85rem;">Pilih Periode:</label>
-                <select id="mon-export-period" class="form-input" style="margin-top:5px; border-color:#4caf50;">
-                    <option value="current" selected>Hanya Bulan yang Lagi Ditampilin</option>
-                    <option value="all">Semua Waktu (All Periode)</option>
-                </select>
+            <h2 class="exp-title">Export Data Monitoring</h2>
+            <p class="exp-sub">Pilih format, periode, dan instrumen yang mau diexport.</p>
+
+            <div class="exp-label">Format</div>
+            <div class="exp-formats" id="mon-export-format">
+                <div class="exp-format selected" data-fmt="csv">
+                    <span class="exp-format-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6"/><path d="M9 17h6"/></svg></span>
+                    <div><b>CSV</b><span>Satu file per instrumen. Cocok untuk Excel.</span></div>
+                </div>
+                <div class="exp-format" data-fmt="md">
+                    <span class="exp-format-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15V9l2.5 3L12 9v6"/><path d="M16 9v6"/><path d="M14.5 13.5 16 15l1.5-1.5"/></svg></span>
+                    <div><b>Markdown untuk AI</b><span>Semua instrumen digabung jadi 1 file, urut waktu order dieksekusi.</span></div>
+                </div>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
-                <label style="color:#aaa; font-size:0.85rem;">Instrumen:</label>
-                <button id="mon-export-select-all" type="button" style="background:none; border:1px solid #444; color:#00e676; font-size:0.75rem; padding:4px 10px; border-radius:20px; cursor:pointer;">☑️ Pilih Semua</button>
+
+            <div class="exp-label">Periode</div>
+            <select id="mon-export-period" class="form-input">
+                <option value="current" selected>Hanya bulan yang sedang ditampilkan</option>
+                <option value="all">Semua waktu</option>
+            </select>
+
+            <div class="exp-row">
+                <div class="exp-label" style="margin:0;">Instrumen</div>
+                <button id="mon-export-select-all" type="button" class="exp-link">Pilih semua</button>
             </div>
-            <div id="mon-export-checklist" class="mon-export-grid" style="margin-bottom: 20px;"></div>
-            <div style="display: flex; gap: 10px;">
-                <button id="btn-mon-export-confirm" class="save-btn" style="flex: 1; background: #00e676; margin-top: 0; font-size: 0.9rem; color:#121212;">📄 Export CSV (<span id="mon-export-count">0</span> dipilih)</button>
-            </div>
+            <div id="mon-export-checklist" class="mon-export-grid"></div>
+
+            <button id="btn-mon-export-confirm" class="exp-confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/></svg><span>Export <b id="mon-export-fmt-label">CSV</b> (<span id="mon-export-count">0</span> dipilih)</span></button>
         </div>
     </div>
 
     <div id="login-modal" class="modal" style="z-index: 10000;">
-        <div class="modal-content" style="width: 350px; text-align: center; border: 1px solid #ffd700;">
-            <h2 style="color:#ffd700; margin-bottom: 5px;">🔒 Authentication</h2>
-            <p style="color:#aaa; font-size: 0.85rem; margin-bottom: 20px;">Super Admin Only.</p>
-            <input type="text" id="login-user" class="form-input" placeholder="Username" style="margin-bottom: 10px; text-align: center;">
-            <div style="position: relative; margin-bottom: 20px;">
-                <input type="password" id="login-pass" class="form-input" placeholder="Password" style="text-align: center; padding-right: 40px;">
-                <span id="toggle-pass" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 1.2rem;">👁️</span>
+        <div class="modal-content login-card">
+            <button type="button" class="login-close" onclick="document.getElementById('login-modal').style.display='none'" aria-label="Tutup">✕</button>
+            <div class="login-head">
+                <div class="login-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="login-title">Masuk ke Sistem</h2>
+                <p class="login-sub">Akses terbatas — super admin saja.</p>
             </div>
-            <div style="display: flex; gap: 10px;">
-                <button onclick="document.getElementById('login-modal').style.display='none'" class="btn btn-outline" style="flex: 1; padding: 10px;">Batal</button>
-                <button id="btn-submit-login" class="save-btn" style="flex: 1; margin-top: 0;">Login</button>
+            <div class="login-field">
+                <span class="login-field-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 5-6 8-6s6.5 2 8 6"/></svg></span>
+                <input type="text" id="login-user" class="login-input" placeholder="Username" autocomplete="username">
             </div>
+            <div class="login-field">
+                <span class="login-field-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+                <input type="password" id="login-pass" class="login-input" placeholder="Password" autocomplete="current-password">
+                <button type="button" id="toggle-pass" class="login-field-eye" aria-label="Tampilkan password"></button>
+            </div>
+            <button id="btn-submit-login" class="login-submit">Masuk</button>
         </div>
     </div>
 
     <nav class="sidebar" id="sidebar">
-        <div class="sidebar-header"><h2>Super App</h2><p>Personal OS v1.5</p></div>
+        <div class="sidebar-resizer" id="sidebar-resizer" title="Geser buat ubah lebar (klik 2x = reset)"></div>
+        <div class="sidebar-header"><h2>Super App</h2><p>Personal OS v1.6</p></div>
         <ul class="menu-list">
-            <li class="menu-item active" data-target="view-home">🏠 Pusat Kendali</li>
-            <li class="menu-item" data-target="view-trading">📊 Jurnal XAUUSD</li>
-            <li class="menu-item" data-target="view-ai-trading">🤖 Trading AI Gold</li>
-            <li class="menu-item" data-target="view-ai-currency">💴 Trading AI Currency</li>
-            <li class="menu-item" data-target="view-monitoring">📈 Monitoring</li>
-            <li class="menu-item" data-target="view-expenses">🛒 Pengeluaran Bulanan</li>
-            <li class="menu-item" data-target="view-sports">🏃‍♂️ Jurnal Olahraga</li>
-            <li class="menu-item" data-target="view-wealth">💰 History Kekayaan</li>
-            <li class="menu-item" data-target="view-career">🚀 Peningkatan Karir</li>
-            <li class="menu-item" data-target="view-roadmap">🗺️ Roadmap Masa Depan</li>
+            <li class="menu-group">Ringkasan</li>
+            <li class="menu-item active" data-target="view-home"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg></span>Pusat Kendali</li>
+            <li class="menu-group">Pekerjaan</li>
+            <li class="menu-item" data-target="view-work"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 12.5h18"/></svg></span>Tugas & Kanban<span class="menu-badge" title="Masih tahap pembuatan">Demo</span></li>
+            <li class="menu-group">Trading</li>
+            <li class="menu-item" data-target="view-trading"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V13"/><path d="M10 20V4"/><path d="M16 20v-9"/><path d="M20 20v-5"/></svg></span>Jurnal XAUUSD</li>
+            <li class="menu-item" data-target="view-ai-trading"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 19.5 4 14.5h6l1.5 5Z"/><path d="M12.5 19.5 14 14.5h6l1.5 5Z"/><path d="M7.5 12 9 7h6l1.5 5Z"/></svg></span>Trading AI Gold</li>
+            <li class="menu-item" data-target="view-ai-currency"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.4 18"/><path d="M8 7h1v4"/><path d="M16.7 13.9l.7.7-2.8 2.8"/></svg></span>Trading AI Currency</li>
+            <li class="menu-item" data-target="view-monitoring"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg></span>Monitoring</li>
+            <li class="menu-group">Keuangan</li>
+            <li class="menu-item" data-target="view-expenses"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.2" fill="currentColor" stroke="none"/><circle cx="18" cy="20" r="1.2" fill="currentColor" stroke="none"/><path d="M3 4h2l2.3 12a1.5 1.5 0 0 0 1.5 1.2h8.5a1.5 1.5 0 0 0 1.5-1.2L21 8H6.2"/></svg></span>Pengeluaran Bulanan</li>
+            <li class="menu-item" data-target="view-wealth"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="17" cy="14.5" r="1" fill="currentColor" stroke="none"/></svg></span>History Kekayaan</li>
+            <li class="menu-group">Personal</li>
+            <li class="menu-item" data-target="view-sports"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.4-9.5-8.5C1 8 2.8 4.8 6 4.8c2 0 3.3 1.1 4 2.2.7-1.1 2-2.2 4-2.2 3.2 0 5 3.2 3.5 6.7C19 15.6 12 20 12 20z"/></svg></span>Jurnal Olahraga</li>
+            <li class="menu-item" data-target="view-career"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-8"/><path d="M14 7h6v6"/></svg></span>Peningkatan Karir</li>
+            <li class="menu-item" data-target="view-roadmap"><span class="mi-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 5h13l-3 4 3 4H5"/></svg></span>Roadmap Masa Depan</li>
         </ul>
         <div class="sidebar-footer">
-            <button id="btn-upload-cloud" class="btn-outline-gold" style="display:none; margin-bottom:10px; border-color:#2196f3; color:#2196f3;">☁️ Upload Data Lokal ke Cloud</button>
-            <button id="btn-login" class="btn-outline-gold">🔒 Login System</button>
+            <div class="acct-box">
+                <button id="btn-login" class="acct-signin">
+                    <span class="acct-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+                    <span class="acct-txt">Masuk</span>
+                </button>
+                <div class="acct-in" id="acct-in">
+                    <button class="acct-trigger" id="acct-trigger">
+                        <span class="acct-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 5-6 8-6s6.5 2 8 6"/></svg></span>
+                        <span class="acct-name">Super Admin</span>
+                        <span class="acct-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+                    </button>
+                    <div class="acct-menu" id="acct-menu">
+                        <button id="btn-upload-cloud" class="acct-menu-item">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-1-7.9A5 5 0 0 1 16 8a4.5 4.5 0 0 1 1 8.9"/><path d="M12 12v7"/><path d="M9 15l3-3 3 3"/></svg>
+                            Upload Data Lokal ke Cloud
+                        </button>
+                        <button id="btn-logout" class="acct-menu-item danger">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+                            Keluar
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </nav>
 
     <main class="main-content">
-        <div class="top-bar hide-for-screenshot"><button id="sidebar-toggle" class="btn-toggle">☰ Menu</button></div>
+        <div class="top-bar hide-for-screenshot"><button id="sidebar-toggle" class="btn-toggle" aria-label="Buka/tutup menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg></button><button id="theme-toggle" class="btn-toggle theme-toggle" aria-label="Ganti mode terang/gelap" title="Ganti mode terang/gelap"><svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg><svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></div>
         
         <section id="view-home" class="content-section active">
-            <header class="main-header" style="border-bottom:none; margin-bottom:0; padding-bottom:0;">
+            <header class="main-header pk-header" style="border-bottom:none; margin-bottom:25px; padding-bottom:0;">
                 <div class="header-left">
                     <h1>Pusat Kendali</h1>
                     <p>Sistem monitoring dan peningkatan kualitas hidup harian.</p>
                 </div>
-            </header>
-            
-            <div class="month-navigation" style="margin-top: 15px; margin-bottom: 25px; max-width: 600px;">
-                <button id="home-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button>
-                <h2 id="home-month-year-display" style="color: #ffd700; margin:0 15px;">Bulan Tahun</h2>
-                <button id="home-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button>
-            </div>
-
-            <div class="dashboard-grid" id="home-widgets"></div>
-            <div id="home-ai-breakdown" style="display:none; margin-top: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"></div>
-            <div class="dashboard-grid" style="margin-top: 20px;">
-                <div class="dash-card">
-                    <h3>🎯 Fokus Kuartal Ini</h3>
-                    <ul class="task-list">
-                        <li>Konsistensi profit & disiplin XAUUSD.</li>
-                        <li>Ketahanan fisik Naik Gunung.</li>
-                        <li>Manajemen waktu.</li>
-                    </ul>
+                <div class="month-navigation pk-month-nav hide-for-screenshot">
+                    <button id="home-prev-month" class="pk-nav-btn" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+                    <button id="home-month-year-display" class="pk-month-label" aria-haspopup="dialog" aria-expanded="false" title="Pilih bulan & tahun">Bulan Tahun</button>
+                    <button id="home-next-month" class="pk-nav-btn" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+                    <div id="pk-month-picker" class="pk-month-picker" role="dialog" aria-label="Pilih bulan dan tahun" hidden>
+                        <div class="pkmp-year">
+                            <button id="pkmp-prev-year" class="pk-nav-btn" aria-label="Tahun sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+                            <span id="pkmp-year-label"></span>
+                            <button id="pkmp-next-year" class="pk-nav-btn" aria-label="Tahun berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+                        </div>
+                        <div id="pkmp-grid" class="pkmp-grid"></div>
+                        <button id="pkmp-this-month" class="pkmp-this-month">Kembali ke bulan ini</button>
+                    </div>
                 </div>
-            </div>
+            </header>
+
+            <div id="home-widgets"></div>
         </section>
 
-        <section id="view-trading" class="content-section" style="padding-top: 10px;">
-            <div class="xau-nav hide-for-screenshot"><button id="menu-calendar" class="xau-tab active">📅 Kalender Entry</button><button id="menu-dashboard" class="xau-tab">📊 Dashboard Analisa</button></div>
+        <section id="view-trading" class="content-section pg-page" style="padding-top: 10px;">
+            <header class="pg-head">
+                <div><h1>Jurnal XAUUSD</h1><p>Catatan entry manual & evaluasi bulanan.</p></div>
+                <div class="pg-actions action-group-main hide-for-screenshot">
+                    <button class="pg-btn" onclick="openExportMenu('xau')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>Export</button>
+                    <label for="csv-upload-xau" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>Import<input type="file" id="csv-upload-xau" accept=".csv" style="display: none;"></label>
+                    <button id="clear-data-btn" class="pg-btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>Reset</button>
+                </div>
+            </header>
+            <div class="xau-nav hide-for-screenshot"><button id="menu-calendar" class="xau-tab active">Kalender</button><button id="menu-dashboard" class="xau-tab">Dashboard</button></div>
             <div class="dashboard-container" style="margin-bottom: 5px;" id="equity-panel-capture">
                 <div class="equity-dashboard">
-                    <div class="equity-box" id="xau-modal-box" style="cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1e1e1e'"><span class="label">Modal Deposit (Klik ubah) ✏️</span><h4 id="base-equity">Rp 2.500.000</h4></div>
+                    <div class="equity-box pg-click" id="xau-modal-box" title="Klik untuk ubah modal"><span class="label">Modal deposit <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span><h4 id="base-equity">Rp 2.500.000</h4></div>
                     <div class="equity-box"><span class="label">Equity Awal</span><h3 id="start-equity">Rp 0</h3></div>
                     <div class="equity-box"><span class="label">Equity Terakhir</span><h3 id="current-equity">Rp 0</h3></div>
                     <div class="equity-box"><span class="label">Pertumbuhan</span><h3 id="equity-growth" class="netral">0.00%</h3></div>
@@ -157,32 +207,26 @@
             </div>
             
             <div id="view-calendar" class="dashboard-container">
-                <header class="main-header">
-                    <div class="header-left">
-                        <h1 style="color:#ffd700;">Jurnal XAUUSD</h1>
-                        <div class="action-group-main hide-for-screenshot">
-                            <button class="btn-action btn-export" onclick="openExportMenu('xau')">📤 Export</button>
-                            <label for="csv-upload-xau" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-xau" accept=".csv" style="display: none;"></label>
-                            <button id="clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
-                        </div>
+                <div class="pg-card">
+                    <div class="pg-cal-bar">
+                        <div class="month-navigation pg-month-nav"><button id="prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="month-year-display">Bulan Tahun</h2><button id="next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                        <div class="pg-summary"><span>P/L bulan ini</span><h2 id="monthly-total" class="netral">Rp 0</h2></div>
                     </div>
-                    <div class="summary-card"><span>P/L Bulan Ini:</span><h2 id="monthly-total" class="netral">Rp 0</h2></div>
-                </header>
-                <div class="month-navigation"><button id="prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="month-year-display">Bulan Tahun</h2><button id="next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #ffd700;">Total Mg</div></div>
-                <div class="calendar-grid" id="calendar"></div>
+                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div class="wk-total">Total Mg</div></div>
+                    <div class="calendar-grid" id="calendar"></div>
+                </div>
             </div>
 
             <div id="view-dashboard" class="dashboard-container" style="display: none;">
-                <div class="month-navigation" style="margin-bottom: 20px;"><button id="dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="dash-month-year-display" style="color: #ffd700;">Bulan Tahun</h2><button id="dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                <div class="pg-cal-bar"><div class="month-navigation pg-month-nav"><button id="dash-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="dash-month-year-display">Bulan Tahun</h2><button id="dash-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div></div>
                 <div id="xau-empty-state" class="empty-state-dash"></div>
                 <div id="xau-dash-content">
                     <div id="dashboard-insight" style="margin-bottom: 15px;"></div>
-                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📊 Raport & Streak Per Minggu</h3><div id="weekly-streak-msg" style="margin-bottom: 15px;"></div><div id="weekly-breakdown-grid" class="weekly-report-grid"></div></div>
+                    <div class="pg-card"><h3 class="chart-title">Raport & Streak per Minggu</h3><div id="weekly-streak-msg" style="margin-bottom: 15px;"></div><div id="weekly-breakdown-grid" class="weekly-report-grid"></div></div>
                     
                     <div class="highlight-grid">
-                        <div class="highlight-box win-bg"><span class="label">🌟 Biggest Win</span><h3 id="highest-win-pl" class="profit-text">Rp 0</h3><p id="highest-win-desc" class="desc-text">-</p></div>
-                        <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="highest-loss-pl" class="loss-text">Rp 0</h3><p id="highest-loss-desc" class="desc-text">-</p></div>
+                        <div class="highlight-box win-bg"><span class="label">Biggest win</span><h3 id="highest-win-pl" class="profit-text">Rp 0</h3><p id="highest-win-desc" class="desc-text">-</p></div>
+                        <div class="highlight-box loss-bg"><span class="label">Biggest loss</span><h3 id="highest-loss-pl" class="loss-text">Rp 0</h3><p id="highest-loss-desc" class="desc-text">-</p></div>
                     </div>
                     
                     <div class="chart-grid">
@@ -210,28 +254,33 @@
             </div>
         </section>
 
-        <section id="view-ai-trading" class="content-section" style="padding-top: 10px;">
+        <section id="view-ai-trading" class="content-section pg-page" style="padding-top: 10px;">
             <div id="ai-locked-ui" class="locked-overlay" style="display:none;">
-                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
-                <h2 style="color: #ffd700;">Privasi Bos!</h2>
-                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Trading AI.</p>
-                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+                <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="lock-title">Trading AI Gold terkunci</h2>
+                <p class="lock-sub">Halaman ini berisi data pribadi. Masuk dulu untuk melihat isinya.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="lock-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Masuk</button>
             </div>
 
             <div id="ai-content-ui">
+                <header class="pg-head">
+                    <div><h1>Trading AI Gold</h1><p>Bot simulasi XAUUSD · harga live dari MT5</p></div>
+                </header>
                 <div class="xau-nav hide-for-screenshot">
-                    <button id="ai-menu-market" class="xau-tab active" style="border-color:#9c27b0; color:#9c27b0;">📈 Live Market</button>
-                    <button id="ai-menu-calendar" class="xau-tab" style="border-color:#9c27b0; color:#9c27b0;">📅 Riwayat Simulasi</button>
-                    <button id="ai-menu-dashboard" class="xau-tab">📊 Dashboard Evaluasi</button>
-                    <button id="ai-menu-log" class="xau-tab">📜 Log Aktivitas</button>
+                    <button id="ai-menu-market" class="xau-tab active">Live Market</button>
+                    <button id="ai-menu-calendar" class="xau-tab">Riwayat</button>
+                    <button id="ai-menu-dashboard" class="xau-tab">Dashboard</button>
+                    <button id="ai-menu-log" class="xau-tab">Log Aktivitas</button>
                 </div>
 
                 <div id="ai-view-market" class="dashboard-container">
+                    <div class="pg-sec">Posisi saat ini</div>
                     <div class="equity-dashboard" id="ai-live-stats" style="grid-template-columns: repeat(3, 1fr);">
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Entry Posisi</span><h3 id="ai-live-entry" style="color:#9c27b0;">Belum ada posisi</h3></div>
                         <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Harga Sekarang</span><h3 id="ai-live-price" class="netral">-</h3></div>
                         <div class="equity-box" style="border-left-color:#00e676;"><span class="label">Total Floating P/L</span><h3 id="ai-live-total-pl" class="netral">Rp 0</h3></div>
                     </div>
+                    <div class="pg-sec">Indikator teknikal</div>
                     <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-bottom:15px;">
                         <div class="equity-box" style="border-left-color:#888;"><span class="label">Trend (MA20/MA50)</span><h3 id="ai-trend-summary-trend" class="netral">-</h3></div>
                         <div class="equity-box" style="border-left-color:#888;"><span class="label">RSI (14)</span><h3 id="ai-trend-summary-rsi" class="netral">-</h3></div>
@@ -240,16 +289,17 @@
                     <div id="ai-floating-pl" style="margin-bottom:15px;"></div>
                     <div id="ai-method2-section" style="display:none;">
                         <div class="equity-dashboard" style="grid-template-columns: repeat(2, 1fr); margin-bottom:15px;">
-                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Entry Posisi</span><h3 id="ai-live-entry-m2" style="color:#2196f3;">Belum ada posisi</h3></div>
-                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Floating P/L</span><h3 id="ai-live-total-pl-m2" class="netral">Rp 0</h3></div>
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">Metode 2 (ICT) · Entry posisi</span><h3 id="ai-live-entry-m2" style="color:#2196f3;">Belum ada posisi</h3></div>
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">Metode 2 (ICT) · Floating P/L</span><h3 id="ai-live-total-pl-m2" class="netral">Rp 0</h3></div>
                         </div>
                         <div id="ai-floating-pl-m2" style="margin-bottom:15px;"></div>
                     </div>
+                    <div class="pg-sec">Grafik harga</div>
                     <div class="chart-card" style="padding:0; overflow:hidden; margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 0 20px; flex-wrap:wrap; gap:10px;">
-                            <h3 class="chart-title" style="margin:0; color:#9c27b0;">🥇 XAUUSD (Gold Spot)</h3>
+                            <h3 class="chart-title" style="margin:0;">XAUUSD · Gold Spot</h3>
                             <div style="display:flex; gap:10px; align-items:center;">
-                                <button type="button" id="btn-ai-refresh-market" class="btn-action" style="border-color:#2196f3; color:#2196f3;">🔃 Refresh</button>
+                                <button type="button" id="btn-ai-refresh-market" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button>
                                 <select id="ai-timeframe-select" class="form-input" style="width:auto; height:34px; font-size:0.85rem;">
                                     <option value="5min">M5</option>
                                     <option value="15min">M15</option>
@@ -262,64 +312,70 @@
                         </div>
                         <div id="lw-chart-container" style="height:500px; width:100%;"></div>
                     </div>
+                    <div class="pg-sec">Kalender ekonomi</div>
                     <div class="chart-card" style="padding:0; overflow:hidden;">
                         <div id="tv-calendar-container" style="height:500px;"></div>
                     </div>
                 </div>
 
                 <div id="ai-view-calendar" class="dashboard-container" style="display:none;">
-                    <header class="main-header">
+                    <header class="main-header pg-toolbar">
                         <div class="header-left">
-                            <h1 style="color:#9c27b0;">Trading AI Gold (Simulasi)</h1>
                             <div class="action-group-main hide-for-screenshot">
-                                <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" onclick="aiRefreshBtnClick(this, 'calendar')">🔃 Refresh</button>
+                                <button class="pg-btn" onclick="aiRefreshBtnClick(this, 'calendar')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button>
                                 <div class="ai-more-menu-wrap">
-                                    <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-ai-more-menu">⚙️ Lainnya ▾</button>
+                                    <button class="pg-btn" id="btn-ai-more-menu">Lainnya ▾</button>
                                     <div id="ai-more-menu-dropdown" class="ai-more-dropdown">
-                                        <button class="btn-action" style="border-color:#9c27b0; color:#9c27b0;" id="btn-ai-settings">⚙️ Settings</button>
-                                        <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-ai-master-settings">🎛️ Master Setting</button>
-                                        <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-ai-restart-bot">🔄 Restart Bot (VPS)</button>
-                                        <button class="btn-action" style="border-color:#00bcd4; color:#00bcd4;" id="btn-ai-send-summary">📊 Kirim Summary</button>
-                                        <button class="btn-action btn-export" onclick="openExportMenu('ai')">📤 Export</button>
-                                        <button id="ai-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
+                                        <button id="btn-ai-settings" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/><path d="M4 17h2"/><path d="M10 17h10"/><circle cx="8" cy="17" r="2"/></svg><span>Settings</span></button>
+                                        <button id="btn-ai-master-settings" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 15l3.5-4.5"/><circle cx="12" cy="15" r="1.2"/></svg><span>Master Setting</span></button>
+                                        <button id="btn-ai-restart-bot" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.3 7.2a7.5 7.5 0 1 0 11.4 0"/></svg><span>Restart Bot (VPS)</span></button>
+                                        <button id="btn-ai-send-summary" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5 21 3z"/></svg><span>Kirim Summary</span></button>
+                                        <button class="btn-action btn-export" onclick="openExportMenu('ai')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/></svg><span>Export</span></button>
+                                        <button id="ai-clear-data-btn" class="btn-action btn-reset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg><span>Reset Data</span></button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="summary-card" style="border-color:#9c27b0;"><span>P/L Bulan Ini:</span><h2 id="ai-monthly-total" class="netral">Rp 0</h2></div>
-                    </header>
+                        </header>
 
                     <div class="equity-dashboard" id="ai-equity-panel">
-                        <div class="equity-box" id="ai-modal-box" style="cursor: pointer; transition: 0.2s; border-left-color:#9c27b0;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1e1e1e'"><span class="label">Modal Simulasi (Klik ubah) ✏️</span><h4 id="ai-base-equity">Rp 2.500.000</h4></div>
+                        <div class="equity-box pg-click" id="ai-modal-box" title="Klik untuk ubah modal"><span class="label">Modal Simulasi <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span><h4 id="ai-base-equity">Rp 2.500.000</h4></div>
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Equity Awal</span><h3 id="ai-start-equity">Rp 0</h3></div>
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Equity Terakhir</span><h3 id="ai-current-equity">Rp 0</h3></div>
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Pertumbuhan</span><h3 id="ai-equity-growth" class="netral">0.00%</h3></div>
                     </div>
 
-                    <div class="month-navigation"><button id="ai-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="ai-month-year-display">Bulan Tahun</h2><button id="ai-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #9c27b0;">Total Mg</div></div>
-                    <div class="calendar-grid" id="ai-calendar"></div>
+                    <div class="pg-card">
+                        <div class="pg-cal-bar">
+                            <div class="month-navigation pg-month-nav"><button id="ai-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="ai-month-year-display">Bulan Tahun</h2><button id="ai-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                            <div class="pg-summary"><span>P/L bulan ini</span><h2 id="ai-monthly-total" class="netral">Rp 0</h2></div>
+                        </div>
+                        <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div class="wk-total">Total Mg</div></div>
+                        <div class="calendar-grid" id="ai-calendar"></div>
+                    </div>
                 </div>
 
                 <div id="ai-view-dashboard" class="dashboard-container" style="display:none;">
-                    <div class="month-navigation" style="margin-bottom:20px;"><button id="ai-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="ai-dash-month-year-display" style="color:#9c27b0;">Bulan Tahun</h2><button id="ai-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                    <button class="btn-action hide-for-screenshot" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" onclick="aiRefreshBtnClick(this, 'dashboard')">🔃 Refresh</button>
+                    <div class="pg-cal-bar"><div class="month-navigation pg-month-nav"><button id="ai-dash-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="ai-dash-month-year-display">Bulan Tahun</h2><button id="ai-dash-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                        <button class="pg-btn hide-for-screenshot" onclick="aiRefreshBtnClick(this, 'dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button></div>
                     <div id="ai-empty-state" class="empty-state-dash"></div>
                     <div id="ai-dash-content">
                         <div id="ai-risk-insight" style="margin-bottom:15px;"></div>
-                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📋 Evaluasi & Perbaikan Mingguan</h3><div id="ai-eval-text" style="margin-top:10px; color:#ccc; font-size:0.9rem; line-height:1.7;"></div></div>
-                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;"><h3 class="chart-title" style="margin:0;">🤖 Rekomendasi AI</h3><button type="button" id="btn-ai-llm-recommend" class="btn-action" style="border-color:#00bcd4; color:#00bcd4;">🤖 Analisa AI</button></div>
+                        <div class="dash-2">
+                        <div class="pg-card"><h3 class="chart-title">Evaluasi & Perbaikan Mingguan</h3><div id="ai-eval-text" style="margin-top:10px; color:#ccc; font-size:0.9rem; line-height:1.7;"></div></div>
+                        <div class="pg-card">
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;"><h3 class="chart-title" style="margin:0;">Rekomendasi AI</h3><button type="button" id="btn-ai-llm-recommend" class="pg-btn">Analisa AI</button></div>
                             <p style="color:#777; font-size:0.75rem; margin:8px 0 0;">Analisa retrospektif dari data bulan ini pakai LLM (Gemini/Claude, API key kamu sendiri di ⚙️ Settings) - bukan sinyal entry baru, cuma observasi & saran dari data yang udah ada. Dibatasi 3x/hari (shared Gold+Currency) biar gak kena biaya berlebih.</p>
                             <div id="ai-llm-recommendation" style="margin-top:10px;"></div>
                         </div>
-                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">🎯 Statistik per Jenis Sinyal (Bulan Ini)</h3><div id="ai-signal-stats-grid" class="weekly-report-grid" style="margin-top:10px;"></div></div>
+                        </div>
+                        <div class="pg-card"><h3 class="chart-title">Statistik per Jenis Sinyal (Bulan Ini)</h3><div id="ai-signal-stats-grid" class="weekly-report-grid" style="margin-top:10px;"></div></div>
 
-                        <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📊 Raport Per Minggu</h3><div id="ai-weekly-breakdown-grid" class="weekly-report-grid"></div></div>
+                        <div class="pg-card"><h3 class="chart-title">Raport per Minggu</h3><div id="ai-weekly-breakdown-grid" class="weekly-report-grid"></div></div>
 
                         <div class="highlight-grid">
-                            <div class="highlight-box win-bg"><span class="label">🌟 Biggest Win</span><h3 id="ai-highest-win-pl" class="profit-text">Rp 0</h3><p id="ai-highest-win-desc" class="desc-text">-</p></div>
-                            <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="ai-highest-loss-pl" class="loss-text">Rp 0</h3><p id="ai-highest-loss-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box win-bg"><span class="label">Biggest win</span><h3 id="ai-highest-win-pl" class="profit-text">Rp 0</h3><p id="ai-highest-win-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box loss-bg"><span class="label">Biggest loss</span><h3 id="ai-highest-loss-pl" class="loss-text">Rp 0</h3><p id="ai-highest-loss-desc" class="desc-text">-</p></div>
                         </div>
 
                         <div class="chart-grid">
@@ -345,7 +401,7 @@
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:15px;">
                             <h3 class="chart-title" style="margin:0;">Detail Entry Simulasi</h3>
                             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                <input type="text" id="ai-table-search" class="form-input" placeholder="🔍 Cari tanggal/arah/alasan..." style="width:220px;">
+                                <input type="text" id="ai-table-search" class="form-input" placeholder="Cari tanggal, arah, alasan..." style="width:220px;">
                                 <select id="ai-table-page-size" class="form-input" style="width:auto;">
                                     <option value="10">10 / halaman</option>
                                     <option value="30" selected>30 / halaman</option>
@@ -357,54 +413,53 @@
                                 <input type="number" id="ai-table-page-size-custom" class="form-input" placeholder="Jumlah" min="1" style="width:80px; display:none;">
                             </div>
                         </div>
-                        <table class="data-table"><thead><tr><th>No</th><th class="ai-sortable" data-col="date">Tanggal</th><th class="ai-sortable" data-col="arah">Arah</th><th class="ai-sortable" data-col="entry">Entry</th><th class="ai-sortable" data-col="sl">SL</th><th>TP</th><th>Alasan</th><th class="ai-sortable" style="text-align:right;" data-col="plVal">P/L (Rp)</th></tr></thead><tbody id="ai-dashboard-table-body"></tbody></table>
+                        <table class="data-table"><thead><tr><th>No</th><th class="ai-sortable" data-col="date">Tanggal</th><th class="ai-sortable" data-col="arah">Arah</th><th class="ai-sortable" data-col="entry">Entry</th><th class="ai-sortable" data-col="sl">SL</th><th>TP</th><th>Hasil layer</th><th class="ai-sortable" style="text-align:right;" data-col="plVal">P/L (Rp)</th></tr></thead><tbody id="ai-dashboard-table-body"></tbody></table>
                         <div id="ai-table-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; flex-wrap:wrap; gap:8px;"></div>
                         </div>
                     </div>
                 </div>
 
                 <div id="ai-view-log" class="dashboard-container" style="display:none;">
-                    <h1 style="color:#9c27b0; margin-bottom:15px;">📜 Log Aktivitas Bot</h1>
-                    <p style="color:#888; font-size:0.85rem; margin-bottom:15px;">Catatan tiap kali bot "coba" jalan (dari browser maupun server GitHub Actions) — 200 aktivitas terakhir.</p>
-                    <button class="btn-action" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" onclick="aiRefreshBtnClick(this, 'log')">🔃 Refresh</button>
+                    <h2 class="pg-subtitle">Log Aktivitas Bot</h2>
+                    <p class="pg-subdesc">Catatan tiap kali bot "coba" jalan (dari browser maupun server GitHub Actions) — 200 aktivitas terakhir.</p>
+                    <button class="pg-btn" style="margin-bottom:15px;" onclick="aiRefreshBtnClick(this, 'log')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button>
                     <div id="ai-log-summary" class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-bottom:15px;"></div>
-                    <div style="display:flex; gap:8px; margin-bottom:15px; flex-wrap:wrap;">
-                        <button class="ai-log-filter-chip" style="border-color:#00e676; color:#00e676;" onclick="toggleAiLogFilter('success', this)">✅ Berhasil</button>
-                        <button class="ai-log-filter-chip" style="border-color:#888; color:#ccc;" onclick="toggleAiLogFilter('nihil', this)">⚪ Nihil</button>
-                        <button class="ai-log-filter-chip" style="border-color:#ff1744; color:#ff1744;" onclick="toggleAiLogFilter('fail', this)">❌ Gagal</button>
+                    <div class="log-toolbar">
+                        <div class="log-chips">
+                            <button class="ai-log-filter-chip chip-success" onclick="toggleAiLogFilter('success', this)">Berhasil</button>
+                            <button class="ai-log-filter-chip chip-nihil" onclick="toggleAiLogFilter('nihil', this)">Nihil</button>
+                            <button class="ai-log-filter-chip chip-fail" onclick="toggleAiLogFilter('fail', this)">Gagal</button>
+                        </div>
+                        <label class="log-limit">Tampilkan <select id="ai-log-limit" class="form-input"><option value="10" selected>10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="all">Semua</option></select><span id="ai-log-count"></span></label>
                     </div>
-                    <div id="ai-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
+                    <div id="ai-log-list" class="log-list"></div>
                 </div>
             </div>
         </section>
 
-        <section id="view-ai-currency" class="content-section" style="padding-top: 10px;">
+        <section id="view-ai-currency" class="content-section pg-page" style="padding-top: 10px;">
             <div id="cur-locked-ui" class="locked-overlay" style="display:none;">
-                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
-                <h2 style="color: #ffd700;">Privasi Bos!</h2>
-                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Trading AI Currency.</p>
-                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+                <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="lock-title">Trading AI Currency terkunci</h2>
+                <p class="lock-sub">Halaman ini berisi data pribadi. Masuk dulu untuk melihat isinya.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="lock-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Masuk</button>
             </div>
 
             <div id="cur-content-ui">
-                <header class="main-header">
-                    <div class="header-left">
-                        <h1 style="color:#00bcd4;">💴 Trading AI Currency (Simulasi)</h1>
-                        <div class="action-group-main hide-for-screenshot" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                            <select id="cur-pair-select" class="form-input" style="width:auto; height:36px;"></select>
-                        </div>
-                    </div>
+                <header class="pg-head">
+                    <div><h1>Trading AI Currency</h1><p>Bot simulasi 5 pair · tiap pair proses VPS terpisah, pilih pair untuk melihat datanya</p></div>
+                    <div class="pg-actions hide-for-screenshot"><select id="cur-pair-select" class="form-input" style="width:auto; height:36px;"></select></div>
                 </header>
-                <p style="color:#777; font-size:0.8rem; margin:-8px 0 15px;">Tiap pair jalan sbg proses VPS terpisah dari Gold & pair lain — pilih pair di dropdown buat lihat data masing-masing. Data dihitung & dieksekusi 100% di VPS (`ai-tick-currency.py`), section ini cuma nampilin.</p>
 
                 <div class="xau-nav hide-for-screenshot">
-                    <button id="cur-menu-market" class="xau-tab active" style="border-color:#00bcd4; color:#00bcd4;">📈 Live Status</button>
-                    <button id="cur-menu-calendar" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📅 Riwayat</button>
-                    <button id="cur-menu-dashboard" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📊 Dashboard Evaluasi</button>
-                    <button id="cur-menu-log" class="xau-tab" style="border-color:#00bcd4; color:#00bcd4;">📜 Log Aktivitas</button>
+                    <button id="cur-menu-market" class="xau-tab active">Live Status</button>
+                    <button id="cur-menu-calendar" class="xau-tab">Riwayat</button>
+                    <button id="cur-menu-dashboard" class="xau-tab">Dashboard</button>
+                    <button id="cur-menu-log" class="xau-tab">Log Aktivitas</button>
                 </div>
 
                 <div id="cur-view-market" class="dashboard-container">
+                    <div class="pg-sec">Posisi saat ini</div>
                     <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr);">
                         <div class="equity-box" style="border-left-color:#9c27b0;"><span class="label">Metode 1 — Entry Posisi</span><h3 id="cur-live-entry" style="color:#9c27b0;">Belum ada posisi</h3></div>
                         <div class="equity-box" style="border-left-color:#00e676;"><span class="label">Metode 1 — Floating P/L</span><h3 id="cur-live-total-pl" class="netral">Rp 0</h3></div>
@@ -412,85 +467,92 @@
                     </div>
                     <div id="cur-method2-section" style="display:none;">
                         <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
-                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Entry Posisi</span><h3 id="cur-live-entry-m2" style="color:#2196f3;">Belum ada posisi</h3></div>
-                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">🔵 Metode 2 (ICT) — Floating P/L</span><h3 id="cur-live-total-pl-m2" class="netral">Rp 0</h3></div>
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">Metode 2 (ICT) — Entry Posisi</span><h3 id="cur-live-entry-m2" style="color:#2196f3;">Belum ada posisi</h3></div>
+                            <div class="equity-box" style="border-left-color:#2196f3;"><span class="label">Metode 2 (ICT) — Floating P/L</span><h3 id="cur-live-total-pl-m2" class="netral">Rp 0</h3></div>
                             <div class="equity-box" style="border-left-color:#888;"><span class="label">Win Rate Metode 2 (<span id="cur-winrate-m2-days">14</span> hari)</span><h3 id="cur-winrate-m2" class="netral">-</h3></div>
                         </div>
                     </div>
-                    <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Harga Sekarang</span><h3 id="cur-live-price" class="netral">-</h3></div>
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Hari Ini</span><h3 id="cur-pl-today" class="netral">Rp 0</h3></div>
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Minggu Ini</span><h3 id="cur-pl-week" class="netral">Rp 0</h3></div>
+                    <div class="pg-sec">Harga dan hasil</div>
+                    <div class="equity-dashboard pg-grid-4" style="margin-top:0;">
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Harga Sekarang</span><h3 id="cur-live-price" class="netral">-</h3></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">P/L Hari Ini</span><h3 id="cur-pl-today" class="netral">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">P/L Minggu Ini</span><h3 id="cur-pl-week" class="netral">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">P/L Keseluruhan</span><h3 id="cur-pl-all" class="netral">Rp 0</h3></div>
                     </div>
+                    <div class="pg-sec">Indikator teknikal</div>
                     <div class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-top:15px;">
                         <div class="equity-box" style="border-left-color:#888;"><span class="label">Trend (MA20/MA50)</span><h3 id="cur-trend-summary-trend" class="netral">-</h3></div>
                         <div class="equity-box" style="border-left-color:#888;"><span class="label">RSI (14)</span><h3 id="cur-trend-summary-rsi" class="netral">-</h3></div>
                         <div class="equity-box" style="border-left-color:#888;"><span class="label">MACD</span><h3 id="cur-trend-summary-macd" class="netral">-</h3></div>
                     </div>
-                    <div class="equity-dashboard" style="grid-template-columns: 1fr; margin-top:15px;">
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">P/L Keseluruhan</span><h3 id="cur-pl-all" class="netral">Rp 0</h3></div>
-                    </div>
+                    <div class="pg-sec">Grafik harga</div>
                     <div class="chart-card" style="padding:0; overflow:hidden; margin-top:20px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 0 20px; flex-wrap:wrap; gap:10px;">
-                            <h3 class="chart-title" style="margin:0; color:#00bcd4;"><span id="cur-chart-pair-label">USDJPY</span> <span style="font-size:0.7em; color:#888;">(H1, real-time MT5)</span></h3>
-                            <button type="button" id="btn-cur-refresh-market" class="btn-action" style="border-color:#2196f3; color:#2196f3;">🔃 Refresh</button>
+                            <h3 class="chart-title" style="margin:0;"><span id="cur-chart-pair-label">USDJPY</span> <span style="font-size:0.7em; color:#888;">(H1, real-time MT5)</span></h3>
+                            <button type="button" id="btn-cur-refresh-market" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button>
                         </div>
                         <div id="cur-chart-container" style="height:500px; width:100%;"></div>
                     </div>
                 </div>
 
                 <div id="cur-view-calendar" class="dashboard-container" style="display:none;">
-                    <header class="main-header">
+                    <header class="main-header pg-toolbar">
                         <div class="header-left">
-                            <h1 style="color:#00bcd4;">📅 Riwayat — <span id="cur-cal-pair-label">USDJPY</span></h1>
+                            <h2 class="pg-subtitle">Riwayat — <span id="cur-cal-pair-label">USDJPY</span></h2>
                             <div class="action-group-main hide-for-screenshot">
-                                <button class="btn-action" style="border-color:#2196f3; color:#2196f3;" id="btn-cur-refresh-calendar">🔃 Refresh</button>
+                                <button class="pg-btn" id="btn-cur-refresh-calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button>
                                 <div class="ai-more-menu-wrap">
-                                    <button class="btn-action" style="border-color:#888; color:#ccc;" id="btn-cur-more-menu">⚙️ Lainnya ▾</button>
+                                    <button class="pg-btn" id="btn-cur-more-menu">Lainnya ▾</button>
                                     <div id="cur-more-menu-dropdown" class="ai-more-dropdown">
-                                        <button class="btn-action" style="border-color:#ff9800; color:#ff9800;" id="btn-cur-master-settings">🎛️ Master Setting</button>
-                                        <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-cur-restart-bot">🔄 Restart Bot (VPS)</button>
-                                        <button class="btn-action" style="border-color:#00bcd4; color:#00bcd4;" id="btn-cur-send-summary">📊 Kirim Summary</button>
-                                        <button class="btn-action btn-export" id="btn-cur-export">📤 Export</button>
-                                        <button id="btn-cur-clear-data" class="btn-action btn-reset">🗑️ Reset Data</button>
+                                        <button id="btn-cur-master-settings" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 15l3.5-4.5"/><circle cx="12" cy="15" r="1.2"/></svg><span>Master Setting</span></button>
+                                        <button id="btn-cur-restart-bot" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.3 7.2a7.5 7.5 0 1 0 11.4 0"/></svg><span>Restart Bot (VPS)</span></button>
+                                        <button id="btn-cur-send-summary" class="btn-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5 21 3z"/></svg><span>Kirim Summary</span></button>
+                                        <button id="btn-cur-export" class="btn-action btn-export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/></svg><span>Export</span></button>
+                                        <button id="btn-cur-clear-data" class="btn-action btn-reset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg><span>Reset Data</span></button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="summary-card" style="border-color:#00bcd4;"><span>P/L Bulan Ini:</span><h2 id="cur-monthly-total" class="netral">Rp 0</h2></div>
                     </header>
 
                     <div class="equity-dashboard" id="cur-equity-panel">
-                        <div class="equity-box" id="cur-modal-box" style="cursor: pointer; transition: 0.2s; border-left-color:#00bcd4;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1e1e1e'"><span class="label">Modal Simulasi (Klik ubah) ✏️</span><h4 id="cur-base-equity">Rp 2.500.000</h4></div>
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Equity Awal</span><h3 id="cur-start-equity">Rp 0</h3></div>
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Equity Terakhir</span><h3 id="cur-current-equity">Rp 0</h3></div>
-                        <div class="equity-box" style="border-left-color:#00bcd4;"><span class="label">Pertumbuhan</span><h3 id="cur-equity-growth" class="netral">0.00%</h3></div>
+                        <div class="equity-box pg-click" id="cur-modal-box" title="Klik untuk ubah modal"><span class="label">Modal Simulasi (Klik ubah) ✏️</span><h4 id="cur-base-equity">Rp 2.500.000</h4></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Equity Awal</span><h3 id="cur-start-equity">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Equity Terakhir</span><h3 id="cur-current-equity">Rp 0</h3></div>
+                        <div class="equity-box" style="border-left-color:#ffd700;"><span class="label">Pertumbuhan</span><h3 id="cur-equity-growth" class="netral">0.00%</h3></div>
                     </div>
 
-                    <div class="month-navigation"><button id="cur-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="cur-month-year-display">Bulan Tahun</h2><button id="cur-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #00bcd4;">Total Mg</div></div>
-                    <div class="calendar-grid" id="cur-calendar"></div>
+                    <div class="pg-card">
+                        <div class="pg-cal-bar">
+                            <div class="month-navigation pg-month-nav"><button id="cur-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="cur-month-year-display">Bulan Tahun</h2><button id="cur-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                            <div class="pg-summary"><span>P/L bulan ini</span><h2 id="cur-monthly-total" class="netral">Rp 0</h2></div>
+                        </div>
+                        <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div class="wk-total">Total Mg</div></div>
+                        <div class="calendar-grid" id="cur-calendar"></div>
+                    </div>
                 </div>
 
                 <div id="cur-view-dashboard" class="dashboard-container" style="display:none;">
-                    <div class="month-navigation" style="margin-bottom:20px;"><button id="cur-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="cur-dash-month-year-display" style="color:#00bcd4;">Bulan Tahun</h2><button id="cur-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                    <button class="btn-action hide-for-screenshot" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" id="btn-cur-refresh-dashboard">🔃 Refresh</button>
+                    <div class="pg-cal-bar"><div class="month-navigation pg-month-nav"><button id="cur-dash-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="cur-dash-month-year-display">Bulan Tahun</h2><button id="cur-dash-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                        <button class="pg-btn hide-for-screenshot" id="btn-cur-refresh-dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button></div>
                     <div id="cur-empty-state" class="empty-state-dash"></div>
                     <div id="cur-dash-content">
                         <div id="cur-risk-insight" style="margin-bottom:15px;"></div>
-                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📋 Evaluasi & Perbaikan Mingguan</h3><div id="cur-eval-text" style="margin-top:10px; color:#ccc; font-size:0.9rem; line-height:1.7;"></div></div>
-                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;"><h3 class="chart-title" style="margin:0;">🤖 Rekomendasi AI</h3><button type="button" id="btn-cur-llm-recommend" class="btn-action" style="border-color:#00bcd4; color:#00bcd4;">🤖 Analisa AI</button></div>
+                        <div class="dash-2">
+                        <div class="pg-card"><h3 class="chart-title">Evaluasi & Perbaikan Mingguan</h3><div id="cur-eval-text" style="margin-top:10px; color:#ccc; font-size:0.9rem; line-height:1.7;"></div></div>
+                        <div class="pg-card">
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;"><h3 class="chart-title" style="margin:0;">Rekomendasi AI</h3><button type="button" id="btn-cur-llm-recommend" class="pg-btn">Analisa AI</button></div>
                             <p style="color:#777; font-size:0.75rem; margin:8px 0 0;">Analisa retrospektif dari data bulan ini pakai LLM (Gemini/Claude, API key kamu sendiri di ⚙️ Settings Gold) - bukan sinyal entry baru, cuma observasi & saran dari data yang udah ada. Dibatasi 3x/hari (shared Gold+Currency) biar gak kena biaya berlebih.</p>
                             <div id="cur-llm-recommendation" style="margin-top:10px;"></div>
                         </div>
-                        <div style="margin-bottom: 20px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">🎯 Statistik per Jenis Sinyal (Bulan Ini)</h3><div id="cur-signal-stats-grid" class="weekly-report-grid" style="margin-top:10px;"></div></div>
+                        </div>
+                        <div class="pg-card"><h3 class="chart-title">Statistik per Jenis Sinyal (Bulan Ini)</h3><div id="cur-signal-stats-grid" class="weekly-report-grid" style="margin-top:10px;"></div></div>
 
-                        <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;"><h3 class="chart-title">📊 Raport Per Minggu</h3><div id="cur-weekly-breakdown-grid" class="weekly-report-grid"></div></div>
+                        <div class="pg-card"><h3 class="chart-title">Raport Per Minggu</h3><div id="cur-weekly-breakdown-grid" class="weekly-report-grid"></div></div>
 
                         <div class="highlight-grid">
-                            <div class="highlight-box win-bg"><span class="label">🌟 Biggest Win</span><h3 id="cur-highest-win-pl" class="profit-text">Rp 0</h3><p id="cur-highest-win-desc" class="desc-text">-</p></div>
-                            <div class="highlight-box loss-bg"><span class="label">💔 Biggest Loss</span><h3 id="cur-highest-loss-pl" class="loss-text">Rp 0</h3><p id="cur-highest-loss-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box win-bg"><span class="label">Biggest win</span><h3 id="cur-highest-win-pl" class="profit-text">Rp 0</h3><p id="cur-highest-win-desc" class="desc-text">-</p></div>
+                            <div class="highlight-box loss-bg"><span class="label">Biggest loss</span><h3 id="cur-highest-loss-pl" class="loss-text">Rp 0</h3><p id="cur-highest-loss-desc" class="desc-text">-</p></div>
                         </div>
 
                         <div class="chart-grid">
@@ -516,7 +578,7 @@
                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:15px;">
                             <h3 class="chart-title" style="margin:0;">Detail Entry Simulasi</h3>
                             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                <input type="text" id="cur-table-search" class="form-input" placeholder="🔍 Cari tanggal/arah/alasan..." style="width:220px;">
+                                <input type="text" id="cur-table-search" class="form-input" placeholder="Cari tanggal/arah/alasan..." style="width:220px;">
                                 <select id="cur-table-page-size" class="form-input" style="width:auto;">
                                     <option value="10">10 / halaman</option>
                                     <option value="30" selected>30 / halaman</option>
@@ -528,409 +590,447 @@
                                 <input type="number" id="cur-table-page-size-custom" class="form-input" placeholder="Jumlah" min="1" style="width:80px; display:none;">
                             </div>
                         </div>
-                        <table class="data-table"><thead><tr><th>No</th><th class="cur-sortable" data-col="date">Tanggal</th><th class="cur-sortable" data-col="arah">Arah</th><th class="cur-sortable" data-col="entry">Entry</th><th class="cur-sortable" data-col="sl">SL</th><th>TP</th><th>Alasan</th><th class="cur-sortable" style="text-align:right;" data-col="plVal">P/L (Rp)</th></tr></thead><tbody id="cur-dashboard-table-body"></tbody></table>
+                        <table class="data-table"><thead><tr><th>No</th><th class="cur-sortable" data-col="date">Tanggal</th><th class="cur-sortable" data-col="arah">Arah</th><th class="cur-sortable" data-col="entry">Entry</th><th class="cur-sortable" data-col="sl">SL</th><th>TP</th><th>Hasil layer</th><th class="cur-sortable" style="text-align:right;" data-col="plVal">P/L (Rp)</th></tr></thead><tbody id="cur-dashboard-table-body"></tbody></table>
                         <div id="cur-table-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; flex-wrap:wrap; gap:8px;"></div>
                         </div>
                     </div>
                 </div>
 
                 <div id="cur-view-log" class="dashboard-container" style="display:none;">
-                    <h1 style="color:#00bcd4; margin-bottom:15px;">📜 Log Aktivitas Bot</h1>
-                    <button class="btn-action" style="border-color:#2196f3; color:#2196f3; margin-bottom:15px;" id="btn-cur-refresh-log">🔃 Refresh</button>
-                    <div id="cur-log-list" class="today-history" style="max-height:600px; overflow-y:auto;"></div>
+                    <h2 class="pg-subtitle">Log Aktivitas Bot</h2>
+                    <p class="pg-subdesc">Catatan aktivitas terakhir bot untuk pair ini.</p>
+                    <button class="pg-btn" id="btn-cur-refresh-log" style="margin-bottom:15px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>Refresh</button>
+                    <div id="cur-log-summary" class="equity-dashboard" style="grid-template-columns: repeat(3, 1fr); margin-bottom:15px;"></div>
+                    <div class="log-toolbar">
+                        <div class="log-chips">
+                            <button class="ai-log-filter-chip chip-success" onclick="toggleCurLogFilter('success', this)">Berhasil</button>
+                            <button class="ai-log-filter-chip chip-nihil" onclick="toggleCurLogFilter('nihil', this)">Nihil</button>
+                            <button class="ai-log-filter-chip chip-fail" onclick="toggleCurLogFilter('fail', this)">Gagal</button>
+                        </div>
+                        <label class="log-limit">Tampilkan <select id="cur-log-limit" class="form-input"><option value="10" selected>10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="all">Semua</option></select><span id="cur-log-count"></span></label>
+                    </div>
+                    <div id="cur-log-list" class="log-list"></div>
                 </div>
             </div>
         </section>
 
-        <section id="view-monitoring" class="content-section" style="padding-top: 10px;">
+        <section id="view-monitoring" class="content-section pg-page" style="padding-top: 10px;">
             <div id="mon-locked-ui" class="locked-overlay" style="display:none;">
-                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
-                <h2 style="color: #ffd700;">Privasi Bos!</h2>
-                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Monitoring.</p>
-                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+                <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="lock-title">Monitoring terkunci</h2>
+                <p class="lock-sub">Halaman ini berisi data pribadi. Masuk dulu untuk melihat isinya.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="lock-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Masuk</button>
             </div>
 
             <div id="mon-content-ui">
-                <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
-                    <div class="header-left">
-                        <h1 style="color:#4caf50;">📈 Monitoring Portfolio</h1>
-                        <p style="color:#888; font-size: 0.9rem;">Ringkasan Gold + 5 pair Currency per bulan, biar gak perlu buka 1-1 tab.</p>
-                    </div>
-                    <div class="month-navigation" style="margin:0; gap:10px;">
-                        <button id="mon-trend-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button>
-                        <h2 id="mon-trend-month-year" style="font-size:1.1rem; margin:0 8px;">Bulan Tahun</h2>
-                        <button id="mon-trend-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button>
-                        <button id="btn-mon-open-export" class="nav-btn hide-for-screenshot" style="border-color:#00e676; color:#00e676;">📤 Export</button>
+                <header class="pg-head">
+                    <div><h1>Monitoring Portfolio</h1><p>Ringkasan Gold + 5 pair Currency per bulan, biar tidak perlu buka satu-satu.</p></div>
+                    <div class="pg-actions hide-for-screenshot">
+                        <div class="month-navigation pg-month-nav"><button id="mon-trend-prev-month" class="nav-btn" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="mon-trend-month-year">Bulan Tahun</h2><button id="mon-trend-next-month" class="nav-btn" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                        <button id="btn-mon-open-export" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>Export</button>
                     </div>
                 </header>
 
                 <div class="dashboard-container">
-                    <div class="chart-grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 20px;">
-                        <div class="chart-card" style="border-left: 4px solid #ffd700;">
-                            <h3 class="chart-title">🌐 Semua Instrumen (Gold + 5 Currency)</h3>
+                    <div id="mon-pause-banner"></div>
+
+                    <div class="mon-summary">
+                        <div class="chart-card mon-card">
+                            <div class="mon-card-head"><h3 class="chart-title">Semua instrumen</h3><span class="mon-sub">Gold + 5 Currency</span></div>
                             <div class="equity-dashboard" id="mon-all-equity"></div>
-                            <p style="color:#aaa; font-size:0.85rem; margin-top:10px;">Total Entry: <strong id="mon-all-trades">0</strong> · Win Rate: <strong id="mon-all-winrate">0%</strong></p>
+                            <p class="mon-foot">Total entry <strong id="mon-all-trades">0</strong> <i></i> Win rate <strong id="mon-all-winrate">0%</strong></p>
                         </div>
-                        <div class="chart-card" style="border-left: 4px solid #00bcd4;">
-                            <h3 class="chart-title">💴 Currency Saja (5 Pair)</h3>
+                        <div class="chart-card mon-card">
+                            <div class="mon-card-head"><h3 class="chart-title">Currency saja</h3><span class="mon-sub">5 pair</span></div>
                             <div class="equity-dashboard" id="mon-cur-equity"></div>
-                            <p style="color:#aaa; font-size:0.85rem; margin-top:10px;">Total Entry: <strong id="mon-cur-trades">0</strong> · Win Rate: <strong id="mon-cur-winrate">0%</strong></p>
+                            <p class="mon-foot">Total entry <strong id="mon-cur-trades">0</strong> <i></i> Win rate <strong id="mon-cur-winrate">0%</strong></p>
                         </div>
                     </div>
 
-                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
-                        <h3 class="chart-title">🛡️ Risk Overview</h3>
-                        <p style="color:#777; font-size:0.75rem; margin:8px 0 15px;">Risk exposure gabungan bulan ini (ngikut nav bulan di atas) & max drawdown sepanjang masa (all-time, TIDAK ngikut nav bulan).</p>
-                        <div id="mon-pause-banner"></div>
-                        <div id="mon-risk-insight" style="margin-bottom:15px;"></div>
+                    <div class="mon-charts">
+                        <div class="chart-card">
+                            <h3 class="chart-title">Trend P/L harian (kumulatif)</h3>
+                            <p class="pg-subdesc" style="margin:4px 0 0;">Arahkan kursor ke titik untuk melihat P/L dan jumlah order hari itu.</p>
+                            <div style="position:relative; min-height:300px; margin-top:10px;"><canvas id="mon-trendChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3 class="chart-title">P/L bulan ini per instrumen</h3>
+                            <div style="position:relative; min-height:260px; margin-top:10px;"><canvas id="mon-plChart"></canvas></div>
+                        </div>
+                    </div>
+
+                    <div class="pg-card">
+                        <h3 class="chart-title">Breakdown per Instrumen</h3>
+                        <div id="mon-breakdown-grid" class="mon-wrap"></div>
+                    </div>
+
+                    <div class="pg-card">
+                        <h3 class="chart-title">Risk overview</h3>
+                        <p class="pg-subdesc" style="margin:4px 0 12px;">Risk exposure gabungan bulan ini (mengikuti bulan di atas) dan max drawdown sepanjang masa.</p>
+                        <div id="mon-risk-insight" style="margin-bottom:12px;"></div>
                         <div class="equity-dashboard" id="mon-drawdown-stats"></div>
-                        <div style="margin-top:15px; padding-top:15px; border-top:1px solid #333; display:flex; gap:10px; flex-wrap:wrap;">
-                            <button class="btn-action" style="border-color:#f44336; color:#f44336;" id="btn-mon-pause-all">🚨 Pause SEMUA Entry Baru</button>
-                            <button class="btn-action" style="border-color:#4caf50; color:#4caf50;" id="btn-mon-resume-all">▶️ Resume Semua Entry</button>
-                            <button class="btn-action" style="border-color:#f44336; background:#f44336; color:#fff;" id="btn-mon-close-all">🛑 Tutup SEMUA Posisi Sekarang</button>
-                        </div>
                     </div>
 
-                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
-                        <h3 class="chart-title">📊 Breakdown per Instrumen</h3>
-                        <div id="mon-breakdown-grid" class="weekly-report-grid" style="margin-top:10px;"></div>
+                    <div class="pg-card">
+                        <h3 class="chart-title" style="margin:0;">Kontradiksi Sinyal (Metode 1 vs Metode 2)</h3>
+                        <p class="pg-subdesc" style="margin:6px 0 12px;">Kejadian Metode 1 dan Metode 2 sama-sama buka posisi arah berlawanan di instrumen yang sama, bulan ini (mengikuti bulan di atas).</p>
+                        <div id="mon-contradiction-grid" class="mon-chips"></div>
+                        <details class="mon-contra-det" id="mon-contra-det">
+                            <summary><span class="mon-contra-open">Lihat detail kejadian</span><span class="mon-contra-close">Sembunyikan detail</span><svg class="mon-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></summary>
+                            <div class="mon-contra-body">
+                                <label class="log-limit">Tampilkan <select id="mon-contradiction-limit" class="form-input">
+                                        <option value="10">10</option>
+                                        <option value="30">30</option>
+                                        <option value="50">50</option>
+                                        <option value="100">100</option>
+                                        <option value="all">Semua</option>
+                                    </select>
+                                </label>
+                                <div id="mon-contradiction-list" class="mon-contra-list"></div>
+                            </div>
+                        </details>
                     </div>
 
-                    <div style="margin-bottom: 25px; background: #161616; border: 1px solid #333; border-radius: 10px; padding: 20px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-                            <h3 class="chart-title" style="margin:0;">⚠️ Kontradiksi Sinyal (Metode 1 vs Metode 2)</h3>
-                            <label style="color:#aaa; font-size:0.8rem; display:flex; align-items:center; gap:6px;">Tampilkan
-                                <select id="mon-contradiction-limit" style="background:#1e1e1e; color:#eee; border:1px solid #444; border-radius:6px; padding:4px 8px;">
-                                    <option value="10">10</option>
-                                    <option value="30">30</option>
-                                    <option value="50">50</option>
-                                    <option value="100">100</option>
-                                    <option value="all">Semua</option>
-                                </select>
-                            </label>
+                    <details class="mon-danger" id="mon-danger">
+                        <summary>
+                            <span class="mon-danger-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5"/><circle cx="12" cy="16" r="0.8" fill="currentColor"/></svg></span>
+                            <div><b>Kontrol darurat bot</b><small>Pause entry, lanjutkan entry, atau tutup semua posisi. Terkunci supaya tidak terklik tidak sengaja.</small></div>
+                            <svg class="mon-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                        </summary>
+                        <div class="mon-danger-body">
+                            <label class="mon-unlock"><input type="checkbox" id="mon-ctrl-unlock"><span>Saya mengerti, buka kunci tombol di bawah</span></label>
+                            <div class="mon-danger-actions">
+                                <div class="mon-act"><button class="pg-btn" id="btn-mon-pause-all" disabled>Pause semua entry baru</button><p>Menahan entry baru di 6 instrumen. Posisi yang sudah terbuka tetap berjalan dengan SL dan TP.</p></div>
+                                <div class="mon-act"><button class="pg-btn" id="btn-mon-resume-all" disabled>Resume semua entry</button><p>Melanjutkan entry baru setelah di-pause.</p></div>
+                                <div class="mon-act"><button class="pg-btn pg-btn-danger" id="btn-mon-close-all" disabled>Tutup semua posisi sekarang</button><p>Menutup semua posisi terbuka di 6 instrumen pada harga pasar saat ini. Tidak bisa dibatalkan.</p></div>
+                            </div>
                         </div>
-                        <p style="color:#777; font-size:0.75rem; margin:8px 0 15px;">Kejadian Metode 1 & Metode 2 sama-sama buka posisi arah berlawanan di instrumen yang sama, bulan ini (ngikut nav bulan di atas).</p>
-                        <div id="mon-contradiction-grid" class="weekly-report-grid" style="margin-bottom:15px;"></div>
-                        <div id="mon-contradiction-list"></div>
-                    </div>
-
-                    <div class="chart-grid" style="margin-bottom: 20px;">
-                        <div class="chart-card" style="grid-column: 1 / -1;">
-                            <h3 class="chart-title">Trend P/L Harian (Kumulatif)</h3>
-                            <p style="color:#777; font-size:0.75rem; margin:8px 0 0;">Arahkan kursor ke titik buat lihat detail P/L & jumlah order hari itu.</p>
-                            <div style="position:relative; min-height:280px; margin-top:10px;"><canvas id="mon-trendChart"></canvas></div>
-                        </div>
-                    </div>
-
-                    <div class="chart-grid">
-                        <div class="chart-card" style="grid-column: 1 / -1;">
-                            <h3 class="chart-title">Grafik P/L Bulan Ini per Instrumen</h3>
-                            <div style="position:relative; min-height:280px;"><canvas id="mon-plChart"></canvas></div>
-                        </div>
-                    </div>
+                    </details>
                 </div>
             </div>
         </section>
 
-        <section id="view-expenses" class="content-section" style="padding-top: 10px;">
+        <section id="view-expenses" class="content-section pg-page" style="padding-top: 10px;">
             <div id="exp-locked-ui" class="locked-overlay" style="display:none;">
-                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
-                <h2 style="color: #ffd700;">Privasi Bos!</h2>
-                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu Pengeluaran Bulanan.</p>
-                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+                <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="lock-title">Pengeluaran Bulanan terkunci</h2>
+                <p class="lock-sub">Halaman ini berisi data pribadi. Masuk dulu untuk melihat isinya.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="lock-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Masuk</button>
             </div>
             
             <div id="exp-content-ui">
-                <div class="xau-nav hide-for-screenshot"><button id="exp-menu-calendar" class="xau-tab active" style="border-color:#ff1744; color:#ff1744;">📅 Kalender Belanja</button><button id="exp-menu-dashboard" class="xau-tab">📊 Dashboard Pengeluaran</button></div>
+                <header class="pg-head"><div><h1>Pengeluaran Bulanan</h1><p>Catat belanja harian, lihat total per minggu dan per kategori.</p></div></header>
+                <div class="xau-nav hide-for-screenshot"><button id="exp-menu-calendar" class="xau-tab active">Kalender Belanja</button><button id="exp-menu-dashboard" class="xau-tab">Dashboard</button></div>
                 
                 <div id="exp-view-calendar" class="dashboard-container">
-                    <header class="main-header">
-                        <div class="header-left">
-                            <h1 style="color:#ff1744;">Pengeluaran Bulanan</h1>
-                            <div class="action-group-main hide-for-screenshot">
-                                <button class="btn-action btn-export" onclick="openExportMenu('exp')">📤 Export</button>
-                                <label for="csv-upload-exp" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-exp" accept=".csv" style="display: none;"></label>
-                                <button id="exp-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
-                            </div>
-                        </div>
-                        <div class="summary-card" style="border-color:#ff1744;"><span>Total Keluar Bulan Ini:</span><h2 id="exp-monthly-total" class="loss-text">Rp 0</h2></div>
+                    <header class="main-header pg-toolbar">
+                        <div class="header-left"><div class="action-group-main hide-for-screenshot">
+                            <button class="pg-btn" onclick="openExportMenu('exp')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/></svg>Export</button>
+                            <label for="csv-upload-exp" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9"/><path d="M7.5 13.5 12 9l4.5 4.5"/><path d="M5 4h14"/></svg>Import<input type="file" id="csv-upload-exp" accept=".csv" style="display: none;"></label>
+                            <button id="exp-clear-data-btn" class="pg-btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg>Reset Data</button>
+                        </div></div>
                     </header>
                     <div id="exp-warning-box" style="margin-bottom:20px; display:none;"></div>
-                    <div class="month-navigation"><button id="exp-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="exp-month-year-display">Bulan Tahun</h2><button id="exp-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #ff1744;">Total Mg</div></div>
-                    <div class="calendar-grid" id="exp-calendar"></div>
+                    <div class="pg-card">
+                        <div class="pg-cal-bar">
+                            <div class="month-navigation pg-month-nav"><button id="exp-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="exp-month-year-display">Bulan Tahun</h2><button id="exp-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                            <div class="pg-summary"><span>Total keluar bulan ini</span><h2 id="exp-monthly-total" class="loss-text">Rp 0</h2></div>
+                        </div>
+                        <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div class="wk-total">Total Mg</div></div>
+                        <div class="calendar-grid" id="exp-calendar"></div>
+                    </div>
                 </div>
 
                 <div id="exp-view-dashboard" class="dashboard-container" style="display: none;">
-                    <div class="month-navigation" style="margin-bottom: 20px;"><button id="exp-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="exp-dash-month-year-display" style="color: #ff1744;">Bulan Tahun</h2><button id="exp-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                    <div class="pg-cal-bar"><div class="month-navigation pg-month-nav"><button id="exp-dash-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="exp-dash-month-year-display">Bulan Tahun</h2><button id="exp-dash-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div></div>
                     <div id="exp-empty-state" class="empty-state-dash"></div>
                     <div id="exp-dash-content">
-                        <div id="exp-dash-insight" style="margin-bottom: 20px;"></div>
-                        <div class="highlight-grid">
-                            <div class="highlight-box" style="border-left: 4px solid #ff1744;"><span class="label">🔥 Pengeluaran Terbesar</span><h3 id="exp-highest-pl" class="loss-text">Rp 0</h3><p id="exp-highest-desc" class="desc-text">-</p></div>
-                            <div class="highlight-box" style="border-left: 4px solid #ff9800;"><span class="label">🏆 Kategori Paling Boros</span><h3 id="exp-top-category" style="color:#ff9800;">-</h3><p id="exp-top-category-desc" class="desc-text">-</p></div>
+                        <div class="equity-dashboard" id="exp-dash-stats"></div>
+                        <div id="exp-dash-insight"></div>
+                        <div class="exp-cols">
+                            <div class="pg-card">
+                                <h3 class="chart-title">Per kategori</h3>
+                                <p class="pg-subdesc" style="margin:4px 0 14px;">Klik salah satu baris untuk melihat transaksinya.</p>
+                                <div id="exp-cat-bars" class="bar-list"></div>
+                            </div>
+                            <div class="pg-card">
+                                <h3 class="chart-title">Per metode bayar</h3>
+                                <p class="pg-subdesc" style="margin:4px 0 14px;">Dari mana uangnya keluar.</p>
+                                <div id="exp-bank-bars" class="bar-list"></div>
+                            </div>
                         </div>
-                        <div class="chart-grid">
-                            <div class="chart-card" style="min-height: 300px;"><h3 class="chart-title" style="color:#ff1744;">Grafik Kategori Belanja</h3><p style="color:#888; font-size:0.75rem; margin-bottom:10px;">*Klik salah satu bar untuk lihat detail transaksinya</p><canvas id="expCategoryChart"></canvas></div>
-                            <div class="chart-card" style="min-height: 300px; display: flex; flex-direction: column; align-items: center;"><h3 class="chart-title" style="color:#ff1744; width: 100%; text-align: left;">Distribusi Bank/Metode</h3><div style="flex-grow:1; width:100%; max-width: 300px;"><canvas id="expBankChart"></canvas></div></div>
-                        </div>
-                        <div id="exp-category-detail" style="display:none;" class="table-container"></div>
-                        </div>
+                        <div id="exp-category-detail" class="pg-card" style="display:none;"></div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section id="view-sports" class="content-section" style="padding-top: 10px;">
-            <div class="xau-nav hide-for-screenshot"><button id="sport-menu-calendar" class="xau-tab active" style="border-color:#2196f3; color:#2196f3;">📅 Kalender Latihan</button><button id="sport-menu-dashboard" class="xau-tab">📊 Dashboard Fisik</button></div>
+        <section id="view-sports" class="content-section pg-page" style="padding-top: 10px;">
+            <header class="pg-head"><div><h1>Jurnal Olahraga</h1><p>Catat latihan harian, pantau konsistensi dan durasi.</p></div></header>
+            <div class="xau-nav hide-for-screenshot"><button id="sport-menu-calendar" class="xau-tab active">Kalender Latihan</button><button id="sport-menu-dashboard" class="xau-tab">Dashboard</button></div>
             
             <div id="sport-view-calendar" class="dashboard-container">
-                <header class="main-header">
-                    <div class="header-left">
-                        <h1 style="color:#2196f3;">Jurnal Olahraga</h1>
-                        <div class="action-group-main hide-for-screenshot">
-                            <button class="btn-action btn-export" onclick="openExportMenu('sport')">📤 Export</button>
-                            <label for="csv-upload-sport" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-sport" accept=".csv" style="display: none;"></label>
-                            <button id="sport-clear-data-btn" class="btn-action btn-reset">🗑️ Reset Data</button>
-                        </div>
-                    </div>
-                    <div class="summary-card" style="border-color:#2196f3;"><span>Total Latihan Bulan Ini:</span><h2 id="sport-monthly-total" style="color:#2196f3;">0 Kali | 0 Menit</h2></div>
+                <header class="main-header pg-toolbar">
+                    <div class="header-left"><div class="action-group-main hide-for-screenshot">
+                        <button class="pg-btn" onclick="openExportMenu('sport')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/></svg>Export</button>
+                        <label for="csv-upload-sport" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9"/><path d="M7.5 13.5 12 9l4.5 4.5"/><path d="M5 4h14"/></svg>Import<input type="file" id="csv-upload-sport" accept=".csv" style="display: none;"></label>
+                        <button id="sport-clear-data-btn" class="pg-btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6.5 7l1 13h9l1-13"/></svg>Reset Data</button>
+                    </div></div>
                 </header>
-                <div id="sport-summary-badges" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px; padding:15px; background:#1e1e1e; border-radius:8px; border:1px solid #333;"></div>
-                <div class="month-navigation"><button id="sport-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="sport-month-year-display">Bulan Tahun</h2><button id="sport-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
-                
-                <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div style="color: #2196f3;">Total Mingguan</div></div>
-                <div class="calendar-grid" id="sport-calendar"></div>
+                <div id="sport-summary-badges" class="sp-badges"></div>
+                <div class="pg-card">
+                    <div class="pg-cal-bar">
+                        <div class="month-navigation pg-month-nav"><button id="sport-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="sport-month-year-display">Bulan Tahun</h2><button id="sport-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+                        <div class="pg-summary"><span>Total latihan bulan ini</span><h2 id="sport-monthly-total">0 Kali | 0 Menit</h2></div>
+                    </div>
+                    <div class="weekdays"><div>Min</div><div>Sen</div><div>Sel</div><div>Rab</div><div>Kam</div><div>Jum</div><div>Sab</div><div class="wk-total">Total Mingguan</div></div>
+                    <div class="calendar-grid" id="sport-calendar"></div>
+                </div>
             </div>
 
             <div id="sport-view-dashboard" class="dashboard-container" style="display: none;">
-                <div class="month-navigation" style="margin-bottom: 20px;"><button id="sport-dash-prev-month" class="nav-btn hide-for-screenshot">&lt; Sebelumnya</button><h2 id="sport-dash-month-year-display" style="color: #2196f3;">Bulan Tahun</h2><button id="sport-dash-next-month" class="nav-btn hide-for-screenshot">Selanjutnya &gt;</button></div>
+                <div class="pg-cal-bar"><div class="month-navigation pg-month-nav"><button id="sport-dash-prev-month" class="nav-btn hide-for-screenshot" aria-label="Bulan sebelumnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 id="sport-dash-month-year-display">Bulan Tahun</h2><button id="sport-dash-next-month" class="nav-btn hide-for-screenshot" aria-label="Bulan berikutnya"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div></div>
                 <div id="sport-empty-state" class="empty-state-dash"></div>
                 <div id="sport-dash-content">
-                    <div id="sport-dash-insight" style="margin-bottom: 20px;"></div>
-                    <div class="highlight-grid">
-                        <div class="highlight-box" style="border-left: 4px solid #2196f3;"><span class="label">🏅 Olahraga Favorit</span><h3 id="sport-top-type" style="color:#2196f3;">-</h3><p id="sport-top-type-desc" class="desc-text">-</p></div>
-                        <div class="highlight-box" style="border-left: 4px solid #00e676;"><span class="label">⏱️ Rata-rata Durasi/Sesi</span><h3 id="sport-avg-dur" style="color:#00e676;">0 Menit</h3><p class="desc-text">Per sesi latihan bulan ini</p></div>
+                    <div class="equity-dashboard" id="sport-dash-stats"></div>
+                    <div id="sport-dash-insight"></div>
+                    <div class="exp-cols">
+                        <div class="pg-card">
+                            <h3 class="chart-title">Jenis olahraga</h3>
+                            <p class="pg-subdesc" style="margin:4px 0 14px;">Berapa kali tiap jenis dilakukan bulan ini.</p>
+                            <div id="sport-type-bars" class="bar-list"></div>
+                        </div>
+                        <div class="pg-card">
+                            <h3 class="chart-title">Konsistensi</h3>
+                            <p class="pg-subdesc" style="margin:4px 0 14px;">Hari yang ada latihan dibanding hari yang sudah lewat.</p>
+                            <div id="sport-consistency"></div>
+                        </div>
                     </div>
-                    <div class="chart-grid">
-                        <div class="chart-card" style="text-align:center;"><h3 class="chart-title" style="color:#2196f3;">Distribusi Jenis Olahraga</h3><div style="position:relative; width:100%; max-width:250px; margin:0 auto;"><canvas id="sportTypeChart"></canvas></div></div>
-                        <div class="chart-card" style="text-align:center;"><h3 class="chart-title" style="color:#2196f3;">Hari Aktif vs Bolong</h3><div style="position:relative; width:100%; max-width:250px; margin:0 auto;"><canvas id="sportActiveChart"></canvas><div id="sport-active-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-weight:bold; color:#fff; display:flex; flex-direction:column; gap:5px;"><span style="font-size:1.5rem;">0% Aktif</span></div></div></div>
+                    <div class="pg-card">
+                        <div class="db-head"><h3 class="chart-title" style="margin:0;">Durasi latihan per hari</h3><span id="sport-daily-note" class="mon-sub"></span></div>
+                        <div id="sport-daily-bars" class="day-bars"></div>
                     </div>
-                    <div class="chart-card" style="margin-bottom: 30px;"><h3 class="chart-title" style="color:#2196f3;">Frekuensi Latihan Harian (Menit)</h3><canvas id="sportFreqChart"></canvas></div>
                 </div>
             </div>
         </section>
 
-        <section id="view-wealth" class="content-section" style="padding-top: 10px;">
+        <section id="view-wealth" class="content-section pg-page" style="padding-top: 10px;">
             <div id="wealth-locked-ui" class="locked-overlay" style="display:none;">
-                <div style="font-size: 4rem; margin-bottom: 10px;">🔒</div>
-                <h2 style="color: #ffd700;">Privasi Bos!</h2>
-                <p style="color: #aaa; margin-bottom: 20px;">Silakan Login System terlebih dahulu untuk membuka menu History Kekayaan.</p>
-                <button onclick="document.getElementById('login-modal').style.display='flex'" class="save-btn" style="width: auto; padding: 10px 30px;">Login Sekarang</button>
+                <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="lock-title">History Kekayaan terkunci</h2>
+                <p class="lock-sub">Halaman ini berisi data pribadi. Masuk dulu untuk melihat isinya.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="lock-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Masuk</button>
             </div>
 
             <div id="wealth-content-ui">
-                <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
-                    <div class="header-left">
-                        <h1 style="color:#ffb300;">History Kekayaan 💰</h1>
-                        <p style="color:#888; font-size: 0.9rem;">Analisa uang pegangan dan target recovery kerugian trading.</p>
-                    </div>
-                    <div class="action-group-main hide-for-screenshot" style="justify-content: flex-end;">
-                        <button class="btn-action btn-export" onclick="openExportMenu('wealth')">📤 Export</button>
-                        <label for="csv-upload-wealth" class="btn-action btn-import">📥 Import<input type="file" id="csv-upload-wealth" accept=".csv" style="display: none;"></label>
-                        <button class="btn btn-success" style="background:#ffb300; color:#121212; border:none; margin-left:10px; font-weight:bold;" onclick="openWealthModal()">+ Catat Keuangan</button>
+                <header class="pg-head">
+                    <div><h1>History Kekayaan</h1><p>Analisa uang pegangan dan target recovery kerugian trading.</p></div>
+                    <div class="pg-actions hide-for-screenshot">
+                        <button class="pg-btn" onclick="openExportMenu('wealth')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 20h14"/></svg>Export</button>
+                        <label for="csv-upload-wealth" class="pg-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9"/><path d="M7.5 13.5 12 9l4.5 4.5"/><path d="M5 4h14"/></svg>Import<input type="file" id="csv-upload-wealth" accept=".csv" style="display: none;"></label>
+                        <button class="pg-btn pg-btn-primary" onclick="openWealthModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Catat Keuangan</button>
                     </div>
                 </header>
 
                 <div class="dashboard-container" id="wealth-dashboard-capture">
-                    <div class="equity-dashboard" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 20px;">
-                        <div class="equity-box" style="border-left-color:#00e676;">
-                            <span class="label">Total Pendapatan <span class="info-icon" onclick="showInfo('income')">ℹ️</span></span>
-                            <h3 id="wealth-income" style="color:#00e676;">Rp 0</h3>
+                    <div id="wealth-recovery-card" class="wealth-hero">
+                        <div class="wh-main">
+                            <h2 class="wd-title">Defisit keuangan</h2>
+                            <h1 id="wealth-minus" class="wd-amount" style="color:#ff1744;">-Rp 0</h1>
+                            <p class="wd-note">Perlu di-recovery agar saldo Real Time sama dengan Tabungan Seharusnya.</p>
                         </div>
-                        <div class="equity-box" style="border-left-color:#ff9800;">
-                            <span class="label">Total Pengeluaran <span class="info-icon" onclick="showInfo('expense')">ℹ️</span></span>
-                            <h3 id="wealth-expense" style="color:#ff9800;">Rp 0</h3>
-                        </div>
-                        <div class="equity-box" style="border-left-color:#2196f3;">
-                            <span class="label">Tabungan Seharusnya <span class="info-icon" onclick="showInfo('expected')">ℹ️</span></span>
-                            <h3 id="wealth-expected" style="color:#2196f3;">Rp 0</h3>
-                        </div>
-                        <div class="equity-box" style="border-left-color:#b0bec5; display: flex; flex-direction: column; justify-content: space-between;">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <span class="label" style="margin:0;">Uang Real Time</span>
-                                <button class="btn-edit-rt" onclick="document.getElementById('wealth-modal-rt').style.display='flex'">✏️ Update</button>
-                            </div>
-                            <h3 id="wealth-actual" style="color:#fff; margin-top:5px;">Rp 0</h3>
+                        <div class="wh-prog">
+                            <div class="wh-prog-top"><span>Pemulihan menuju target</span><b id="wealth-prog-pct">0%</b></div>
+                            <div class="cr-track"><div class="cr-fill" id="wealth-prog-fill" style="width:0%;"></div></div>
+                            <p id="wealth-prog-text" class="wd-note" style="margin-top:8px;">-</p>
                         </div>
                     </div>
 
-                    <div id="wealth-recovery-card" style="background: rgba(255, 23, 68, 0.1); border: 2px dashed #ff1744; border-radius: 12px; padding: 25px; text-align: center; margin-bottom: 30px;">
-                        <h2 style="color:#ff1744; font-size: 1.15rem; margin-bottom: 5px;">🚨 DEFISIT KEUANGAN (Trading & Pengeluaran Tak Terduga)</h2>
-                        <h1 id="wealth-minus" style="color:#ff1744; font-size: 2.8rem; margin-bottom: 10px;">-Rp 0</h1>
-                        <p style="color:#aaa; font-size: 0.95rem;">Perlu di-recovery agar <i>balance</i> Real Time sama dengan Tabungan Seharusnya.</p>
-                    </div>
-
-                    <div class="chart-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:20px;">
-                        <div class="chart-card custom-scrollbar" style="max-height: 400px; overflow-y: auto;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; position:sticky; top:-20px; background:#1e1e1e; z-index:2; padding:20px 0 10px 0; margin-top:-20px;">
-                                <h3 class="chart-title" style="color:#00e676; margin:0;">Daftar Pendapatan</h3>
-                                <select id="wealth-sort-inc" class="form-input" style="width: auto; height: 32px; font-size: 0.8rem; padding: 0 5px;" onchange="renderWealthDashboard()">
-                                    <option value="terbaru">Terbaru</option>
-                                    <option value="terlama">Terlama</option>
-                                    <option value="terbesar">Terbesar</option>
-                                    <option value="terkecil">Terkecil</option>
-                                </select>
-                            </div>
-                            <ul id="wealth-income-list" style="list-style:none; margin-top:10px;"></ul>
-                        </div>
-                        <div class="chart-card custom-scrollbar" style="max-height: 400px; overflow-y: auto;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; position:sticky; top:-20px; background:#1e1e1e; z-index:2; padding:20px 0 10px 0; margin-top:-20px;">
-                                <h3 class="chart-title" style="color:#ff9800; margin:0;">Daftar Pengeluaran</h3>
-                                <select id="wealth-sort-exp" class="form-input" style="width: auto; height: 32px; font-size: 0.8rem; padding: 0 5px;" onchange="renderWealthDashboard()">
-                                    <option value="terbaru">Terbaru</option>
-                                    <option value="terlama">Terlama</option>
-                                    <option value="terbesar">Terbesar</option>
-                                    <option value="terkecil">Terkecil</option>
-                                </select>
-                            </div>
-                            <ul id="wealth-expense-list" style="list-style:none; margin-top:10px;"></ul>
+                    <div class="equity-dashboard wealth-kpis">
+                        <div class="equity-box" style="border-left-color:#00e676;"><span class="label">Total pendapatan <span class="info-icon" onclick="showInfo('income')">i</span></span><h3 id="wealth-income" style="color:#00e676;">Rp 0</h3></div>
+                        <div class="equity-box"><span class="label">Total pengeluaran <span class="info-icon" onclick="showInfo('expense')">i</span></span><h3 id="wealth-expense">Rp 0</h3></div>
+                        <div class="equity-box"><span class="label">Tabungan seharusnya <span class="info-icon" onclick="showInfo('expected')">i</span></span><h3 id="wealth-expected">Rp 0</h3></div>
+                        <div class="equity-box">
+                            <div style="display:flex; justify-content:space-between; align-items:center;"><span class="label" style="margin:0;">Uang real time</span><button class="btn-edit-rt" onclick="document.getElementById('wealth-modal-rt').style.display='flex'">Update</button></div>
+                            <h3 id="wealth-actual" style="margin-top:5px;">Rp 0</h3>
                         </div>
                     </div>
 
-                    <div class="chart-card" style="margin-top: 20px;">
-                        <h3 class="chart-title">💡 Catatan Kebocoran Pengeluaran Bulanan</h3>
-                        <p style="color:#aaa; font-size:0.9rem; margin-bottom:15px;">Penyebab biaya bulanan sering membengkak melebihi standar (Rp 750k):</p>
-                        <div class="leak-tags">
-                            <span class="leak-tag">⌚ Beli Jam Tangan</span>
-                            <span class="leak-tag">👟 Sepatu Baru</span>
-                            <span class="leak-tag">🥛 Suplemen/Susu Olahraga</span>
-                            <span class="leak-tag">🎒 Trip Naik Gunung</span>
-                            <span class="leak-tag">🎣 Mancing / Hobi</span>
-                            <span class="leak-tag">🏡 Sewa Vila/Staycation</span>
-                            <span class="leak-tag">🎓 Bayar Keperluan Kuliah</span>
-                            <span class="leak-tag">🎮 Sering Keluar Main / Nongkrong</span>
+                    <div class="pg-card">
+                        <h3 class="chart-title" style="margin:0;">Ringkasan per bulan</h3>
+                        <p class="pg-subdesc" style="margin:6px 0 12px;">Selisih = pendapatan dikurangi pengeluaran di bulan itu. Hijau berarti uang bertambah, merah berarti pengeluaran lebih besar dari pendapatan.</p>
+                        <div id="wealth-monthly" class="wm-table"></div>
+                    </div>
+
+                    <div class="pg-card">
+                        <div class="wl-head wl-tabs-head">
+                            <div class="wl-tabs">
+                                <button type="button" id="wl-tab-income" class="wl-tab active">Pendapatan <span id="wl-sum-income"></span></button>
+                                <button type="button" id="wl-tab-expense" class="wl-tab">Pengeluaran <span id="wl-sum-expense"></span></button>
+                            </div>
+                            <div class="wl-ctrl">
+                                <label>Urutkan <select id="wealth-sort" class="form-input" onchange="renderWealthDashboard()"><option value="terbaru">Terbaru</option><option value="terlama">Terlama</option><option value="terbesar">Terbesar</option><option value="terkecil">Terkecil</option></select></label>
+                                <label>Tampilkan <select id="wealth-limit" class="form-input" onchange="renderWealthDashboard()"><option value="5">5 bulan</option><option value="10">10 bulan</option><option value="all">Semua</option></select></label>
+                            </div>
+                        </div>
+                        <div id="wealth-list" class="wg-list"></div>
+                    </div>
+
+                    <div class="pg-card">
+                        <h3 class="chart-title">Pemicu pengeluaran membengkak</h3>
+                        <p class="pg-subdesc" style="margin:6px 0 12px;">Hal-hal yang biasanya bikin pengeluaran bulanan melewati batas Rp 750 ribu. Cek daftar ini sebelum membeli sesuatu.</p>
+                        <div class="leak-grid">
+                            <div class="leak-item"><span></span>Beli jam tangan</div>
+                            <div class="leak-item"><span></span>Sepatu baru</div>
+                            <div class="leak-item"><span></span>Suplemen dan susu olahraga</div>
+                            <div class="leak-item"><span></span>Trip naik gunung</div>
+                            <div class="leak-item"><span></span>Mancing dan hobi</div>
+                            <div class="leak-item"><span></span>Sewa vila atau staycation</div>
+                            <div class="leak-item"><span></span>Keperluan kuliah</div>
+                            <div class="leak-item"><span></span>Sering keluar main atau nongkrong</div>
                         </div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section id="view-career" class="content-section" style="padding-top: 10px;">
-            <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
-                <div class="header-left">
-                    <h1 style="color:#ba68c8;">Peningkatan Karir & Skill 🚀</h1>
-                    <p style="color:#888; font-size: 0.9rem;">Upgrade "Mesin" untuk mencetak hasil yang lebih besar.</p>
-                </div>
-            </header>
+        <section id="view-career" class="content-section pg-page" style="padding-top: 10px;">
+            <header class="pg-head"><div><h1>Karir dan Skill</h1><p>Upgrade "mesin" untuk hasil yang lebih besar.</p></div></header>
 
             <div class="dashboard-container">
-                <div class="chart-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:20px;">
+                <div class="chart-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:14px;">
                     <div class="chart-card">
-                        <h3 class="chart-title" style="color:#ba68c8;">📚 Fokus Belajar Saat Ini</h3>
-                        <div style="margin-top: 15px;">
-                            <div style="margin-bottom: 15px;">
-                                <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.9rem;">
-                                    <span>Psikologi & Probabilitas XAUUSD</span>
-                                    <span style="color:#ba68c8;">75%</span>
-                                </div>
-                                <div style="width:100%; background:#333; border-radius:10px; height:8px;">
-                                    <div style="width:75%; background:#ba68c8; height:100%; border-radius:10px;"></div>
-                                </div>
-                                <p style="color:#aaa; font-size:0.8rem; margin-top:5px;">Meningkatkan disiplin entry dan menahan FOMO saat news.</p>
-                            </div>
-                            
-                            <div style="margin-bottom: 15px;">
-                                <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.9rem;">
-                                    <span>Optimalisasi Prompt AI & Otomatisasi</span>
-                                    <span style="color:#00e676;">40%</span>
-                                </div>
-                                <div style="width:100%; background:#333; border-radius:10px; height:8px;">
-                                    <div style="width:40%; background:#00e676; height:100%; border-radius:10px;"></div>
-                                </div>
-                                <p style="color:#aaa; font-size:0.8rem; margin-top:5px;">Memaksimalkan AI Plus Premium untuk efisiensi coding & rekap data.</p>
-                            </div>
-
-                            <div style="margin-bottom: 15px;">
-                                <div style="display:flex; justify-content:space-between; margin-bottom:5px; font-size:0.9rem;">
-                                    <span>Manajemen Nutrisi & Anatomi Otot</span>
-                                    <span style="color:#2196f3;">60%</span>
-                                </div>
-                                <div style="width:100%; background:#333; border-radius:10px; height:8px;">
-                                    <div style="width:60%; background:#2196f3; height:100%; border-radius:10px;"></div>
-                                </div>
-                                <p style="color:#aaa; font-size:0.8rem; margin-top:5px;">Eksplorasi subtitusi dada ayam/telur dan efektivitas latihan dumbbell.</p>
-                            </div>
-                        </div>
+                        <h3 class="chart-title">Fokus belajar saat ini</h3>
+                        <div class="empty-note">Belum ada data. Menunggu ide dan input pertama.</div>
                     </div>
-
                     <div class="chart-card">
-                        <h3 class="chart-title" style="color:#ffb300;">🎯 Backlog & Target Sertifikasi/Kursus</h3>
-                        <ul class="task-list" style="margin-top:15px;">
-                            <li style="border-left-color:#ffb300;">Ikut Webinar/Kursus Advance Market Structure (SMC/ICT).</li>
-                            <li style="border-left-color:#ffb300;">Pelajari integrasi API Google Sheets tingkat lanjut biar semua data otomatis.</li>
-                            <li style="border-left-color:#ffb300;">Belajar teknik pernafasan dan endurance tingkat tinggi (VO2 Max).</li>
-                            <li style="border-left-color:#ffb300;">Bikin sumber *Active Income* baru selain rutinitas saat ini.</li>
-                        </ul>
+                        <h3 class="chart-title">Backlog dan target sertifikasi / kursus</h3>
+                        <div class="empty-note">Belum ada data. Menunggu ide dan input pertama.</div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section id="view-roadmap" class="content-section" style="padding-top: 10px;">
-            <header class="main-header" style="border-bottom:none; margin-bottom:10px; padding-bottom:0;">
-                <div class="header-left">
-                    <h1 style="color:#00e676;">Roadmap Masa Depan 🗺️</h1>
-                    <p style="color:#888; font-size: 0.9rem;">Milestone target kehidupan, finansial, dan fisik secara bertahap.</p>
+        <section id="view-work" class="content-section pg-page" style="padding-top: 10px;">
+            <header class="pg-head wk-header"><div><h1>Pekerjaan <span class="demo-pill">Demo</span></h1><p>Project & tugas kerja. Import / salin format "List Start Task". Masih tahap pembuatan, fitur dan tampilan bisa berubah.</p></div></header>
+
+            <div id="work-locked-ui" class="locked-overlay" style="display:none;">
+                <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+                <h2 class="lock-title">Pekerjaan terkunci</h2>
+                <p class="lock-sub">Halaman ini berisi data pribadi. Masuk dulu untuk melihat isinya.</p>
+                <button onclick="document.getElementById('login-modal').style.display='flex'" class="lock-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>Masuk</button>
+            </div>
+
+            <div id="work-content-ui">
+                <div class="wk-toolbar">
+                    <div class="wk-tabs">
+                        <button id="wk-tab-list" class="xau-tab active">My Task</button>
+                        <button id="wk-tab-board" class="xau-tab">Kanban</button>
+                    </div>
+                    <div class="wk-tools">
+                        <select id="wk-filter-project" class="form-input wk-filter" aria-label="Filter kategori"></select>
+                        <button id="wk-import" class="btn-action wk-btn-ghost wk-tool-btn">Import</button>
+                        <button id="wk-export" class="btn-action wk-btn-ghost wk-tool-btn">Salin Laporan</button>
+                        <button id="wk-new" class="save-btn wk-new">+ Tugas Baru</button>
+                    </div>
                 </div>
-            </header>
+                <div id="wk-summary" class="wk-summary"></div>
+                <div id="wk-focus"></div>
+                <div id="wk-body"></div>
+            </div>
+        </section>
 
+        <section id="view-roadmap" class="content-section pg-page" style="padding-top: 10px;">
+            <header class="pg-head"><div><h1>Roadmap Masa Depan</h1><p>Rencana per bidang: trading, keuangan, personal, dan pekerjaan.</p></div></header>
+            <div class="xau-nav hide-for-screenshot rm-tabs"><button class="xau-tab rm-tab active" data-rm="all">Semua</button><button class="xau-tab rm-tab" data-rm="trading">Trading</button><button class="xau-tab rm-tab" data-rm="keuangan">Keuangan</button><button class="xau-tab rm-tab" data-rm="personal">Personal</button><button class="xau-tab rm-tab" data-rm="pekerjaan">Pekerjaan</button></div>
             <div class="dashboard-container">
-                <div style="position: relative; padding-left: 30px; margin-top: 20px; border-left: 2px dashed #444;">
-                    
-                    <div style="position: relative; margin-bottom: 40px;">
-                        <div style="position: absolute; left: -41px; top: 0; width: 20px; height: 20px; background: #121212; border: 3px solid #ff1744; border-radius: 50%;"></div>
-                        <h3 style="color:#ff1744; margin-bottom:5px;">Q3 2026 (Juli - September)</h3>
-                        <div class="chart-card" style="margin-bottom:0; padding:15px; border-left: 4px solid #ff1744;">
-                            <p style="color:#fff; font-weight:bold; margin-bottom:10px;">Fokus: Recovery & Endurance Base</p>
-                            <ul style="color:#aaa; font-size:0.9rem; padding-left:20px; line-height:1.6;">
-                                <li><strong>Trading:</strong> Menghapus *defisit keuangan* sepenuhnya dan menjaga Win Rate XAUUSD konsisten di atas 50%.</li>
-                                <li><strong>Fisik:</strong> Latihan dumbbell, skipping, dan plank sudah menjadi *muscle memory* tanpa rasa malas.</li>
-                                <li><strong>Goal Utama:</strong> Berhasil eksekusi trip "Naik Gunung" perdana tahun ini dengan stamina prima tanpa ngos-ngosan berlebih seperti saat tes jalan di Ragunan.</li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div style="position: relative; margin-bottom: 40px;">
-                        <div style="position: absolute; left: -41px; top: 0; width: 20px; height: 20px; background: #121212; border: 3px solid #ffd700; border-radius: 50%;"></div>
-                        <h3 style="color:#ffd700; margin-bottom:5px;">Q4 2026 (Oktober - Desember)</h3>
-                        <div class="chart-card" style="margin-bottom:0; padding:15px; border-left: 4px solid #ffd700;">
-                            <p style="color:#fff; font-weight:bold; margin-bottom:10px;">Fokus: Akumulasi Keuntungan & Skala</p>
-                            <ul style="color:#aaa; font-size:0.9rem; padding-left:20px; line-height:1.6;">
-                                <li><strong>Trading:</strong> Saldo Tabungan Seharusnya sudah mulai surplus berkat P/L bulanan hijau yang konsisten. Sudah menemukan *setup* andalan (Zone/Tengah).</li>
-                                <li><strong>Lifestyle:</strong> Anggaran pengeluaran bulanan berhasil ditekan tanpa membengkak dari *leak tags* (bocor halus).</li>
-                                <li><strong>Goal Utama:</strong> Menutup tahun 2026 dengan performa fisik dan portofolio hijau.</li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div style="position: relative;">
-                        <div style="position: absolute; left: -41px; top: 0; width: 20px; height: 20px; background: #121212; border: 3px solid #00e676; border-radius: 50%;"></div>
-                        <h3 style="color:#00e676; margin-bottom:5px;">2027 & Beyond</h3>
-                        <div class="chart-card" style="margin-bottom:0; padding:15px; border-left: 4px solid #00e676;">
-                            <p style="color:#fff; font-weight:bold; margin-bottom:10px;">Fokus: Financial Freedom & Puncak Baru</p>
-                            <ul style="color:#aaa; font-size:0.9rem; padding-left:20px; line-height:1.6;">
-                                <li><strong>Sistem:</strong> Personal OS ini di-upgrade menjadi versi yang bisa *auto-sync* dengan bank dan MT4.</li>
-                                <li><strong>Fisik:</strong> Menaklukkan gunung-gunung dengan elevasi di atas 3000mdpl dengan asupan protein yang sangat terukur.</li>
-                                <li><strong>Goal Utama:</strong> Kebebasan waktu. Uang bekerja melalui compounding trading, sementara waktu digunakan untuk hobi dan menjaga kesehatan tubuh.</li>
-                            </ul>
-                        </div>
-                    </div>
-
+                <div class="rm-timeline" id="rm-timeline">
+                    <article class="rm-item" data-track="trading"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Okt - Des 2026</span><span class="rm-chip rm-trading">Trading</span></div><h3>Fase demo dan pembuktian</h3><ul><li>Bot tetap di akun demo. <strong>Uang real belum dimulai.</strong></li><li>Perbaiki payoff ratio Metode 1: Gold Layer 3 (TP lebih pendek dari SL) dan kualitas entry FX trend following.</li><li>Setelah diperbaiki, strategi <strong>dibekukan</strong> lalu diuji minimal 3 bulan dan 100 trade per metode.</li><li>Target uji: profit factor minimal 1,3, dan P/L di broker demo positif 3 bulan berturut-turut.</li></ul></div></article>
+                    <article class="rm-item" data-track="trading"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Jan - Feb 2027</span><span class="rm-chip rm-trading">Trading</span></div><h3>Review syarat sebelum uang real</h3><ul><li>Cek drawdown maksimal 15-20% modal, selisih simulasi vs broker maksimal 10%, bot hidup minimal 99%.</li><li>Jika ada syarat belum lolos, uji diperpanjang (tidak dipaksa).</li></ul></div></article>
+                    <article class="rm-item" data-track="trading"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Paling cepat Feb - Mar 2027</span><span class="rm-chip rm-trading">Trading</span></div><h3>Uang real skala kecil</h3><ul><li>Hanya jika semua syarat lolos: akun cent dengan modal yang rela hilang 100%.</li><li>Hanya instrumen dan metode yang lolos uji (kemungkinan Gold Metode 1).</li><li>Jalan 1-2 bulan dibandingkan dengan demo, baru naik bertahap.</li></ul></div></article>
+                    <article class="rm-item" data-track="trading"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Setelah itu</span><span class="rm-chip rm-trading">Trading</span></div><h3>Aplikasi mobile</h3><ul><li>Rencana awal: aplikasi Flutter untuk memantau dan mengontrol bot dari HP.</li><li>Personal OS ini di-upgrade supaya bisa auto-sync dengan bank dan MT5.</li></ul></div></article>
+                    <article class="rm-item" data-track="keuangan"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Sekarang</span><span class="rm-chip rm-keuangan">Keuangan</span></div><h3>Menutup defisit keuangan</h3><ul><li>Hapus defisit: saldo Real Time menyamai Tabungan Seharusnya.</li><li>Jaga pengeluaran bulanan tidak membengkak dari "kebocoran" (jam tangan, sepatu, hobi, nongkrong).</li></ul></div></article>
+                    <article class="rm-item" data-track="keuangan"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Okt - Nov 2026</span><span class="rm-chip rm-keuangan">Keuangan</span></div><h3>Investasi: belajar dan menyusun rencana</h3><ul><li>Setoran Bibit: 1 kali terakhir ke 2 saham, lalu 1 saham di-pause sekitar 1 bulan (tetap dipegang).</li><li>Reksadana dan emas digital tetap jalan. Sebulan dipakai belajar menyusun rencana investasi.</li><li>Dana darurat dijaga mendekati 5x pengeluaran bulanan.</li></ul></div></article>
+                    <article class="rm-item" data-track="keuangan"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">2027</span><span class="rm-chip rm-keuangan">Keuangan</span></div><h3>Modal trading bertahap</h3><ul><li>Modal real naik hanya jika ada bukti performa, bukan karena kalender.</li><li>Gaji utama tidak dipakai menutup kerugian trading.</li></ul></div></article>
+                    <article class="rm-item" data-track="personal"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Q3 - Q4 2026</span><span class="rm-chip rm-personal">Personal</span></div><h3>Fisik dan endurance</h3><ul><li>Latihan dumbbell, skipping, dan plank menjadi kebiasaan tanpa rasa malas.</li><li>Trip naik gunung perdana tahun ini dengan stamina prima.</li></ul></div></article>
+                    <article class="rm-item" data-track="personal"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">2027</span><span class="rm-chip rm-personal">Personal</span></div><h3>Gunung tinggi</h3><ul><li>Menaklukkan gunung dengan elevasi di atas 3000 mdpl.</li><li>Asupan protein terukur (dada ayam, telur) dan latihan terstruktur.</li></ul></div></article>
+                    <article class="rm-item" data-track="personal"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Jangka panjang</span><span class="rm-chip rm-personal">Personal</span></div><h3>Kebebasan waktu</h3><ul><li>Uang bekerja lewat compounding, waktu dipakai untuk hobi dan kesehatan.</li></ul></div></article>
+                    <article class="rm-item" data-track="pekerjaan"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Sekarang</span><span class="rm-chip rm-pekerjaan">Pekerjaan</span></div><h3>Tugas dan laporan harian</h3><ul><li>Modul Tugas dan Kanban dipakai untuk import dan menyalin laporan "List Start Task".</li><li>Modul ini <strong>masih tahap demo</strong>, fitur dan tampilannya masih bisa berubah.</li></ul></div></article>
+                    <article class="rm-item" data-track="pekerjaan"><span class="rm-dot"></span><div class="rm-card"><div class="rm-top"><span class="rm-period">Belum diisi</span><span class="rm-chip rm-pekerjaan">Pekerjaan</span></div><h3>Target kerja dan karir</h3><ul><li>Belum ada target yang dicatat di sini. Isi bersama saat sudah jelas (jabatan, skill, sertifikasi, penghasilan tambahan).</li></ul></div></article>
                 </div>
             </div>
         </section>
     </main>
+
+    <div id="work-modal" class="modal">
+        <div class="modal-content wk-modal">
+            <span class="close-btn" data-close-modal="work-modal">&times;</span>
+            <h2 id="work-modal-title">Project / Tugas Baru</h2>
+            <div class="form-group"><label for="wk-f-title">Judul</label><input type="text" id="wk-f-title" class="form-input" maxlength="200" placeholder="Cth: DCT Receipt ATM" autocomplete="off"></div>
+            <div class="form-grid-2">
+                <div class="form-group"><label for="wk-f-kode">Kode project</label><input type="text" id="wk-f-kode" class="form-input" maxlength="30" placeholder="Cth: 24080042" autocomplete="off"></div>
+                <div class="form-group"><label for="wk-f-kategori">Kategori</label><input type="text" id="wk-f-kategori" class="form-input" list="wk-kategori-list" maxlength="40" placeholder="Utama / Internal / ..." autocomplete="off"><datalist id="wk-kategori-list"></datalist></div>
+            </div>
+            <div class="form-grid-2">
+                <div class="form-group"><label for="wk-f-status">Kolom</label><select id="wk-f-status" class="form-input"><option value="antri">Antri</option><option value="req">Requirement / FSD</option><option value="dev">Development</option><option value="test">Testing (SIT/UAT)</option><option value="done">Selesai</option></select></div>
+                <div class="form-group"><label for="wk-f-tahap">Tahap (teks di laporan)</label><input type="text" id="wk-f-tahap" class="form-input" list="wk-tahap-list" maxlength="60" placeholder="Cth: Dev On Progress" autocomplete="off">
+                    <datalist id="wk-tahap-list"><option value="Pending Requirement"><option value="FSD On Queue"><option value="FSD On Progress"><option value="Change Request On Queue"><option value="Dev On Progress"><option value="Dev On Testing"><option value="SIT On Progress"><option value="UAT On Progress"><option value="Done"></datalist></div>
+            </div>
+            <div class="form-grid-2">
+                <div class="form-group"><label for="wk-f-progress">Progress</label><div class="wk-progress-input"><input type="range" id="wk-f-progress" min="0" max="100" step="5"><input type="number" id="wk-f-progress-num" class="form-input" min="0" max="100"><span>%</span></div></div>
+                <div class="form-group"><label for="wk-f-order">Urutan prioritas</label><input type="number" id="wk-f-order" class="form-input" min="1" max="999"></div>
+            </div>
+            <div class="form-group">
+                <label>Log harian</label>
+                <div class="wk-log-add"><input type="date" id="wk-f-log-date" class="form-input"><input type="text" id="wk-f-log-text" class="form-input" placeholder="Cth: PIC Check Script SIT" autocomplete="off"><button type="button" id="wk-f-log-add" class="btn-action wk-btn-ghost">Tambah</button></div>
+                <div id="wk-f-logs" class="wk-log-list"></div>
+            </div>
+            <details id="wk-f-more" class="wk-more">
+                <summary>Lainnya (prioritas, deadline, catatan, checklist)</summary>
+                <div class="form-grid-2">
+                    <div class="form-group"><label for="wk-f-priority">Prioritas</label><select id="wk-f-priority" class="form-input"><option value="high">Tinggi</option><option value="medium">Sedang</option><option value="low">Rendah</option></select></div>
+                    <div class="form-group"><label for="wk-f-deadline">Deadline</label><input type="date" id="wk-f-deadline" class="form-input"></div>
+                </div>
+                <div class="form-group"><label for="wk-f-notes">Catatan</label><textarea id="wk-f-notes" class="form-input wk-textarea" rows="3" placeholder="Detail, link, dll."></textarea></div>
+                <div class="form-group">
+                    <label>Checklist</label>
+                    <div id="wk-f-checklist" class="wk-cl-list"></div>
+                    <div class="wk-cl-add"><input type="text" id="wk-f-cl-input" class="form-input" placeholder="Tambah item, tekan Enter" autocomplete="off"><button type="button" id="wk-f-cl-add" class="btn-action wk-btn-ghost">Tambah</button></div>
+                </div>
+            </details>
+            <div class="wk-modal-actions">
+                <button type="button" id="wk-f-delete" class="btn-action wk-btn-danger">Hapus</button>
+                <button type="button" id="wk-f-save" class="save-btn">Simpan</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="work-import-modal" class="modal">
+        <div class="modal-content wk-modal">
+            <span class="close-btn" data-close-modal="work-import-modal">&times;</span>
+            <h2>Import "List Start Task"</h2>
+            <p class="wk-modal-hint">Tempel teks laporan harian. Project yang kodenya sama di-update (gak dobel), sisanya jadi kartu baru. Log diganti sesuai teks.</p>
+            <textarea id="wk-import-text" class="form-input wk-textarea wk-mono" rows="9" placeholder="1. Utama | 24080042 | DCT Receipt ATM | Pending Requirement | 70%&#10;* 30 Jul 26 : ..."></textarea>
+            <div id="wk-import-preview" class="wk-import-preview"></div>
+            <div class="wk-modal-actions">
+                <button type="button" class="btn-action wk-btn-ghost" data-close-modal="work-import-modal">Batal</button>
+                <button type="button" id="wk-import-apply" class="save-btn" disabled>Terapkan</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="work-export-modal" class="modal">
+        <div class="modal-content wk-modal">
+            <span class="close-btn" data-close-modal="work-export-modal">&times;</span>
+            <h2>Salin List Start Task</h2>
+            <div class="form-group"><label for="wk-export-name">Nama di judul</label><input type="text" id="wk-export-name" class="form-input" maxlength="40" autocomplete="off"></div>
+            <textarea id="wk-export-text" class="form-input wk-textarea wk-mono" rows="14" readonly></textarea>
+            <div class="wk-modal-actions">
+                <button type="button" class="btn-action wk-btn-ghost" data-close-modal="work-export-modal">Tutup</button>
+                <button type="button" id="wk-export-copy" class="save-btn">Salin</button>
+            </div>
+        </div>
+    </div>
 
     <div id="wealth-modal" class="modal">
         <div class="modal-content" style="width: 500px;">
@@ -1083,7 +1183,7 @@
         <div class="modal-content">
             <span class="close-btn" id="close-ai-modal">&times;</span>
             <h2 id="ai-modal-date-title">Entry Simulasi Tanggal</h2>
-            <p style="color:#888; font-size:0.8rem; margin-bottom:10px;">Riwayat ini view-only (dijalankan otomatis oleh bot), gak bisa diedit/dihapus dari sini biar aman dari salah tap di HP.</p>
+            <p class="pg-subdesc">Hanya untuk dilihat. Entry dijalankan otomatis oleh bot.</p>
             <div id="ai-today-history" class="today-history"></div>
         </div>
     </div>
@@ -1091,7 +1191,7 @@
     <div id="ai-reset-modal" class="modal">
         <div class="modal-content" style="width: 450px;">
             <span class="close-btn" id="close-ai-reset-modal">&times;</span>
-            <h2 style="color:#ff1744; margin-bottom: 5px;">🗑️ Reset Data Trading AI</h2>
+            <h2 style="color:#ff1744; margin-bottom: 5px;">️ Reset Data Trading AI</h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:15px;">Semua histori simulasi bakal kehapus permanen. Wajib isi alasan reset dulu — bakal tercatat di tab Log Aktivitas.</p>
             <div class="form-group"><label>Alasan Reset</label><textarea id="ai-reset-reason" class="form-input" rows="3" placeholder="Contoh: mulai ulang setelah upgrade layer bertingkat"></textarea></div>
             <p id="ai-reset-reason-error" style="color:#ff1744; font-size:0.8rem; display:none; margin-top:5px;">Alasan wajib diisi.</p>
@@ -1102,7 +1202,7 @@
     <div id="ai-settings-modal" class="modal">
         <div class="modal-content" style="width: 450px;">
             <span class="close-btn" onclick="document.getElementById('ai-settings-modal').style.display='none'">&times;</span>
-            <h2 style="color:#9c27b0; margin-bottom: 5px;">⚙️ Settings Trading AI</h2>
+            <h2 style="color:var(--tx-strong, #eee); margin-bottom: 5px;">️ Settings Trading AI</h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:20px;">API key disinkronkan ke akun cloud kamu (kalau lagi login), jadi otomatis kebawa di device lain.</p>
             <div class="form-group"><label>TwelveData API Key (wajib, buat data harga live)</label><input type="text" id="ai-key-twelvedata" class="form-input" placeholder="Masukkan API key..."></div>
             <div class="form-group" style="margin-top:10px;"><label>Provider LLM (opsional, buat teks alasan lebih natural)</label><select id="ai-llm-provider" class="form-input"><option value="none">Tidak pakai (template saja)</option><option value="gemini">Google Gemini</option><option value="claude">Claude (Anthropic)</option></select></div>
@@ -1114,14 +1214,14 @@
     <div id="ai-master-modal" class="modal">
         <div class="modal-content" style="width: 680px; max-height: 85vh; overflow-y: auto;">
             <span class="close-btn" onclick="document.getElementById('ai-master-modal').style.display='none'">&times;</span>
-            <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting Trading Bot</h2>
+            <h2 style="color:var(--tx-strong, #eee); margin-bottom: 5px;">️ Master Setting Trading Bot</h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Semua parameter ini dipakai bot VPS/MT5 (kepakai otomatis tiap tick, ~10 detik, gak perlu restart bot) dan simulasi manual di web. Ubah SL/TP/Lot cuma berlaku buat trade BARU — posisi yang lagi open tetap pakai angka lama.</p>
 
-            <h3 class="master-group-title">📊 Risk Limit (ngeblok entry baru otomatis kalau kesentuh, per-instrumen + gabungan)</h3>
+            <h3 class="master-group-title">Risk Limit (ngeblok entry baru otomatis kalau kesentuh, per-instrumen + gabungan)</h3>
             <div class="master-row"><label>Limit Risk (%)</label><input type="number" id="ai-master-risk-limit-pct" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Periode Risk</label><select id="ai-master-risk-period" class="master-input wide"><option value="monthly">Bulanan</option><option value="weekly">Mingguan (minggu berjalan)</option></select></div>
 
-            <h3 class="master-group-title">🎯 SL & TP</h3>
+            <h3 class="master-group-title">SL & TP</h3>
             <div class="master-row"><label>SL (pips)</label><input type="number" id="ai-master-sl-pips" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Mode SL</label><select id="ai-master-sl-mode" class="master-input wide"><option value="fixed">Fixed (pips tetap)</option><option value="atr">Adaptif (ikut volatilitas ATR)</option></select></div>
             <div class="master-row"><label>Multiplier ATR (kalau mode Adaptif)</label><input type="number" id="ai-master-atr-multiplier" class="master-input" step="0.1" min="0.5"></div>
@@ -1149,18 +1249,18 @@
             <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Preview pakai angka SL manual di atas — kalau Mode SL Adaptif aktif, SL asli tiap sinyal bisa beda.</p>
             <div class="master-row"><label>Jarak Antar Layer (pips)</label><input type="number" id="ai-master-layer-stagger-pips" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">🔒 Lock & Deep-Lock</h3>
+            <h3 class="master-group-title">Lock & Deep-Lock</h3>
             <div class="master-row"><label>Kunci Profit Layer 2&amp;3 Setelah Layer 1 TP (pips)</label><input type="number" id="ai-master-lock-pips-after-tp1" class="master-input" step="1" min="0"></div>
             <div class="master-row"><label>Ambang Deep-Lock (pips floating profit Layer 3)</label><input type="number" id="ai-master-deep-lock-trigger-pips" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Deep-Lock SL Layer 3 ke (pips)</label><input type="number" id="ai-master-deep-lock-pips" class="master-input" step="1" min="0"></div>
             <div class="master-row"><label>Timeout Setelah Deep-Lock (menit)</label><input type="number" id="ai-master-deep-lock-timeout-minutes" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">📈 Filter Sinyal</h3>
+            <h3 class="master-group-title">Filter Sinyal</h3>
             <div class="master-row"><label>Ambang Minimum Win Rate (%)</label><input type="number" id="ai-master-min-signal-winrate" class="master-input" step="1" min="0" max="100"></div>
             <div class="master-row"><label>Lookback Win Rate (hari)</label><input type="number" id="ai-master-winrate-lookback-days" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Minimal Sample Sebelum Filter Aktif</label><input type="number" id="ai-master-winrate-min-samples" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">📰 Jeda Berita High-Impact</h3>
+            <h3 class="master-group-title">Jeda Berita High-Impact</h3>
             <div class="master-row">
                 <label>Sebelum / Sesudah Rilis (menit)</label>
                 <div style="display:flex; gap:6px;">
@@ -1169,10 +1269,10 @@
                 </div>
             </div>
 
-            <h3 class="master-group-title">📊 Summary Telegram</h3>
+            <h3 class="master-group-title">Summary Telegram</h3>
             <div class="master-row"><label>Interval Otomatis (jam)</label><input type="number" id="ai-master-summary-interval-hours" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">🔵 Metode 2 (ICT/SMC Liquidity Sweep)</h3>
+            <h3 class="master-group-title">Metode 2 (ICT/SMC Liquidity Sweep)</h3>
             <div class="master-row"><label>Status</label><select id="ai-master-method-two-enabled" class="master-input wide"><option value="off">Nonaktif</option><option value="on">Aktif</option></select></div>
             <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Strategi terpisah (signalType &amp; slot posisi sendiri) — sweep HTF (H4) → CHoCH LTF (M15) → entry di Order Block. Cuma dihitung &amp; dieksekusi di bot VPS.</p>
 
@@ -1186,14 +1286,14 @@
     <div id="cur-master-modal" class="modal">
         <div class="modal-content" style="width: 680px; max-height: 85vh; overflow-y: auto;">
             <span class="close-btn" onclick="document.getElementById('cur-master-modal').style.display='none'">&times;</span>
-            <h2 style="color:#ff9800; margin-bottom: 5px;">🎛️ Master Setting — <span id="cur-master-pair-label">USDJPY</span></h2>
+            <h2 style="color:var(--tx-strong, #eee); margin-bottom: 5px;">️ Master Setting — <span id="cur-master-pair-label">USDJPY</span></h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Parameter khusus pair yang lagi dipilih di dropdown — independen dari Gold maupun pair currency lain. Dipakai bot VPS otomatis tiap tick, gak perlu restart.</p>
 
-            <h3 class="master-group-title">📊 Risk Limit (ngeblok entry baru otomatis kalau kesentuh, per-instrumen + gabungan)</h3>
+            <h3 class="master-group-title">Risk Limit (ngeblok entry baru otomatis kalau kesentuh, per-instrumen + gabungan)</h3>
             <div class="master-row"><label>Limit Risk (%)</label><input type="number" id="cur-master-risk-limit-pct" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Periode Risk</label><select id="cur-master-risk-period" class="master-input wide"><option value="monthly">Bulanan</option><option value="weekly">Mingguan (minggu berjalan)</option></select></div>
 
-            <h3 class="master-group-title">🎯 SL & TP</h3>
+            <h3 class="master-group-title">SL & TP</h3>
             <div class="master-row"><label>SL (pips)</label><input type="number" id="cur-master-sl-pips" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Mode SL</label><select id="cur-master-sl-mode" class="master-input wide"><option value="fixed">Fixed (pips tetap)</option><option value="atr">Adaptif (ikut volatilitas ATR)</option></select></div>
             <div class="master-row"><label>Multiplier ATR (kalau mode Adaptif)</label><input type="number" id="cur-master-atr-multiplier" class="master-input" step="0.1" min="0.5"></div>
@@ -1221,18 +1321,18 @@
             <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Preview pakai angka SL manual di atas — kalau Mode SL Adaptif aktif, SL asli tiap sinyal bisa beda.</p>
             <div class="master-row"><label>Jarak Antar Layer (pips)</label><input type="number" id="cur-master-layer-stagger-pips" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">🔒 Lock & Deep-Lock</h3>
+            <h3 class="master-group-title">Lock & Deep-Lock</h3>
             <div class="master-row"><label>Kunci Profit Layer 2&amp;3 Setelah Layer 1 TP (pips)</label><input type="number" id="cur-master-lock-pips-after-tp1" class="master-input" step="1" min="0"></div>
             <div class="master-row"><label>Ambang Deep-Lock (pips floating profit Layer 3)</label><input type="number" id="cur-master-deep-lock-trigger-pips" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Deep-Lock SL Layer 3 ke (pips)</label><input type="number" id="cur-master-deep-lock-pips" class="master-input" step="1" min="0"></div>
             <div class="master-row"><label>Timeout Setelah Deep-Lock (menit)</label><input type="number" id="cur-master-deep-lock-timeout-minutes" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">📈 Filter Sinyal</h3>
+            <h3 class="master-group-title">Filter Sinyal</h3>
             <div class="master-row"><label>Ambang Minimum Win Rate (%)</label><input type="number" id="cur-master-min-signal-winrate" class="master-input" step="1" min="0" max="100"></div>
             <div class="master-row"><label>Lookback Win Rate (hari)</label><input type="number" id="cur-master-winrate-lookback-days" class="master-input" step="1" min="1"></div>
             <div class="master-row"><label>Minimal Sample Sebelum Filter Aktif</label><input type="number" id="cur-master-winrate-min-samples" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">📰 Jeda Berita High-Impact</h3>
+            <h3 class="master-group-title">Jeda Berita High-Impact</h3>
             <div class="master-row">
                 <label>Sebelum / Sesudah Rilis (menit)</label>
                 <div style="display:flex; gap:6px;">
@@ -1241,10 +1341,10 @@
                 </div>
             </div>
 
-            <h3 class="master-group-title">📊 Summary Telegram</h3>
+            <h3 class="master-group-title">Summary Telegram</h3>
             <div class="master-row"><label>Interval Otomatis (jam)</label><input type="number" id="cur-master-summary-interval-hours" class="master-input" step="1" min="1"></div>
 
-            <h3 class="master-group-title">🔵 Metode 2 (ICT/SMC Liquidity Sweep)</h3>
+            <h3 class="master-group-title">Metode 2 (ICT/SMC Liquidity Sweep)</h3>
             <div class="master-row"><label>Status</label><select id="cur-master-method-two-enabled" class="master-input wide"><option value="off">Nonaktif</option><option value="on">Aktif</option></select></div>
             <p style="color:#777; font-size:0.75rem; margin:-8px 0 12px;">Independen dari toggle Metode 2 di Gold maupun pair currency lain.</p>
 
@@ -1259,7 +1359,7 @@
         <div class="modal-content">
             <span class="close-btn" id="close-cur-modal">&times;</span>
             <h2 id="cur-modal-date-title">Entry Simulasi Tanggal</h2>
-            <p style="color:#888; font-size:0.8rem; margin-bottom:10px;">Riwayat ini view-only (dijalankan otomatis oleh bot), gak bisa diedit/dihapus dari sini biar aman dari salah tap di HP.</p>
+            <p class="pg-subdesc">Hanya untuk dilihat. Entry dijalankan otomatis oleh bot.</p>
             <div id="cur-today-history" class="today-history"></div>
         </div>
     </div>
@@ -1267,7 +1367,7 @@
     <div id="cur-reset-modal" class="modal">
         <div class="modal-content" style="width: 450px;">
             <span class="close-btn" id="close-cur-reset-modal">&times;</span>
-            <h2 style="color:#ff1744; margin-bottom: 5px;">🗑️ Reset Data — <span id="cur-reset-pair-label">USDJPY</span></h2>
+            <h2 style="color:#ff1744; margin-bottom: 5px;">️ Reset Data — <span id="cur-reset-pair-label">USDJPY</span></h2>
             <p style="color:#aaa; font-size:0.85rem; margin-bottom:15px;">Semua histori simulasi pair ini bakal kehapus permanen (pair lain & Gold gak kesenggol). Wajib isi alasan reset dulu — bakal tercatat di tab Log Aktivitas.</p>
             <div class="form-group"><label>Alasan Reset</label><textarea id="cur-reset-reason" class="form-input" rows="3" placeholder="Contoh: mulai ulang setelah upgrade layer bertingkat"></textarea></div>
             <p id="cur-reset-reason-error" style="color:#ff1744; font-size:0.8rem; display:none; margin-top:5px;">Alasan wajib diisi.</p>
@@ -1275,6 +1375,15 @@
         </div>
     </div>
 
-    <script src="script.js?v=1"></script>
+    <script src="script.js?v=20q"></script>
+    <script>
+document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('.rm-tab') : null;
+    if (!t) return;
+    document.querySelectorAll('.rm-tab').forEach(function (b) { b.classList.toggle('active', b === t); });
+    var f = t.getAttribute('data-rm');
+    document.querySelectorAll('.rm-item').forEach(function (i) { i.style.display = (f === 'all' || i.getAttribute('data-track') === f) ? '' : 'none'; });
+});
+</script>
 </body>
 </html>
