@@ -394,13 +394,22 @@ def fetch_active_high_impact_news():
         return {'title': '(perkiraan, kalender gagal diambil)', 'time': None} if is_high_impact_news_window_fallback(now) else None
 
 
+_last_good_kurs = {'value': None}
+
+
 def fetch_live_kurs_idr():
+    # Kalau API gagal, pakai kurs terakhir yang berhasil (bukan 16000 yang jauh dari kurs asli) biar P/L Rp gak melenceng.
     try:
         res = requests.get('https://api.exchangerate-api.com/v4/latest/USD', timeout=10)
-        return res.json().get('rates', {}).get('IDR', 16000)
+        kurs = float(res.json().get('rates', {}).get('IDR'))
+        if not 10000 <= kurs <= 30000:
+            raise ValueError(f"kurs di luar batas wajar: {kurs}")
+        _last_good_kurs['value'] = kurs
+        return kurs
     except Exception as e:
-        cfg.log_fn(f"Gagal ambil kurs, pakai fallback 16000: {e}")
-        return 16000
+        cadangan = _last_good_kurs['value'] or 16000
+        cfg.log_fn(f"Gagal ambil kurs, pakai {'kurs terakhir yang berhasil' if _last_good_kurs['value'] else 'fallback awal'} {cadangan}: {e}")
+        return cadangan
 
 
 def fetch_candles(count=100, timeframe=None):
