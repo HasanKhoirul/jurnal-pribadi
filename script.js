@@ -235,7 +235,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
     function formatRupiah(angka) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka); }
-    let globalNavDate = new Date();
+    let globalNavDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1); // tanggal 1: setMonth() dari tgl 29-31 bisa loncat/macet
 
     // ==========================================
     // API LIVE KURS USD TO IDR
@@ -3220,7 +3220,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     let monPlChartInstance = null;
     let monTrendChartInstance = null;
-    let monTrendNavDate = new Date();
+    let monTrendNavDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1); // tanggal 1, alasan sama dgn globalNavDate
     let monContradictionLimit = 10;
     // Kumulatif harian dalam 1 bulan (index array 1..daysInMonth, index 0 gak dipakai) - biar "reset" tiap
     // ganti bulan (bukan kumulatif dari awal semua histori), jadi kurvanya kebaca sebagai pergerakan bulan itu doang.
